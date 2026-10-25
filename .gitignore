@@ -1,0 +1,11 @@
+.venv/
+.cache/
+.localdata/
+__pycache__/
+*.py[cod]
+dist/
+python/*.whl
+python/*.tar.gz
+*.tgz
+*.egg-info/
+

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepvids"
+version = "0.1.0a2"
+description = "Reproducible sampling experiments for independent video recommendations"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = []
+
+[dependency-groups]
+dev = ["PyYAML==6.0.3"]
+
+[project.scripts]
+deepvids = "deepvids.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepvids"]
+

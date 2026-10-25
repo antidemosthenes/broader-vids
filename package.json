@@ -1,0 +1,11 @@
+{
+  "name": "deepvids",
+  "version": "0.1.0-alpha.2",
+  "description": "Codex skill and local video discovery feasibility experiments",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": { "deepvids": "bin/deepvids.cjs" },
+  "files": ["bin/", "python/deepvids-0.1.0a2-*.whl", "skills/", "plugin.json", ".claude-plugin/marketplace.json", "LICENSE", "README.md", "docs/PLAN.md", "docs/PHASES.md", "docs/FEASIBILITY.md", "docs/SAMPLING_DATABASES.md", "docs/DISCOVERY_REASSESSMENT.md"],
+  "scripts": { "test": "node --test tests/launcher.test.cjs" }
+}
+
