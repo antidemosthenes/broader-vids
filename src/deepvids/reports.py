@@ -8,6 +8,7 @@ from .diagnostics import diagnose
 from .catalogs import SOURCES, list_catalogs
 from .models import Policy
 from .storage import utc_now
+from .discovery import discovery_report
 
 
 LIMITATIONS = {
@@ -133,6 +134,12 @@ def release_gate(store):
     catalogs = list_catalogs(store)
     phase_one_complete = True
     for platform in ("youtube", "bilibili"):
+        discoveries = [discovery_report(store, r["id"]) for r in store.list_runs()
+                       if r["platform"] == platform and r["settings"].get("kind") == "discovery"]
+        verified_discoveries = [r for r in discoveries if r["status"] == "completed" and all(r["checks"].values())]
+        discovery_rounds = {}
+        for report in verified_discoveries:
+            discovery_rounds.setdefault(report["settings"]["bank_sha256"], set()).add(report["settings"]["round"])
         runs = [r for r in store.list_runs() if r["platform"] == platform and r["settings"]["kind"] == "experiment"]
         reports = [make_report(store, r["id"]) for r in runs]
         passing = [r for r in reports if r["observed_yield_check"]]
@@ -152,22 +159,26 @@ def release_gate(store):
             draws = store.db.execute("SELECT COUNT(*) FROM catalog_draws WHERE catalog_id=? AND sample_size>=100", (catalog["id"],)).fetchone()[0]
             if provenance and draws:
                 exercised.append(catalog["id"])
-        phase_one_complete &= bool(exercised)
-        reasons = [] if exercised else ["Need an accepted current discovery source with at least 100 distinct linked videos and a saved 100-item draw."]
+        verified_round_count = max((len(rounds) for rounds in discovery_rounds.values()), default=0)
+        discovery_ready = verified_round_count >= 3
+        phase_one_complete &= discovery_ready
+        reasons = [] if discovery_ready else ["Need three distinct completed rounds of one curated query bank, each with 100 observed candidates, 50 shortlist candidates and verified source coverage."]
         if rejected:
             reasons.append("Historical or unapproved catalogs are test fixtures and cannot satisfy discovery readiness.")
         reasons.extend(["Current content-evidence access and quality scorecards are not implemented.",
                         "Recommendation generation, Bayesian learning and scheduling remain later phases."])
         platforms[platform] = {"experiment_count": len(runs), "yield_passing_distinct_seeds": independent_seeds,
                                "catalog_count": len(local), "exercised_catalogs": exercised, "ineligible_catalogs": rejected,
-                               "candidate_discovery_ready": bool(exercised), "status": "blocked", "reasons": reasons}
+                               "discovery_runs": [{k: r[k] for k in ("run_id", "status", "candidate_count", "checks")} for r in discoveries],
+                               "verified_discovery_rounds": verified_round_count,
+                               "candidate_discovery_ready": discovery_ready, "status": "discovery_ready" if discovery_ready else "blocked", "reasons": reasons}
     names = ("Candidate discovery", "Evidence and quality assessment", "Manual recommendation demo",
              "Bayesian feedback learning", "Daily installable demo")
     phases = [{"phase": i, "name": name, "status": "complete" if i == 1 and phase_one_complete else
                "next" if i == 2 and phase_one_complete else "blocked" if i == 1 else "not_started"}
               for i, name in enumerate(names, 1)]
-    return {"generated_at": utc_now(), "ready": False, "sampling_population": "Declared imported catalogs; previews are explicitly scoped",
+    return {"generated_at": utc_now(), "ready": False, "sampling_population": "Curated live search and creator listings; Bilibili additionally uses isolated-session Home",
             "current_phase": 2 if phase_one_complete else 1, "phase_one_complete": bool(phase_one_complete),
             "phases": phases, "platforms": platforms,
             "next_step": "Begin evidence and quality assessment after reviewing Phase 1 artifacts." if phase_one_complete else
-                         "Phase 1 stopped: no accepted current discovery source for both platforms; see docs/DISCOVERY_REASSESSMENT.md."}
+                         "Complete and inspect curated discovery runs for both platforms; see docs/PLAN.md."}

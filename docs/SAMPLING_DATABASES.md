@@ -1,5 +1,7 @@
 # Existing video catalogs for sampling
 
+Historical research: the current implementation uses curated live discovery; see [the plan](PLAN.md) and [verification](PHASE1_VALIDATION.md).
+
 Researched October 24, 2026. ChinaOpen and YouNiverse were subsequently rejected as dated. The [reassessment](DISCOVERY_REASSESSMENT.md) supersedes the earlier recommendation below. Phase 1 is incomplete and work stops here.
 
 ## Public datasets

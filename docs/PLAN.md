@@ -1,8 +1,8 @@
 # Deepvids implementation plan
 
-Status: Phase 1 is incomplete and work stops at discovery after rejection of the dated sources. Phase 2 has not started. See [the reassessment](DISCOVERY_REASSESSMENT.md). Follow the [five-phase roadmap](PHASES.md), completing one phase at a time. The earlier platform-wide sampling failures are recorded in [the findings](FEASIBILITY.md).
+Status: Phase 1 implements curated live discovery on `probe`; see [verification](PHASE1_VALIDATION.md) and the [five-phase roadmap](PHASES.md). Phase 2 has not started. Earlier sampling and dated-catalog routes remain superseded research.
 
-Historical catalog imports are retained only as test fixtures and cannot satisfy readiness. No replacement is integrated. Later-phase designs below remain available for a possible resumption.
+The user accepted curated keyword search mixed with creators on YouTube, adding isolated-session Home on Bilibili. The [research design](PROBE_DISCOVERY.md) is merged below. Historical catalogs remain test fixtures and cannot satisfy readiness.
 
 ## Product decisions
 
@@ -11,19 +11,33 @@ Historical catalog imports are retained only as test fixtures and cannot satisfy
 - Validate manual runs first; later offer opt-in daily scheduling through Windows Task Scheduler.
 - Present numbered links, explanations, confidence, and feedback instructions in Codex; save Markdown digests locally.
 - Ship shared configurable defaults; keep personal profiles, credentials, histories, models and caches outside the package.
-- Require both platforms to pass sampling and evidence-access validation before releasing v1.
+- Require both platforms to pass live discovery and evidence-access validation before releasing v1.
 - Bound each invocation to 60 minutes and checkpoint incomplete work; an explicit continue command resumes it.
 - Once scheduling is enabled, replace unfinished older daily batches on the next date, retaining observations and completed recommendation history.
 
-## Phase 1: catalog-backed discovery
+## Phase 1: curated live discovery
 
-First establish accepted current discovery sources or efficient validated samplers for both platforms, auditing coverage, data dates, refresh behavior, selection bias and cost. ChinaOpen and YouNiverse import support is now only a fixture implementation. Sample linked videos uniformly without replacement from contiguous catalog ordinals. Bilibili links without a part query refer to the default first part; other parts require explicit enumeration during evidence preparation.
+Use anonymous public web listings without inherited personal cookies or account history. YouTube uses focused search and creator video tabs with continuation. Logged-out Home is excluded as a candidate source; its bootstrap page only supplies the public web client version. Bilibili uses public Home/search in a fresh in-memory cookie jar. Parse rendered cards and supported serialized state as data, never executing page scripts. These public web schemas are unofficial interfaces and can change.
 
-The first exercise uses the complete ChinaOpen URL-list response and an 8 MiB / 2,000-row YouNiverse prefix preview. The prefix is only a development catalog. Full local-file imports use a published checksum when claiming a complete source snapshot. Both platforms need at least 100 distinct linked items from an accepted discovery population and a saved draw before Phase 1 is complete; the rejected historical fixtures cannot qualify. Full-domain ID guessing is impractical within the invocation budget. Quality assessment, recommendation generation and Bayesian updates remain later phases.
+Bilibili's direct recommendation API returned code 62011 and signed creator uploads returned HTTP 412 in preliminary checks. Those routes are stopped. The implemented fallback searches discovered creator names and retains only returned owner-ID matches. Label it `creator_search`: a search-index subset, not complete archive enumeration. Full archive access remains unverified; this limitation does not prevent collecting candidates from accepted public search/Home sources.
+
+Maintain an editable, versioned bank of specific concepts and meaningful cross-domain connections, with purpose, domains, aliases and English/Chinese variants. The initial broad development curriculum has 12 families: six intersections, four deep topics and two horizon topics. It is not an inferred personal profile. Examples include Banach spaces and finance, entropy and inference, music and Fourier analysis, and materials and history. No model API is needed; future assisted suggestions must be checked against actual results.
+
+Interleave intents and rotate family order/query variants across rounds. Collect a bounded metadata buffer before selecting 50 inspection candidates. Within each source/family bucket, prefer title/description anchor matches and local result rank, then select round-robin across buckets with a maximum of three per creator. Preserve niche opportunities regardless of global popularity or how many queries return the same video. Intent tags and anchors are hints, not verified relevance or quality. The initial buffer cap is 1,000 distinct videos, with at most 40 retained per returned page; report truncation.
+
+Persist candidate/creator observations, all source memberships, response hashes, request IDs, bank hash, round, publication labels and pagination state in SQLite. Write buffer JSON, shortlist JSON and linked Markdown. A new round rotates the query plan; `continue` preserves pending work and remaining budget. Completed-run continuation tokens are retained for inspection, not automatically reused indefinitely.
+
+Default limits: 100 HTTP attempts and 600 seconds, at least one second between requests, 4 MiB limits on compressed and decompressed responses. Overrides cannot exceed 1,000 attempts or 3,600 seconds. Stop on access errors or unknown schemas; never infer empty results from failed access. Temporary visitor cookies are discarded between invocations. No authentication, full-video playback or media download is needed in Phase 1.
+
+Completion requires three distinct completed rounds of one query-bank version per platform. Each needs at least 100 source-receipted candidates, 50 distinct preview candidates, search and creator expansion, all three intents, at least six observed query families and at least three intersection preview opportunities. Bilibili additionally requires Home candidates. Historical fixtures and synthetic tests cannot substitute for live evidence in the reference workspace.
+
+Known YouTube durations above 90 minutes are excluded from previews. Bilibili listing duration may describe a multipart archive; playable-part eligibility remains unknown until Phase 2. The user reports full Bilibili playback requires login: configure that explicitly in Phase 2, without reusing personal cookies for Phase 1.
+
+Evaluate curation with narrow, interdisciplinary, older and smaller-creator reference examples, holding some out of query construction. Measure retrieval into the buffer separately from selection into the 50. Regression checks cover niche preservation and source isolation; semantic usefulness and substantive quality require the Phase 2 evidence pilot. Global uniformity and exhaustive platform recall are not goals.
 
 ## Earlier platform-wide sampling experiments
 
-Approximate platform-wide discovery is acceptable with documented limitations and supporting evidence; exact global uniformity is not claimed.
+The following describes the superseded experiment, not current product requirements.
 
 1. Prototype the published YouTube five-letter prefix sampler, including its sixth-character hyphen restriction, without inheriting its concurrent append-until-full stopping bias.
 2. Prototype Bilibili Metropolis sampling over numeric archive IDs using symmetric multiscale offsets and a global proposal; target archive mass proportional to its part count and sample one part uniformly.
@@ -33,11 +47,49 @@ Approximate platform-wide discovery is acceptable with documented limitations an
 
 The prototype domain `1 <= aid < 2**51` follows a third-party AV/BV implementation, not an official completeness guarantee. Metadata-visible Bilibili parts are only a provisional population until playback accessibility is established. YouTube search and playability responses also have access and indexing limitations.
 
-These experiments did not pass their original feasibility gate. The later historical catalog route was also rejected because of source age. Neither route currently satisfies Phase 1. Any future platform-wide claim still requires independent coverage evidence. Current content-evidence access is tested in Phase 2 before recommendation generation.
+These experiments failed their original gate; the later catalog route was rejected because of source age. Curated live retrieval replaces both. Any future platform-wide claim still needs independent coverage evidence. Content-evidence access is tested in Phase 2.
+
+## Phase 2: bounded evidence collection and quality assessment
+
+Phase 2 is planned but not implemented. Begin with a small trial of six videos, three per platform, rather than processing every 50-candidate preview. Include different presentation styles, older material and an interdisciplinary example where accessible. The trial must establish whether visual inspection adds useful evidence at an acceptable cost before scaling it.
+
+### Evidence and resource limits
+
+1. Resolve the current playable video or Bilibili part, its duration and access status. Apply the 90-minute exclusion per playable unit before expensive analysis. Configure full-video access explicitly where needed; the user's reported Bilibili login requirement is a Phase 2 dependency. Listing metadata is not proof that full content is accessible.
+2. Prefer available captions; use bounded local transcription when needed and feasible. Preserve timestamps and caption/ASR provenance. Inspect compact excerpts across the video, preserving the introduction, main argument and conclusion; expand relevant sections when a judgment needs more context. Missing or incomplete speech evidence limits the assessment.
+3. Start visual inspection with four frames near 10%, 35%, 65% and 90% of the playable duration. Deduplicate near-identical frames locally. Timestamp every retained frame, preserve aspect ratio and initially resize to a maximum 768-pixel long edge. These are adjustable trial defaults, not a promise of sufficient coverage for every format.
+4. Add up to four more frames or targeted higher-resolution views only to resolve a concrete uncertainty, such as unreadable slide text or a possible mismatch between narration and visuals. The initial trial cap is eight submitted images per video, including replacement views. Do not repeatedly inspect nearly identical slides. A contact sheet may simplify presentation, but its image/token cost must be measured rather than assumed lower.
+5. Assess voice characteristics only if audio can actually be inspected with suitable local or available subscription tools. Captions, ASR text and frames do not establish whether narration is human or synthetic. If this capability or adequate evidence is absent, narration type remains unknown; do not introduce a paid API merely to fill the field.
+6. Cache evidence and assessments by video/part, media identity, extraction settings and rubric version. Keep the existing 60-minute invocation limit and checkpoint progress. Record download volume, extraction/transcription time, submitted image counts, text size, model calls and token usage where available. Label token estimates separately from observed usage; subscription limits are not assumed unlimited.
+
+Use a caption-only assessment as the baseline, then add visual evidence within these limits and record which judgments changed, which unknowns were resolved and the additional resource cost. This is a small incremental-benefit trial, not proof of a calibrated quality model. Do not scale frame analysis to all candidates until its benefit and cost have been reviewed. Sparse frames cannot establish the absence of filler or visual reuse throughout a video, and a compact transcript can omit important context.
+
+### Quality criteria
+
+Quality is assessed against the video's purpose. The following criteria preserve the user's preferences; they do not make a production style a universal quality rule.
+
+| Criterion | Preferred evidence | Limits on the judgment |
+| --- | --- | --- |
+| Substance and relevance | Useful explanation, meaningful depth, relevant examples and support for the main claims | A title, popularity or length alone does not establish substance or factual accuracy |
+| Directness and coherence | Clear progression, to-the-point delivery, little irrelevant material or needless repetition | Context, demonstrations and necessary repetition are not automatically filler; excerpts cannot establish whole-video density |
+| Original contribution | Original reasoning, demonstrations, observations or purposeful synthesis with attribution | A few frames or captions cannot prove authorship, plagiarism or asset provenance; translated reposts are a soft predictor |
+| Narration | Prefer human narration under the user's stated taste; assess clarity and whether speech serves the explanation | Synthetic narration is an uncertain soft predictor, not a hard exclusion; leave its type unknown without adequate audio evidence |
+| Visual presentation | Purposeful visuals; prefer original demonstrations and explanatory material over unnecessary stock/meme montage | Static slides, diagrams and talking-head presentation can serve substantive content well; suspected stock or generated assets need evidence |
+| Duration prior | A small initial preference rising through 60 minutes and flat from 60 to 90 minutes | At most five quality points; not proof that a longer video is better. More than 90 minutes is excluded; exactly 90 is eligible, per Bilibili part |
+
+For each criterion, store observations separately from interpretation, with timestamps, evidence references, coverage limitations and confidence. Unsupported properties remain unknown rather than receiving an invented neutral or zero score. Retain a provisional overall quality estimate on a 0–100 scale with its uncertainty and rationale when evidence supports one; otherwise mark the video unassessed and request more evidence within budget. Do not imply numerical calibration before the development review.
+
+The existing overall ranking weights remain quality 60%, interest 25%, engagement 5%, recency 5% and creator diversity 5%. The initial quality eligibility threshold remains 60/100, subject to explicit pilot review. Popularity, recency and personal interest must not be counted again as evidence of quality.
+
+### Deliverable and completion check
+
+Produce evidence bundles and structured scorecards for the six-video trial, with a human-readable report comparing caption-only and augmented judgments and their resource costs. Verify playable-part durations, cache/recovery behavior and truthful handling of inaccessible or incomplete evidence on both platforms. Inspect the evidence behind favorable and unfavorable judgments, including narrow/interdisciplinary relevance. Completion requires usable content access and evidence-backed assessments on both platforms; a listing-only or failed-access record cannot substitute. Record unresolved narration/originality questions without blocking every other assessable criterion.
+
+Phase 2 does not implement the 20-video recommendation lists, user-profile fitting, Bayesian updates or scheduling. Those remain subsequent phases.
 
 ## Phase 3 recommendation pipeline after evidence validation
 
-For each platform, draw batches of 100 raw events, discard already recommended canonical IDs and hard-rule violations, then accumulate 50 distinct survivors: 25 profile-related and 25 unrelated. Unknown topics count as unrelated and remain eligible.
+For each platform, refill from curated discovery and creator expansion, discard already recommended IDs and hard-rule violations, then accumulate 50 survivors: 25 profile-related and 25 unrelated. Unknown topics remain eligible as unrelated. This split needs the profile/evidence stages; Phase 1 does not claim to apply it. Protect narrow/interdisciplinary opportunities within both groups and retain creator diversity.
 
 Use cheap metadata/caption proxies conservatively before inspecting all 50 with compact transcripts and distributed frames. Expand evidence for promising uncertain cases. Select 20 qualifying videos, including at least four unrelated candidates when sufficient qualifying candidates exist, then order the selected list by full score. Refill insufficient pools and checkpoint at the work limit.
 
@@ -49,9 +101,7 @@ Use cheap metadata/caption proxies conservatively before inspecting all 50 with 
 | Recency | 5% |
 | Creator diversity | 5% |
 
-Quality is purpose-aware: original contribution, substance, coherence, density and purposeful production. AI narration, generated visuals, stock assets, memes and translated reposts are uncertain soft predictors. Missing evidence is unknown, not an invented observation.
-
-Duration contributes an initial soft prior of at most five quality points: rise linearly through 60 minutes, plateau through 90 minutes. Exclude individual playable videos longer than 90 minutes; exactly 90 minutes is eligible. Apply the rule per Bilibili part, not per combined archive. The initial quality eligibility threshold is 60/100, subject to explicit pilot review.
+Use the Phase 2 quality rubric, evidence uncertainties, duration prior and per-playable-unit exclusion. Missing evidence remains unknown. The provisional 60/100 quality threshold is subject to the Phase 2 pilot review.
 
 Creator diversity considers the developing slate and recent recommendations. Normalize engagement within platforms, shrink noisy small-count signals, and treat missing metrics neutrally. Use a slow recency decay. Never add a random final-score bonus.
 
@@ -69,9 +119,9 @@ Keep content observations, learned distributions and fixed policy separate.
 - Use MAP estimation with a Laplace approximation for routine local posterior updates; rebuild from stored feedback batches so edits replace earlier observations. Check the approximation against a posterior-sampling reference during validation where needed.
 - Keep embeddings and Codex feature extraction fixed initially. Version observations and retain their evidence uncertainty.
 - Keep the 60/25/5/5/5 weights, 25/25 shortlist, conditional discovery minimum and hard exclusions fixed until explicitly changed.
-- Tune raw-discovery proposal parameters only during dedicated sampling experiments; freeze them during retained sampling. User feedback never personalizes raw discovery.
+- Version query curation and retrieval allocation separately from Bayesian profile updates. Preserve independent horizon/intersection effort. Votes are conditional on exposure; missing feedback cannot establish that a query family is poor.
 
-The Bilibili discovery chain samples video IDs; Bayesian inference estimates model parameters. These are separate uses of probability and neither replaces the other.
+Current discovery does not sample random video/user IDs. Bayesian inference estimates preference/quality parameters after evidence collection; it cannot recover material omitted by retrieval.
 
 ## Runtime architecture after the gate
 
@@ -81,12 +131,12 @@ The engine owns discovery, evidence, deterministic scoring, feedback, profiles, 
 
 Use yt-dlp, FFmpeg and optional faster-whisper; prefer captions, otherwise bounded local transcription. Use authenticated official `codex exec`, image attachments and validated structured output with the existing subscription. Never copy OAuth credentials or silently switch to API billing. Begin anonymously; account access is explicitly configured by the user.
 
-Save profile/history, observations, feedback revisions, run state, sampling provenance and policy versions transactionally. Treat transcripts and descriptions as untrusted data. Ensure concurrent daily/additional jobs cannot publish duplicate IDs.
+Save profile/history, observations, feedback revisions, run state, retrieval provenance and policy versions transactionally. Treat transcripts and descriptions as untrusted data. Ensure concurrent daily/additional jobs cannot publish duplicate IDs.
 
 ## Validation and milestones
 
-1. Catalog-backed candidate discovery, source provenance and reproducible draws; preserve the earlier sampling research.
-2. Evidence collection and quality assessment for real videos from both catalogs.
+1. Curated live discovery, protected narrow/interdisciplinary opportunities, creator expansion, provenance and three verified rounds per platform.
+2. Evidence and quality assessment for discovered videos, including explicit Bilibili playback access and per-part durations.
 3. Onboarding and the complete manual recommendation funnel, digests, history and more rounds.
 4. Bayesian learning and roughly 30 development videos rated separately for interest and quality, with held-out checks and rejected-candidate audits.
 5. Validate scheduling and Windows local/npm installations with scripts disabled, unrelated working directories, spaces in paths, read-only package directories and upgrades preserving history.

@@ -1,5 +1,7 @@
 # Discovery reassessment — October 24, 2026
 
+Historical decision: this stop was superseded by the user's accepted curated-search/creator design. See [the current plan](PLAN.md) and [Phase 1 verification](PHASE1_VALIDATION.md). The old datasets and random-ID route remain rejected.
+
 Phase 1 is incomplete, and work stops at discovery under the current requirements. ChinaOpen and YouNiverse are rejected as recommendation sources because of their age. Their imports and draws remain test fixtures. Phase 2 has not started; no replacement is integrated.
 
 The previous completion statement verified import and sampling mechanics, but did not establish an acceptable discovery population. The CLI gate now excludes rejected sources even with verified downloads and 100-item draws. Download time does not change the underlying data's age.

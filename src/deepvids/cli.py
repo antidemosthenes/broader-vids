@@ -1,6 +1,7 @@
 import argparse
 import http.client
 import json
+from pathlib import Path
 import shutil
 import sqlite3
 import sys
@@ -8,6 +9,8 @@ import sys
 from . import __version__
 from .catalogs import SOURCES, fetch_catalog, get_catalog, import_catalog, list_catalogs, sample_catalog
 from .experiments import create_experiment, create_probe, create_search_control, execute
+from .discovery import create_discovery, discovery_report, execute_discovery, write_discovery_report
+from .querybank import load_bank, query_plan
 from .providers import MAX_AID, YOUTUBE_ID
 from .reports import make_report, release_gate, write_report
 from .sampling import simulation_report
@@ -24,6 +27,19 @@ def parser():
     commands.add_parser("status", help="List experiment checkpoints")
     commands.add_parser("gate", help="Explain why the full recommender is gated")
     commands.add_parser("recommend", help="Check the recommendation release gate")
+    discover = commands.add_parser("discover", help="Collect curated live search, creator and Bilibili Home candidates")
+    discover.add_argument("platform", choices=("youtube", "bilibili"))
+    discover.add_argument("--bank", help="Optional versioned JSON query bank")
+    discover.add_argument("--round", type=int, dest="round_number")
+    discover.add_argument("--max-requests", type=int, default=100)
+    discover.add_argument("--max-seconds", type=float, default=600)
+    discover.add_argument("--creators", type=int, default=4)
+    discover.add_argument("--creator-pages", type=int, default=2)
+    queries = commands.add_parser("queries", help="Inspect the curated query bank and deterministic round plan")
+    queries.add_argument("--bank")
+    queries.add_argument("--platform", choices=("youtube", "bilibili"), default="youtube")
+    queries.add_argument("--round", type=int, default=0, dest="round_number")
+    queries.add_argument("--export", help="Create an editable copy of the bank at a new JSON file")
     report = commands.add_parser("report", help="Write standalone JSON, Markdown and trace reports")
     report.add_argument("run_id")
     continuation = commands.add_parser("continue", help="Resume a paused experiment without resetting its budget or random state")
@@ -76,11 +92,18 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         if args.command == "doctor":
-            emit({"version": __version__, "stage": "catalog_discovery", "python": sys.version.split()[0],
+            emit({"version": __version__, "stage": "curated_discovery", "python": sys.version.split()[0],
                   "data_directory": str(data_root(args.data_dir)),
                   "tools": {name: bool(shutil.which(name)) for name in ("uv", "node", "codex", "ffmpeg", "ffprobe")},
                   "authentication_checked": False, "model_calls_required_for_this_stage": False,
                   "recommendations_available": False})
+            return 0
+        if args.command == "queries":
+            bank = load_bank(args.bank)
+            if args.export:
+                with Path(args.export).open("x", encoding="utf-8") as destination:
+                    json.dump({k: v for k, v in bank.items() if k != "sha256"}, destination, ensure_ascii=False, indent=2)
+            emit({"bank_version": bank["version"], "sha256": bank["sha256"], "plan": query_plan(bank, args.platform, args.round_number)})
             return 0
         if args.command == "simulate":
             report = simulation_report()
@@ -88,6 +111,18 @@ def main(argv=None):
             return 0 if report["passed"] else 1
         store = Store(data_root(args.data_dir))
         try:
+            if args.command == "discover" or (args.command in {"continue", "report"} and store.get(args.run_id)["settings"].get("kind") == "discovery"):
+                run_id = create_discovery(store, args.platform, args.bank, args.round_number, args.max_requests,
+                                          args.max_seconds, args.creators, args.creator_pages) if args.command == "discover" else args.run_id
+                if args.command != "report":
+                    print(f"Discovery {run_id}: collecting {store.get(run_id)['platform']} public listings", file=sys.stderr, flush=True)
+                    execute_discovery(store, run_id)
+                path = write_discovery_report(store, run_id)
+                report = discovery_report(store, run_id)
+                emit({"run_id": run_id, "status": report["status"], "reason": report["reason"], "report_path": str(path),
+                      "candidate_count": report["candidate_count"], "shortlist_count": len(report["shortlist"]),
+                      "source_counts": report["source_counts"], "checks": report["checks"]})
+                return 0 if report["status"] == "completed" or args.command == "report" else 2
             if args.command == "catalog":
                 if args.catalog_command == "fetch":
                     emit(fetch_catalog(store, args.source, args.max_download_mib * 1024 * 1024, args.preview_rows))

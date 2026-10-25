@@ -2,7 +2,9 @@
 
 Independent YouTube and Bilibili recommendations, built in five verified phases.
 
-**Current stage:** Phase 1 is incomplete and work stops at discovery. ChinaOpen and YouNiverse were rejected as dated; no suitable current replacement has been verified for both platforms. Phase 2 has not started. See [the reassessment](docs/DISCOVERY_REASSESSMENT.md). See [the phase roadmap](docs/PHASES.md) and [implementation plan](docs/PLAN.md).
+The `probe` branch implements [curated discovery](docs/PROBE_DISCOVERY.md): narrow/interdisciplinary queries and creators for YouTube, adding isolated-session Home for Bilibili.
+
+**Current stage:** Phase 1 is complete in the reference workspace, with three successful live rounds per platform. Phase 2 has not started. See [verification](docs/PHASE1_VALIDATION.md), [the roadmap](docs/PHASES.md) and [the merged plan](docs/PLAN.md). Previews contain candidates; quality ranking, profiles, Bayesian learning and scheduling remain later phases.
 
 The earlier platform-wide random-ID methods did not pass their feasibility checks. Historical catalogs remain test fixtures and cannot satisfy discovery readiness; see [the earlier findings](docs/FEASIBILITY.md) and [catalog research](docs/SAMPLING_DATABASES.md).
 
@@ -18,6 +20,21 @@ uv run --no-sync python -m unittest discover -s tests -v
 ```
 
 If UV's default cache is unavailable, set `UV_CACHE_DIR` to a writable directory or use `uv --cache-dir .cache/uv ...`.
+
+## Phase 1: curated live candidates
+
+```powershell
+uv run deepvids queries --platform youtube
+uv run deepvids queries --export my-queries.json
+uv run deepvids --data-dir .localdata discover youtube
+uv run deepvids --data-dir .localdata discover bilibili
+uv run deepvids --data-dir .localdata report RUN_ID
+uv run deepvids --data-dir .localdata gate
+```
+
+Run discovery three times per platform to establish local readiness. New runs rotate the curated bank; use `--bank my-queries.json` for an edited bank and `continue RUN_ID` to resume pending work within its original budget. Defaults are 100 requests and ten minutes per invocation. Reports save a larger metadata buffer and 50 linked preview candidates under the chosen data directory. Selection gives narrow/interdisciplinary query families opportunities and caps each creator at three.
+
+YouTube uses public keyword search and creator video tabs. Bilibili adds Home in an isolated temporary session. Its creator fallback keeps only public search results whose owner ID matches the discovered creator; this is not a complete archive. Direct Bilibili archive/API access was blocked in preliminary checks. Phase 1 never reads personal browser cookies or downloads media. Full Bilibili video access and per-part duration checks belong to Phase 2.
 
 ## Historical catalog fixtures
 

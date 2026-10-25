@@ -28,7 +28,7 @@ class Store:
         self.db = sqlite3.connect(self.root / "deepvids.sqlite3", timeout=5)
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, 3):
             self.db.close()
             raise ValueError(f"Unsupported database version {version}; use a compatible Deepvids release.")
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -63,7 +63,12 @@ class Store:
                 seed INTEGER NOT NULL, sample_size INTEGER NOT NULL, created_at TEXT NOT NULL,
                 ordinals TEXT NOT NULL
             );
-            PRAGMA user_version=2;
+            CREATE TABLE IF NOT EXISTS discovery_registry (
+                platform TEXT NOT NULL, kind TEXT NOT NULL, item_key TEXT NOT NULL,
+                payload TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+                PRIMARY KEY (platform, kind, item_key)
+            );
+            PRAGMA user_version=3;
             COMMIT;
         """)
         self.db.commit()
@@ -119,6 +124,12 @@ class Store:
             for event in ([event] if event else []) + list(additional):
                 self.db.execute("INSERT INTO events (run_id,created_at,kind,payload) VALUES (?,?,?,?)",
                                 (run["id"], utc_now(), event[0], json.dumps(event[1])))
+            if run["settings"].get("kind") == "discovery":
+                now = utc_now()
+                for kind, values in (("candidate", run["state"].get("candidates", {})), ("creator", run["state"].get("creators", {}))):
+                    self.db.executemany("""INSERT INTO discovery_registry VALUES (?,?,?,?,?,?)
+                        ON CONFLICT(platform,kind,item_key) DO UPDATE SET payload=excluded.payload,last_seen=excluded.last_seen""",
+                        [(run["platform"], kind, key, json.dumps(value, ensure_ascii=False), now, now) for key, value in values.items()])
 
     def events(self, run_id):
         return [{**dict(r), "payload": json.loads(r["payload"])} for r in self.db.execute(

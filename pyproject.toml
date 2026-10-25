@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepvids"
-version = "0.1.0a2"
-description = "Reproducible sampling experiments for independent video recommendations"
+version = "0.1.0a3"
+description = "Curated live discovery for independent video recommendations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

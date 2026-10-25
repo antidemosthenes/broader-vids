@@ -130,7 +130,7 @@ class CatalogTests(unittest.TestCase):
             self.assertFalse(gate["platforms"][platform]["candidate_discovery_ready"])
             self.assertEqual(len(gate["platforms"][platform]["ineligible_catalogs"]), 1)
         with patch.dict(SOURCES, {name: replace(source, discovery_eligible=True) for name, source in SOURCES.items()}):
-            self.assertTrue(release_gate(self.store)["phase_one_complete"])
+            self.assertFalse(release_gate(self.store)["phase_one_complete"])
 
     def test_download_cap_is_enforced_when_server_ignores_range(self):
         body = gzip.compress(youtube_rows(200).encode()) + b"x" * 10000
@@ -155,7 +155,7 @@ class CatalogTests(unittest.TestCase):
         self.store.close()
         self.store = Store(self.root / "state")
         self.assertEqual(self.store.get(run_id)["state"], {"pending": "fixture"})
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 3)
 
 
 if __name__ == "__main__":
