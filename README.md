@@ -2,9 +2,11 @@
 
 Independent YouTube and Bilibili recommendations, built in five verified phases.
 
-The `probe` branch implements [curated discovery](docs/PROBE_DISCOVERY.md): narrow/interdisciplinary queries and creators for YouTube, adding isolated-session Home for Bilibili.
+The `probe-phase-2` branch implements curated discovery and bounded caption/frame quality assessment for YouTube and Bilibili.
 
-**Current stage:** Phase 1 is complete in the reference workspace, with three successful live rounds per platform. Phase 2 has not started. See [verification](docs/PHASE1_VALIDATION.md), [the roadmap](docs/PHASES.md) and [the merged plan](docs/PLAN.md). Previews contain candidates; quality ranking, profiles, Bayesian learning and scheduling remain later phases.
+**Current stage:** Phases 1 and 2 are complete in the reference workspace: three discovery rounds per platform and six paired caption-only/four-frame assessments. Phase 3 has not started. See [the evidence trial](docs/PHASE2_VALIDATION.md), [the roadmap](docs/PHASES.md) and [the plan](docs/PLAN.md). Scorecards are provisional; recommendation lists, profiles, Bayesian learning and scheduling remain later work.
+
+The planned recommendation funnel collects fresh candidates in batches of approximately 100, screens cheaply into 50 inspection candidates per platform, then uses quality evidence and full scoring to select 10 YouTube and 10 Bilibili videos. Unwatched recommendations retain guaranteed places in later inspection lists until marked watched or dismissed, reusing cached assessments. Watched status and thumbs-up/down feedback are separate. At 50 pending on a platform, fresh admissions wait for queue space. These Phase 3 behaviors are planned, not implemented.
 
 The earlier platform-wide random-ID methods did not pass their feasibility checks. Historical catalogs remain test fixtures and cannot satisfy discovery readiness; see [the earlier findings](docs/FEASIBILITY.md) and [catalog research](docs/SAMPLING_DATABASES.md).
 
@@ -35,6 +37,27 @@ uv run deepvids --data-dir .localdata gate
 Run discovery three times per platform to establish local readiness. New runs rotate the curated bank; use `--bank my-queries.json` for an edited bank and `continue RUN_ID` to resume pending work within its original budget. Defaults are 100 requests and ten minutes per invocation. Reports save a larger metadata buffer and 50 linked preview candidates under the chosen data directory. Selection gives narrow/interdisciplinary query families opportunities and caps each creator at three.
 
 YouTube uses public keyword search and creator video tabs. Bilibili adds Home in an isolated temporary session. Its creator fallback keeps only public search results whose owner ID matches the discovered creator; this is not a complete archive. Direct Bilibili archive/API access was blocked in preliminary checks. Phase 1 never reads personal browser cookies or downloads media. Full Bilibili video access and per-part duration checks belong to Phase 2.
+
+## Phase 2: bounded evidence trial
+
+```powershell
+uv sync --extra evidence
+# Add --extra asr only for optional local transcription.
+uv run --no-sync python -m deepvids --data-dir .localdata login bilibili
+# Complete sign-in in the isolated browser, then confirm in another terminal:
+uv run --no-sync python -m deepvids --data-dir .localdata login bilibili --confirm
+uv run --no-sync python -m deepvids --data-dir .localdata evidence prepare "https://www.youtube.com/watch?v=VIDEO_ID"
+uv run --no-sync python -m deepvids --data-dir .localdata evidence assess RUN_ID --mode both
+uv run --no-sync python -m deepvids --data-dir .localdata evidence pilot-report
+```
+
+For Bilibili preparation, use a canonical URL with an explicit `?p=1` (or the requested part) and `--use-browser`. The session belongs to the isolated profile; no personal browser profile or exported cookie file is needed. If Edge/Chrome is absent, install Playwright Chromium explicitly with `uv run --no-sync playwright install chromium`.
+
+Native captions are preferred, including inline SRT and `ai-zh` tracks. Use `evidence captions RUN_ID` to refresh native captions without redownloading media; assessed inputs remain unchanged. Missing speech can use `--asr-model base` after installing the `asr` extra. `--media FILE --captions FILE` supports explicit local input, with local provenance recorded separately. Local files do not substitute for network-verified reference-pilot readiness.
+
+Four 768-pixel frames are extracted initially. To inspect an uncertainty before augmented assessment, use `evidence frame RUN_ID --at SECONDS --reason "unreadable diagram" --long-edge 1536`. The job cap is eight images and two model calls, with no automatic paid API fallback. Download/time limits, hashes, recovery and resource usage are retained with the job. The assessment CLI requires an existing `codex login` using ChatGPT. Optional narration/originality judgments remain unknown when unsupported.
+
+The npm launcher supports `setup --evidence` and `setup --asr`; these explicitly install the corresponding locked optional dependencies into its external runtime. Plain `setup` retains the dependency-free discovery core. Optional tools and model weights are not bundled in the plugin.
 
 ## Historical catalog fixtures
 

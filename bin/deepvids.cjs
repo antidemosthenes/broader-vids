@@ -45,6 +45,10 @@ function main(args = process.argv.slice(2)) {
     if (wheels.length !== 1) throw new Error('The package needs exactly one matching bundled wheel; in a checkout run: uv build --out-dir python');
     if (!fs.existsSync(executable)) invoke('uv', ['venv', '--allow-existing', '--python', '>=3.12', runtime]);
     invoke('uv', ['pip', 'install', '--python', executable, '--reinstall', '--no-index', '--no-deps', path.join(wheelRoot, wheels[0])]);
+    const extras = args.includes('--asr') ? ['evidence', 'asr'] : args.includes('--evidence') ? ['evidence'] : [];
+    for (const extra of extras) {
+      invoke('uv', ['pip', 'install', '--python', executable, '--require-hashes', '-r', path.join(wheelRoot, `${extra}-requirements.txt`)]);
+    }
     console.log(JSON.stringify({ status: 'ready', runtime, data_directory: root }, null, 2));
     return;
   }

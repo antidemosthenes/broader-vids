@@ -1,3 +1,5 @@
 *
 !*.whl
+!evidence-requirements.txt
+!asr-requirements.txt
 

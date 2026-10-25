@@ -1,5 +1,6 @@
 import argparse
 import http.client
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -15,6 +16,10 @@ from .providers import MAX_AID, YOUTUBE_ID
 from .reports import make_report, release_gate, write_report
 from .sampling import simulation_report
 from .storage import Store, data_root
+from .browser_access import confirm_bilibili_login, login_bilibili
+from .evidence import add_evidence_frame, create_evidence, evidence_report, pilot_report, prepare_evidence, refresh_native_captions, write_evidence_report
+from .assessment import assess_evidence
+from .evidence_media import EvidencePending
 
 
 def parser():
@@ -27,6 +32,31 @@ def parser():
     commands.add_parser("status", help="List experiment checkpoints")
     commands.add_parser("gate", help="Explain why the full recommender is gated")
     commands.add_parser("recommend", help="Check the recommendation release gate")
+    login = commands.add_parser("login", help="Open an isolated Playwright browser for user-controlled platform sign-in")
+    login.add_argument("platform", choices=("bilibili",))
+    login.add_argument("--timeout", type=int, default=600)
+    login.add_argument("--confirm", action="store_true", help="Verify sign-in after completing it in the open isolated browser")
+    evidence = commands.add_parser("evidence", help="Prepare bounded captions/frames and compare quality assessments")
+    evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    prepare = evidence_commands.add_parser("prepare", help="Resolve one playable video/part and prepare timestamped evidence")
+    prepare.add_argument("url")
+    prepare.add_argument("--media", help="Explicit local video file instead of downloading")
+    prepare.add_argument("--captions", help="Explicit local timestamped JSON3/JSON/VTT/SRT captions")
+    prepare.add_argument("--use-browser", action="store_true", help="Use the user-authenticated isolated Bilibili profile")
+    prepare.add_argument("--max-mib", type=int, default=128)
+    prepare.add_argument("--max-seconds", type=float, default=1200)
+    prepare.add_argument("--asr-model", choices=("tiny", "base", "small"))
+    assess = evidence_commands.add_parser("assess", help="Use the ChatGPT-authenticated Codex CLI for bounded scorecards")
+    assess.add_argument("run_id")
+    assess.add_argument("--mode", choices=("baseline", "augmented", "both"), default="both")
+    frame = evidence_commands.add_parser("frame", help="Add a targeted view before augmented assessment, within the eight-image cap")
+    frame.add_argument("run_id")
+    frame.add_argument("--at", type=float, required=True, dest="timestamp")
+    frame.add_argument("--reason", required=True)
+    frame.add_argument("--long-edge", type=int, default=768)
+    captions = evidence_commands.add_parser("captions", help="Refresh native captions while preserving already-assessed inputs")
+    captions.add_argument("run_id")
+    evidence_commands.add_parser("pilot-report", help="Compare paired evidence assessments and report actual resource usage")
     discover = commands.add_parser("discover", help="Collect curated live search, creator and Bilibili Home candidates")
     discover.add_argument("platform", choices=("youtube", "bilibili"))
     discover.add_argument("--bank", help="Optional versioned JSON query bank")
@@ -91,11 +121,15 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8")
     args = parser().parse_args(argv)
     try:
+        if args.command == "login":
+            emit(confirm_bilibili_login(data_root(args.data_dir)) if args.confirm else login_bilibili(data_root(args.data_dir), args.timeout))
+            return 0
         if args.command == "doctor":
-            emit({"version": __version__, "stage": "curated_discovery", "python": sys.version.split()[0],
+            emit({"version": __version__, "stage": "evidence_pilot", "python": sys.version.split()[0],
                   "data_directory": str(data_root(args.data_dir)),
-                  "tools": {name: bool(shutil.which(name)) for name in ("uv", "node", "codex", "ffmpeg", "ffprobe")},
-                  "authentication_checked": False, "model_calls_required_for_this_stage": False,
+                  "tools": {name: bool(shutil.which(name) or (name == "ffmpeg" and importlib.util.find_spec("imageio_ffmpeg"))) for name in ("uv", "node", "codex", "ffmpeg", "ffprobe")},
+                  "evidence_dependencies": {name: importlib.util.find_spec(name) is not None for name in ("yt_dlp", "PIL", "playwright", "faster_whisper")},
+                  "authentication_checked": False, "model_calls_required_for_assessment": True,
                   "recommendations_available": False})
             return 0
         if args.command == "queries":
@@ -111,6 +145,32 @@ def main(argv=None):
             return 0 if report["passed"] else 1
         store = Store(data_root(args.data_dir))
         try:
+            if args.command == "evidence" or (args.command in {"continue", "report"} and store.get(args.run_id)["settings"].get("kind") == "evidence"):
+                if args.command == "evidence" and args.evidence_command == "pilot-report":
+                    report = pilot_report(store)
+                    emit({"phase_two_complete": report["phase_two_complete"], "verified_videos": report["verified_videos"],
+                          "totals": report["totals"], "report_path": str(store.root / "evidence" / "pilot-report.md")})
+                    return 0
+                if args.command == "evidence" and args.evidence_command == "prepare":
+                    run_id = create_evidence(store, args.url, args.media, args.captions, args.use_browser, args.max_mib, args.max_seconds)
+                    prepare_evidence(store, run_id, args.asr_model)
+                else:
+                    run_id = args.run_id
+                    if args.command == "continue":
+                        prepare_evidence(store, run_id)
+                    elif args.command == "evidence" and args.evidence_command == "frame":
+                        add_evidence_frame(store, run_id, args.timestamp, args.reason, args.long_edge)
+                    elif args.command == "evidence" and args.evidence_command == "captions":
+                        refresh_native_captions(store, run_id)
+                    elif args.command == "evidence":
+                        assess_evidence(store, run_id, args.mode)
+                path = write_evidence_report(store, run_id)
+                report = evidence_report(store, run_id)
+                emit({"run_id": run_id, "platform": report["platform"], "status": report["status"], "reason": report["reason"],
+                      "report_path": str(path), "frame_count": len(report["frames"]),
+                      "caption_source": (report["captions"] or {}).get("source"), "assessments": list(report["assessments"]),
+                      "resources": report["resources"]})
+                return 0 if report["status"] in {"prepared", "assessed", "completed"} or args.command == "report" else 2
             if args.command == "discover" or (args.command in {"continue", "report"} and store.get(args.run_id)["settings"].get("kind") == "discovery"):
                 run_id = create_discovery(store, args.platform, args.bank, args.round_number, args.max_requests,
                                           args.max_seconds, args.creators, args.creator_pages) if args.command == "discover" else args.run_id
@@ -174,7 +234,7 @@ def main(argv=None):
             return 0 if run["status"] == "completed" else 2
         finally:
             store.close()
-    except (ValueError, OSError, EOFError, UnicodeError, sqlite3.Error, http.client.HTTPException) as error:
+    except (ValueError, EvidencePending, OSError, EOFError, UnicodeError, sqlite3.Error, http.client.HTTPException) as error:
         print(f"deepvids: {error}", file=sys.stderr)
         return 2
 

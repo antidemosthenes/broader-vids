@@ -9,6 +9,7 @@ from .catalogs import SOURCES, list_catalogs
 from .models import Policy
 from .storage import utc_now
 from .discovery import discovery_report
+from .evidence import pilot_report
 
 
 LIMITATIONS = {
@@ -130,6 +131,7 @@ def _atomic(path, body):
 
 
 def release_gate(store):
+    evidence = pilot_report(store, write=False)
     platforms = {}
     catalogs = list_catalogs(store)
     phase_one_complete = True
@@ -165,20 +167,26 @@ def release_gate(store):
         reasons = [] if discovery_ready else ["Need three distinct completed rounds of one curated query bank, each with 100 observed candidates, 50 shortlist candidates and verified source coverage."]
         if rejected:
             reasons.append("Historical or unapproved catalogs are test fixtures and cannot satisfy discovery readiness.")
-        reasons.extend(["Current content-evidence access and quality scorecards are not implemented.",
-                        "Recommendation generation, Bayesian learning and scheduling remain later phases."])
+        evidence_ready = evidence["verified_videos"][platform] >= 3
+        if not evidence_ready:
+            reasons.append("Need three verified playable videos with valid caption-only and augmented scorecards on this platform.")
+        reasons.append("Recommendation generation, Bayesian learning and scheduling remain later phases.")
         platforms[platform] = {"experiment_count": len(runs), "yield_passing_distinct_seeds": independent_seeds,
                                "catalog_count": len(local), "exercised_catalogs": exercised, "ineligible_catalogs": rejected,
                                "discovery_runs": [{k: r[k] for k in ("run_id", "status", "candidate_count", "checks")} for r in discoveries],
                                "verified_discovery_rounds": verified_round_count,
+                               "verified_evidence_videos": evidence["verified_videos"][platform], "content_evidence_ready": evidence_ready,
                                "candidate_discovery_ready": discovery_ready, "status": "discovery_ready" if discovery_ready else "blocked", "reasons": reasons}
     names = ("Candidate discovery", "Evidence and quality assessment", "Manual recommendation demo",
              "Bayesian feedback learning", "Daily installable demo")
-    phases = [{"phase": i, "name": name, "status": "complete" if i == 1 and phase_one_complete else
-               "next" if i == 2 and phase_one_complete else "blocked" if i == 1 else "not_started"}
+    phase_two_complete = bool(phase_one_complete and evidence["phase_two_complete"])
+    phases = [{"phase": i, "name": name, "status": "complete" if (i == 1 and phase_one_complete) or (i == 2 and phase_two_complete) else
+               "next" if i == (3 if phase_two_complete else 2) and phase_one_complete else "blocked" if i == 1 else "not_started"}
               for i, name in enumerate(names, 1)]
     return {"generated_at": utc_now(), "ready": False, "sampling_population": "Curated live search and creator listings; Bilibili additionally uses isolated-session Home",
-            "current_phase": 2 if phase_one_complete else 1, "phase_one_complete": bool(phase_one_complete),
+            "current_phase": 3 if phase_two_complete else 2 if phase_one_complete else 1,
+            "phase_one_complete": bool(phase_one_complete), "phase_two_complete": phase_two_complete,
             "phases": phases, "platforms": platforms,
-            "next_step": "Begin evidence and quality assessment after reviewing Phase 1 artifacts." if phase_one_complete else
+            "next_step": "Review the Phase 2 cost/benefit trial before starting the manual recommendation demo." if phase_two_complete else
+                         "Prepare and assess the six-video evidence pilot." if phase_one_complete else
                          "Complete and inspect curated discovery runs for both platforms; see docs/PLAN.md."}
