@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepvids"
-version = "0.1.0a4"
+version = "0.1.0a10"
 description = "Curated live discovery for independent video recommendations"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,7 +12,10 @@ license = "MIT"
 dependencies = []
 
 [dependency-groups]
-dev = ["PyYAML==6.0.3"]
+dev = [
+    "PyYAML==6.0.3",
+    "ruff==0.14.3",
+]
 
 [project.scripts]
 deepvids = "deepvids.cli:main"

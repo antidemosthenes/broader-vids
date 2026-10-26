@@ -4,9 +4,9 @@
   "plugins": [
     {
       "name": "deepvids",
-      "description": "Local video discovery feasibility experiments for Codex",
+      "description": "Local YouTube and Bilibili recommendations with evidence and feedback",
       "source": "./",
-      "version": "0.1.0-alpha.4"
+      "version": "0.1.0-alpha.10"
     }
   ]
 }

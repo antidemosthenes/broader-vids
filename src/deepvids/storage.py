@@ -17,20 +17,36 @@ def data_root(override=None):
         return Path(override).expanduser().resolve()
     if os.environ.get("DEEPVIDS_DATA_DIR"):
         return Path(os.environ["DEEPVIDS_DATA_DIR"]).expanduser().resolve()
-    base = Path(os.environ["LOCALAPPDATA"]) if os.environ.get("LOCALAPPDATA") else Path.home() / ".local" / "share"
+    base = (
+        Path(os.environ["LOCALAPPDATA"])
+        if os.environ.get("LOCALAPPDATA")
+        else Path.home() / ".local" / "share"
+    )
     return base / "deepvids"
 
 
 class Store:
     def __init__(self, root):
-        self.root = Path(root)
+        self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.root / "deepvids.sqlite3", timeout=5)
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
             self.db.close()
-            raise ValueError(f"Unsupported database version {version}; use a compatible Deepvids release.")
+            raise ValueError(
+                f"Unsupported database version {version}; use a compatible Deepvids release."
+            )
+        self.db.execute("PRAGMA foreign_keys=ON")
+        if version == 7:
+            return
+        backup = self.root / "deepvids.before-v7.sqlite3"
+        if version in (1, 2, 3, 4, 5, 6) and not backup.exists():
+            target = sqlite3.connect(backup)
+            try:
+                self.db.backup(target)
+            finally:
+                target.close()
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript("""
             BEGIN;
@@ -48,27 +64,49 @@ class Store:
                 created_at TEXT NOT NULL, endpoint TEXT NOT NULL, outcome TEXT NOT NULL,
                 detail TEXT NOT NULL DEFAULT ''
             );
-            CREATE TABLE IF NOT EXISTS catalogs (
-                id TEXT PRIMARY KEY, source TEXT NOT NULL, platform TEXT NOT NULL,
-                scope TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,
-                manifest TEXT NOT NULL, item_count INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS catalog_items (
-                catalog_id TEXT NOT NULL REFERENCES catalogs(id), ordinal INTEGER NOT NULL,
-                video_id TEXT NOT NULL, part_index INTEGER NOT NULL, payload TEXT NOT NULL,
-                PRIMARY KEY (catalog_id, ordinal), UNIQUE (catalog_id, video_id, part_index)
-            );
-            CREATE TABLE IF NOT EXISTS catalog_draws (
-                id TEXT PRIMARY KEY, catalog_id TEXT NOT NULL REFERENCES catalogs(id),
-                seed INTEGER NOT NULL, sample_size INTEGER NOT NULL, created_at TEXT NOT NULL,
-                ordinals TEXT NOT NULL
-            );
             CREATE TABLE IF NOT EXISTS discovery_registry (
                 platform TEXT NOT NULL, kind TEXT NOT NULL, item_key TEXT NOT NULL,
                 payload TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
                 PRIMARY KEY (platform, kind, item_key)
             );
-            PRAGMA user_version=3;
+            CREATE TABLE IF NOT EXISTS user_profile (
+                id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS video_state (
+                canonical_id TEXT PRIMARY KEY, platform TEXT NOT NULL, payload TEXT NOT NULL,
+                watched INTEGER NOT NULL DEFAULT 0, dismissed INTEGER NOT NULL DEFAULT 0,
+                recommended INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS user_actions (
+                id INTEGER PRIMARY KEY, canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                created_at TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS recommendation_exposures (
+                run_id TEXT NOT NULL REFERENCES runs(id), canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                position INTEGER NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY(run_id,canonical_id)
+            );
+            CREATE TABLE IF NOT EXISTS engagement_snapshots (
+                canonical_id TEXT PRIMARY KEY, payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS user_feedback_lookup ON user_actions(canonical_id,action,id);
+            CREATE INDEX IF NOT EXISTS run_request_lookup ON requests(run_id);
+            CREATE INDEX IF NOT EXISTS exposure_time_lookup ON recommendation_exposures(created_at);
+            CREATE TABLE IF NOT EXISTS domain_nodes (
+                id TEXT PRIMARY KEY, payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS domain_observations (
+                run_id TEXT NOT NULL REFERENCES runs(id),
+                node_id TEXT NOT NULL REFERENCES domain_nodes(id),
+                created_at TEXT NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(run_id,node_id)
+            );
+            CREATE INDEX IF NOT EXISTS domain_history_lookup ON domain_observations(node_id,created_at);
+            CREATE INDEX IF NOT EXISTS run_kind_platform_lookup ON runs(json_extract(settings,'$.kind'),platform,created_at);
+            CREATE INDEX IF NOT EXISTS pending_video_lookup ON video_state(recommended,watched,dismissed,platform);
+            CREATE INDEX IF NOT EXISTS evidence_cache_lookup ON runs(json_extract(settings,'$.cache_key'),platform);
+            CREATE INDEX IF NOT EXISTS evidence_identity_lookup ON runs(json_extract(settings,'$.identity.canonical_id'),platform);
+            PRAGMA user_version=7;
             COMMIT;
         """)
         self.db.commit()
@@ -77,26 +115,59 @@ class Store:
         self.db.close()
 
     @contextmanager
-    def lease(self, run_id):
+    def lease(self, run_id, *, owner=None):
         self.validate_id(run_id)
         lock = self.root / f"{run_id}.lock"
+        if owner is not None:
+            try:
+                record = json.loads(lock.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            if not isinstance(record, dict) or record.get("token") != owner:
+                raise ValueError(
+                    "The delegated evidence lease is not owned by this worker."
+                )
+            yield owner
+            return
         try:
             handle = lock.open("x", encoding="utf-8")
         except FileExistsError:
-            raise ValueError(f"Run {run_id} is locked; verify no worker is active before removing {lock}.") from None
+            raise ValueError(
+                f"Run {run_id} is locked; verify no worker is active before removing {lock}."
+            ) from None
         try:
-            handle.write(str(os.getpid()))
+            token = uuid.uuid4().hex
+            handle.write(json.dumps({"pid": os.getpid(), "token": token}))
             handle.close()
-            yield
+            yield token
         finally:
-            lock.unlink(missing_ok=True)
+            handle.close()
+            try:
+                record = json.loads(lock.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            if isinstance(record, dict) and record.get("token") == token:
+                lock.unlink(missing_ok=True)
 
-    def create(self, platform, settings, state):
+    def create(self, platform, settings, state, *, commit=True):
         run_id = uuid.uuid4().hex
         now = utc_now()
-        self.db.execute("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (run_id, platform, now, now, "pending", "", json.dumps(settings), json.dumps(state), 0))
-        self.db.commit()
+        self.db.execute(
+            "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                platform,
+                now,
+                now,
+                "pending",
+                "",
+                json.dumps(settings),
+                json.dumps(state),
+                0,
+            ),
+        )
+        if commit:
+            self.db.commit()
         return run_id
 
     def get(self, run_id):
@@ -112,42 +183,110 @@ class Store:
     @staticmethod
     def validate_id(run_id):
         if not isinstance(run_id, str) or re.fullmatch(r"[a-f0-9]{32}", run_id) is None:
-            raise ValueError("Run IDs must contain exactly 32 lowercase hexadecimal characters.")
+            raise ValueError(
+                "Run IDs must contain exactly 32 lowercase hexadecimal characters."
+            )
 
-    def list_runs(self):
-        return [self.get(r[0]) for r in self.db.execute("SELECT id FROM runs ORDER BY created_at")]
+    def list_runs(self, *, kind=None, platform=None):
+        return list(self.iter_runs(kind=kind, platform=platform))
+
+    def iter_runs(self, *, kind=None, platform=None, identities=None):
+        conditions, args = [], []
+        if kind:
+            conditions.append("json_extract(settings,'$.kind')=?")
+            args.append(kind)
+        if platform:
+            conditions.append("platform=?")
+            args.append(platform)
+        if identities is not None:
+            if not identities:
+                return
+            conditions.append(
+                "json_extract(settings,'$.identity.canonical_id') IN ("
+                + ",".join("?" for _ in identities)
+                + ")"
+            )
+            args.extend(identities)
+        for row in self.db.execute(
+            "SELECT id FROM runs"
+            + (" WHERE " + " AND ".join(conditions) if conditions else "")
+            + " ORDER BY created_at",
+            args,
+        ):
+            yield self.get(row[0])
 
     def save(self, run, event=None, additional=()):
         with self.db:
-            self.db.execute("UPDATE runs SET updated_at=?,status=?,reason=?,state=?,elapsed=? WHERE id=?",
-                            (utc_now(), run["status"], run["reason"], json.dumps(run["state"]), run["elapsed"], run["id"]))
+            self.db.execute(
+                "UPDATE runs SET updated_at=?,status=?,reason=?,state=?,elapsed=? WHERE id=?",
+                (
+                    utc_now(),
+                    run["status"],
+                    run["reason"],
+                    json.dumps(run["state"]),
+                    run["elapsed"],
+                    run["id"],
+                ),
+            )
             for event in ([event] if event else []) + list(additional):
-                self.db.execute("INSERT INTO events (run_id,created_at,kind,payload) VALUES (?,?,?,?)",
-                                (run["id"], utc_now(), event[0], json.dumps(event[1])))
+                self.db.execute(
+                    "INSERT INTO events (run_id,created_at,kind,payload) VALUES (?,?,?,?)",
+                    (run["id"], utc_now(), event[0], json.dumps(event[1])),
+                )
             if run["settings"].get("kind") == "discovery":
                 now = utc_now()
-                for kind, values in (("candidate", run["state"].get("candidates", {})), ("creator", run["state"].get("creators", {}))):
-                    self.db.executemany("""INSERT INTO discovery_registry VALUES (?,?,?,?,?,?)
+                for kind, values in (
+                    ("candidate", run["state"].get("candidates", {})),
+                    ("creator", run["state"].get("creators", {})),
+                ):
+                    self.db.executemany(
+                        """INSERT INTO discovery_registry VALUES (?,?,?,?,?,?)
                         ON CONFLICT(platform,kind,item_key) DO UPDATE SET payload=excluded.payload,last_seen=excluded.last_seen""",
-                        [(run["platform"], kind, key, json.dumps(value, ensure_ascii=False), now, now) for key, value in values.items()])
+                        [
+                            (
+                                run["platform"],
+                                kind,
+                                key,
+                                json.dumps(value, ensure_ascii=False),
+                                now,
+                                now,
+                            )
+                            for key, value in values.items()
+                        ],
+                    )
 
     def events(self, run_id):
-        return [{**dict(r), "payload": json.loads(r["payload"])} for r in self.db.execute(
-            "SELECT * FROM events WHERE run_id=? ORDER BY id", (run_id,))]
+        return [
+            {**dict(r), "payload": json.loads(r["payload"])}
+            for r in self.db.execute(
+                "SELECT * FROM events WHERE run_id=? ORDER BY id", (run_id,)
+            )
+        ]
 
     def request_count(self, run_id):
-        return self.db.execute("SELECT COUNT(*) FROM requests WHERE run_id=?", (run_id,)).fetchone()[0]
+        return self.db.execute(
+            "SELECT COUNT(*) FROM requests WHERE run_id=?", (run_id,)
+        ).fetchone()[0]
 
     def begin_request(self, run_id, endpoint):
-        cursor = self.db.execute("INSERT INTO requests (run_id,created_at,endpoint,outcome) VALUES (?,?,?,?)",
-                                 (run_id, utc_now(), endpoint, "unresolved"))
+        cursor = self.db.execute(
+            "INSERT INTO requests (run_id,created_at,endpoint,outcome) VALUES (?,?,?,?)",
+            (run_id, utc_now(), endpoint, "unresolved"),
+        )
         self.db.commit()
         return cursor.lastrowid
 
     def end_request(self, request_id, outcome, detail=""):
-        self.db.execute("UPDATE requests SET outcome=?,detail=? WHERE id=?", (outcome, detail, request_id))
+        self.db.execute(
+            "UPDATE requests SET outcome=?,detail=? WHERE id=?",
+            (outcome, detail, request_id),
+        )
         self.db.commit()
 
     def requests(self, run_id):
-        return [dict(r) for r in self.db.execute("SELECT * FROM requests WHERE run_id=? ORDER BY id", (run_id,))]
-
+        return [
+            dict(r)
+            for r in self.db.execute(
+                "SELECT * FROM requests WHERE run_id=? ORDER BY id", (run_id,)
+            )
+        ]

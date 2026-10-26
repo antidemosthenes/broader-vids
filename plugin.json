@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "deepvids",
-  "version": "0.1.0-alpha.4",
-  "description": "Investigate independent YouTube and Bilibili discovery before enabling personalized recommendations.",
+  "version": "0.1.0-alpha.10",
+  "description": "Curated YouTube and Bilibili recommendations with bounded quality evidence and local watched/feedback state.",
   "license": "MIT",
   "extensions": { "com.openai": { "requires_local_executor": true } }
 }

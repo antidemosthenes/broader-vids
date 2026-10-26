@@ -2,13 +2,58 @@
 
 Independent YouTube and Bilibili recommendations, built in five verified phases.
 
-The `probe-phase-2` branch implements curated discovery and bounded caption/frame quality assessment for YouTube and Bilibili.
+The project implements curated discovery, bounded caption/frame quality assessment and the manual recommendation workflow for YouTube and Bilibili.
 
-**Current stage:** Phases 1 and 2 are complete in the reference workspace: three discovery rounds per platform and six paired caption-only/four-frame assessments. Phase 3 has not started. See [the evidence trial](docs/PHASE2_VALIDATION.md), [the roadmap](docs/PHASES.md) and [the plan](docs/PLAN.md). Scorecards are provisional; recommendation lists, profiles, Bayesian learning and scheduling remain later work.
+**Current stage:** Phases 1–3 are complete in the reference workspace. The live demo has 10 YouTube and 10 Bilibili picks, selected from 50 inspection candidates per platform. See [Phase 3 verification](docs/validation/PHASE3_VALIDATION.md), [the roadmap](docs/PHASES.md) and [the plan](docs/PLAN.md). `gate` checks local evidence; a fresh installation starts at Phase 1. Scorecards are provisional. Bayesian fitting and daily scheduling have not started.
 
-The planned recommendation funnel collects fresh candidates in batches of approximately 100, screens cheaply into 50 inspection candidates per platform, then uses quality evidence and full scoring to select 10 YouTube and 10 Bilibili videos. Unwatched recommendations retain guaranteed places in later inspection lists until marked watched or dismissed, reusing cached assessments. Watched status and thumbs-up/down feedback are separate. At 50 pending on a platform, fresh admissions wait for queue space. These Phase 3 behaviors are planned, not implemented.
 
-The earlier platform-wide random-ID methods did not pass their feasibility checks. Historical catalogs remain test fixtures and cannot satisfy discovery readiness; see [the earlier findings](docs/FEASIBILITY.md) and [catalog research](docs/SAMPLING_DATABASES.md).
+The recommendation funnel collects fresh candidates in batches of approximately 100, screens cheaply into 50 inspection candidates per platform, then uses quality evidence and full scoring to select 10 YouTube and 10 Bilibili videos. Unwatched recommendations retain guaranteed places in later inspection lists until marked watched or dismissed, reusing cached assessments. Watched status and thumbs-up/down feedback are separate. At 50 pending on a platform, fresh admissions wait for queue space.
+
+## Manual recommendation demo
+
+Use one combined command for both platforms and a single 30-minute allowance:
+
+```powershell
+uv run --no-sync deepvids --data-dir .localdata recommend both --use-browser --workers 4 --effort low
+```
+
+Both platform pipelines overlap, with at most two media-preparation processes and four independent GPT-6.1 Sol sessions across the batch. `--effort medium` is supported. Downloads prefer a small 240–480p stream and fall back only within 720p on the short edge, including portrait video; a higher-resolution-only video remains pending. Query planning can use AI; metadata screening does not. Continuation preserves the original time, model and byte allowances. A deadline checkpoints unfinished work and does not guarantee twenty complete recommendations from an uncached hundred-video inspection workload. See [measured performance and limits](docs/validation/PERFORMANCE_VALIDATION.md).
+
+Continue a combined run with its **batch ID**, rather than either platform child ID. Alpha.9 hardens worker ownership, cancellation, atomic receipts, resource accounting and interrupted-run recovery; see [the concurrency audit](docs/validation/CONCURRENCY_AUDIT.md).
+
+Alpha.10 removes full videos after augmented assessment while retaining verified captions, frames and scorecards for reuse. Unfinished jobs keep their media. `cleanup` previews older disposable evidence; `cleanup --apply` removes it. Optional transcription processes ten-minute chunks instead of holding a full video's audio in memory. See [storage and memory verification](docs/validation/STORAGE_MEMORY_AUDIT.md).
+
+Bilibili metadata now includes tags and description in the same request as counts. The exact `视频翻译` tag excludes a fresh candidate before the 50-video list and blocks a pending entry from final selection without evicting it. `中配`, YouDub, source YouTube links and uploader repost declarations are separately recorded originality clues. Source links alone are not proof of copying, and none of these rules detects synthetic speech. New originality reviews can reuse verified media/captions/frames with a separately hashed metadata context; historical numeric scores are preserved. The dashboard shows these disclosures and flags historical excluded entries.
+
+Complete the discovery/evidence prerequisites reported by `gate`, and install the evidence extra (plus ASR if wanted). Set explicit interests once; feedback is stored with revisions and will support learning in Phase 4.
+
+```powershell
+uv --cache-dir .cache/uv sync --extra evidence --extra asr
+uv run --no-sync deepvids --data-dir .localdata profile set --interest mathematics --interest travel --interest food
+uv run --no-sync deepvids --data-dir .localdata recommend both --use-browser --asr-model base --workers 4 --effort low
+uv run --no-sync deepvids --data-dir .localdata serve
+```
+
+Open `http://127.0.0.1:8765` for video links, scores and watched/dismiss/feedback controls. The server binds only to loopback. Every recommendation run also saves `recommendations/RUN_ID/digest.md` and `report.json` outside the package. `--discovery-run RUN_ID` explicitly reuses a saved platform discovery buffer; omit it for fresh discovery.
+
+The dashboard uses Python's `ThreadingHTTPServer`; the npm command is a launcher for that same Python engine. To stop a foreground server, press **Ctrl+C** in its terminal. Closing a browser tab does not stop it. For a background server on Windows, inspect `Get-NetTCPConnection -LocalPort 8765 -State Listen` and the matching Python command line, then use `Stop-Process -Id SERVER_PID` with that process ID. An external launcher may also need to be stopped. Stopping the dashboard preserves saved recommendations and feedback; run `serve` again to reopen it.
+
+Expand **Score details** on a card to see weighted final contributions, the content/length split, saved criterion grades and engagement ratios. Content quality uses substance, directness, original contribution and purposeful visuals in a holistic judgment out of 95, plus up to five length points. Criterion grades do not have separate numerical weights.
+
+Screening uses smoothed likes/views on YouTube and likes/views, coins/views and favorites/views on Bilibili, with missing counts neutral. `--use-browser` enables the isolated Bilibili session for count enrichment and content evidence, without adding it to anonymous discovery. Content quality uses verified captions/frames. Topic fit initially uses inherited exploration or curated domain tags rather than a fitted preference model.
+
+Defaults per platform are a shared 30-minute batch limit, 160 metadata requests, up to 52 total model calls (two planning plus fifty quality assessments) and 1 GiB media; fresh discovery has its separate bounded request budget and shares the job's elapsed-time limit. Use `--max-mib`, `--max-requests`, `--max-assessments` and `--max-seconds` to set explicit bounds. Valid cached evidence costs no new assessment call. Limits and failures checkpoint work; `continue RUN_ID` retains the original budgets. `publish RUN_ID --allow-incomplete` can explicitly publish an assessed subset as a **partial** digest; it does not pass Phase 3 completion. A new round may reuse cached evidence with a new explicit budget.
+
+```powershell
+uv run --no-sync deepvids --data-dir .localdata video watched "youtube:VIDEO_ID"
+uv run --no-sync deepvids --data-dir .localdata video up "youtube:VIDEO_ID" --kind interest --reason "Useful explanation"
+uv run --no-sync deepvids --data-dir .localdata video dismiss "bilibili:BVID:p1"
+uv run --no-sync deepvids --data-dir .localdata queue
+```
+
+IDs above are placeholders; copy a canonical ID from a digest. `unwatched`, `restore` and `clear` reverse watch state, dismissal and vote independently. Votes can be revised. Clicking a link or leaving a recommendation unwatched never creates an implicit preference label.
+
+The earlier platform-wide random-ID methods did not pass their feasibility checks. The historical catalog and random-ID implementations have been removed; see [the earlier findings](docs/research/FEASIBILITY.md) and [catalog research](docs/research/SAMPLING_DATABASES.md).
 
 ## Local development
 
@@ -16,8 +61,7 @@ Use Python 3.12+ through UV:
 
 ```powershell
 uv sync
-uv run deepvids doctor
-uv run deepvids simulate
+uv run --no-sync deepvids doctor
 uv run --no-sync python -m unittest discover -s tests -v
 ```
 
@@ -25,16 +69,30 @@ If UV's default cache is unavailable, set `UV_CACHE_DIR` to a writable directory
 
 ## Phase 1: curated live candidates
 
+With an onboarding profile, new discovery and recommendation rounds now use a persistent domain hierarchy. Each round targets **12 existing concepts plus five new concepts**. Weighted random selection retains interest coverage, favors less-used topics and reduces immediate repetition. The existing ChatGPT-authenticated Codex CLI supplies concrete English/Chinese search queries and novel-topic proposals; local refinements inherit their parent domains. Exploration never adds an inferred like to your profile.
+
+The first round can have fewer than twelve existing concepts: seven initial interests give seven existing topics plus up to five additions. Successful anonymous searches with title/description anchor matches activate additions for later rounds; unmatched results remain unconfirmed. Novelty and semantic relevance are provisional AI judgments. The existing 25/25 inspection target and conditional minimum of two unrelated final videos remain separate rules.
+
 ```powershell
-uv run deepvids queries --platform youtube
-uv run deepvids queries --export my-queries.json
-uv run deepvids --data-dir .localdata discover youtube
-uv run deepvids --data-dir .localdata discover bilibili
-uv run deepvids --data-dir .localdata report RUN_ID
-uv run deepvids --data-dir .localdata gate
+uv run --no-sync deepvids --data-dir .localdata topics
+uv run --no-sync deepvids --data-dir .localdata discover youtube --seed 42
+uv run --no-sync deepvids --data-dir .localdata discover bilibili
+# Use the original fixed bank explicitly:
+uv run --no-sync deepvids --data-dir .localdata discover youtube --curated
 ```
 
-Run discovery three times per platform to establish local readiness. New runs rotate the curated bank; use `--bank my-queries.json` for an edited bank and `continue RUN_ID` to resume pending work within its original budget. Defaults are 100 requests and ten minutes per invocation. Reports save a larger metadata buffer and 50 linked preview candidates under the chosen data directory. Selection gives narrow/interdisciplinary query families opportunities and caps each creator at three.
+`topics` inspects the saved map without generating proposals or changing interests. Plans and seeds are checkpointed once per new round; `continue` does not generate another five topics after a completed planning step. Discovery permits at most two planning calls, each capped at 120 seconds and the remaining job time; `--max-planning-calls` can lower that limit. In recommendation jobs, planning calls share the total `--max-assessments` model allowance with video assessment. Reports separate both kinds of call and their total. A supplied finished discovery buffer costs no new generation. With no profile, discovery retains the fixed bank for initial setup. See [the hierarchy policy](docs/PLAN.md#growing-domain-hierarchy--implemented-october-26).
+
+```powershell
+uv run --no-sync deepvids queries --platform youtube
+uv run --no-sync deepvids queries --export my-queries.json
+uv run --no-sync deepvids --data-dir .localdata discover youtube
+uv run --no-sync deepvids --data-dir .localdata discover bilibili
+uv run --no-sync deepvids --data-dir .localdata report RUN_ID
+uv run --no-sync deepvids --data-dir .localdata gate
+```
+
+Run discovery three times per platform to establish local readiness. Fixed-bank runs rotate the curated bank; use `--bank my-queries.json` for an edited bank and `continue RUN_ID` to resume pending work within its original budget. Hierarchical runs retain their own policy identity and generated plans. Defaults are 100 requests and ten minutes per invocation. Reports save the plan, planning usage, a larger metadata buffer and 50 linked preview candidates under the chosen data directory. Selection gives query/topic families opportunities and caps each creator at three.
 
 YouTube uses public keyword search and creator video tabs. Bilibili adds Home in an isolated temporary session. Its creator fallback keeps only public search results whose owner ID matches the discovered creator; this is not a complete archive. Direct Bilibili archive/API access was blocked in preliminary checks. Phase 1 never reads personal browser cookies or downloads media. Full Bilibili video access and per-part duration checks belong to Phase 2.
 
@@ -55,50 +113,9 @@ For Bilibili preparation, use a canonical URL with an explicit `?p=1` (or the re
 
 Native captions are preferred, including inline SRT and `ai-zh` tracks. Use `evidence captions RUN_ID` to refresh native captions without redownloading media; assessed inputs remain unchanged. Missing speech can use `--asr-model base` after installing the `asr` extra. `--media FILE --captions FILE` supports explicit local input, with local provenance recorded separately. Local files do not substitute for network-verified reference-pilot readiness.
 
-Four 768-pixel frames are extracted initially. To inspect an uncertainty before augmented assessment, use `evidence frame RUN_ID --at SECONDS --reason "unreadable diagram" --long-edge 1536`. The job cap is eight images and two model calls, with no automatic paid API fallback. Download/time limits, hashes, recovery and resource usage are retained with the job. The assessment CLI requires an existing `codex login` using ChatGPT. Optional narration/originality judgments remain unknown when unsupported.
+Four 768-pixel frames are extracted initially. To inspect an uncertainty before augmented assessment, use `evidence frame RUN_ID --at SECONDS --reason "unreadable diagram" --long-edge 1536`. The job cap is eight images and two model calls, with no automatic paid API fallback. Download/time limits, hashes, recovery and resource usage are retained with the job. The assessment CLI requires an existing `codex login` using ChatGPT. Originality judgments remain unknown when unsupported.
 
 The npm launcher supports `setup --evidence` and `setup --asr`; these explicitly install the corresponding locked optional dependencies into its external runtime. Plain `setup` retains the dependency-free discovery core. Optional tools and model weights are not bundled in the plugin.
-
-## Historical catalog fixtures
-
-These commands test import and sampling mechanics only; the sources are rejected for recommendation discovery.
-
-```powershell
-uv run deepvids --data-dir .localdata catalog fetch chinaopen
-uv run deepvids --data-dir .localdata catalog fetch youniverse --max-download-mib 8 --preview-rows 2000
-uv run deepvids --data-dir .localdata catalog list
-uv run deepvids --data-dir .localdata catalog sample CATALOG_ID --count 100 --seed 20261024
-uv run deepvids --data-dir .localdata gate
-```
-
-The ChinaOpen fetch imports the complete URL-list response. YouNiverse fetches at most 8 MiB and imports the first 2,000 metadata rows as a development preview. Sampling is uniform without replacement over distinct links in the imported catalog; the preview is not a representative sample of all YouNiverse or YouTube. Source hashes, scope and selection limits are saved with each catalog and draw. The draw artifact contains the actual candidate URLs; `--show-items` also prints them.
-
-Local imports accept ChinaOpen TSV or YouNiverse gzip JSONL files:
-
-```powershell
-uv run deepvids --data-dir .localdata catalog import youniverse C:\data\yt_metadata_en.jsonl.gz --scope source_snapshot
-```
-
-A complete YouNiverse snapshot must match its published file checksum. Imports stream records and publish atomically; malformed compressed files leave no usable partial catalog. Large full-source import performance has not been benchmarked. Each import has a one-hour processing budget. Catalog draws are raw candidates; availability, duration exclusions and quality inspection happen in later phases. ChinaOpen links default to the first part unless their URL specifies a part.
-
-## Earlier sampling experiments
-
-```powershell
-uv run deepvids --data-dir .localdata experiment youtube --seed 20261024 --queries 10 --max-requests 30 --max-seconds 120
-uv run deepvids --data-dir .localdata probe bilibili --aid 170001
-uv run deepvids --data-dir .localdata search-control --video-id dQw4w9WgXcQ
-uv run deepvids --data-dir .localdata experiment bilibili --seed-aid 170001 --seed-aid 205634870 --seed-aid 4550175 --seed-aid 114868162141203 --seed-provenance "Public reference IDs; dispersed coverage not established"
-uv run deepvids --data-dir .localdata status
-uv run deepvids --data-dir .localdata continue RUN_ID
-uv run deepvids --data-dir .localdata report RUN_ID
-uv run deepvids --data-dir .localdata gate
-```
-
-Example starting archives are public reference IDs, not evidence of a representative initialization; supply verified dispersed IDs and provenance for a substantive Bilibili trial. Small smoke tests do not count as full feasibility sessions.
-
-Network work is anonymous and bounded. Access challenges, throttling and ambiguous failures pause a run. Continue retains its random state and pending query/proposal. Sampling does not inspect cookies, download media, call a model, or personalize discovery. Reports contain provisional metadata populations and known coverage limitations, never a claim of exact global uniformity.
-
-Reports and SQLite state live under the chosen data directory. Without an override, the default is `%LOCALAPPDATA%/deepvids` on Windows. Keep experimental results out of source control.
 
 ## Local and npm packaging
 
@@ -121,11 +138,20 @@ codex plugin marketplace add C:\path\to\deepvids
 codex plugin add deepvids@deepvids-local
 ```
 
-The catalog also travels with the npm package; its package directory can be registered as the local source. Host activation is a separate local setup step. The Claude Code runtime adapter remains a later milestone.
+The plugin marketplace manifest also travels with the npm package; its package directory can be registered as the local source. Host activation is a separate local setup step. The Claude Code runtime adapter remains a later milestone.
 
 Setup requires UV and installs only the bundled wheel into an external versioned environment. An npm installation also exposes `deepvids setup`. No postinstall script or model API key is used. No package has been published to npm.
 
-## Sampling limitations
 
-Historical catalogs inherit their collection dates, creator/language selection and other omissions. Exact local sampling does not certify platform-wide coverage or playback availability. The earlier YouTube prefix and Bilibili ID-space experiments remain available for research, with their limitations preserved. The `gate` command reports catalog readiness and the remaining phases; completing Phase 1 cannot unlock recommendations.
+## Architecture and development checks
 
+Read [the architecture](docs/ARCHITECTURE.md), [the audit](docs/AUDIT.md) and [the phase roadmap](docs/PHASES.md). Historical discovery research lives in `docs/research/`; its retired sampling/catalog commands are no longer shipped.
+
+```powershell
+uv run --no-sync ruff check src tests
+uv run --no-sync ruff format --check src tests
+uv run --no-sync python -m unittest discover -s tests
+npm ci --ignore-scripts
+npm test
+npm run check:web
+```

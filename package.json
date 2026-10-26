@@ -1,11 +1,36 @@
 {
   "name": "deepvids",
-  "version": "0.1.0-alpha.4",
-  "description": "Codex skill and local video discovery feasibility experiments",
+  "version": "0.1.0-alpha.10",
+  "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
   "license": "MIT",
-  "engines": { "node": ">=20" },
-  "bin": { "deepvids": "bin/deepvids.cjs" },
-  "files": ["bin/", "python/deepvids-0.1.0a4-*.whl", "python/evidence-requirements.txt", "python/asr-requirements.txt", "skills/", "plugin.json", ".claude-plugin/marketplace.json", "LICENSE", "README.md", "docs/PLAN.md", "docs/PHASES.md", "docs/FEASIBILITY.md", "docs/SAMPLING_DATABASES.md", "docs/DISCOVERY_REASSESSMENT.md", "docs/PROBE_DISCOVERY.md", "docs/PHASE1_VALIDATION.md", "docs/PHASE2_VALIDATION.md"],
-  "scripts": { "test": "node --test tests/launcher.test.cjs" }
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "deepvids": "bin/deepvids.cjs"
+  },
+  "files": [
+    "bin/",
+    "python/deepvids-0.1.0a10-*.whl",
+    "python/evidence-requirements.txt",
+    "python/asr-requirements.txt",
+    "skills/",
+    "plugin.json",
+    ".claude-plugin/marketplace.json",
+    "LICENSE",
+    "README.md",
+    "docs/PLAN.md",
+    "docs/PHASES.md",
+    "docs/ARCHITECTURE.md",
+    "docs/AUDIT.md",
+    "docs/validation/",
+    "docs/research/"
+  ],
+  "scripts": {
+    "test": "node --test tests/launcher.test.cjs",
+    "check:web": "prettier --check src/deepvids/web/static"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
 }
-
