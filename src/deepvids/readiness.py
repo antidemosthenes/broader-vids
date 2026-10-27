@@ -105,6 +105,6 @@ def release_gate(store):
             if phase_two
             else "Prepare and assess the six-video evidence pilot."
             if phase_one
-            else "Complete three curated discovery rounds per platform; see docs/PLAN.md."
+            else "Complete three curated discovery rounds per platform; see docs/REFERENCE.md."
         ),
     }

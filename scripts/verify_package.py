@@ -21,6 +21,12 @@ def main(archive_path):
             ".git",
             "node_modules",
             "PHASE3_HANDOVER.md",
+            "PROJECT_PLAN.md",
+            "PLAN.md",
+            "PHASES.md",
+            "AUDIT.md",
+            "research",
+            "validation",
             ".env",
         }
         assert not any(private.intersection(Path(name).parts) for name in names), (

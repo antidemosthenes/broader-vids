@@ -1,112 +1,332 @@
-# Phase 4 scoring and consistency contract
+# Scoring, calibration, and mathematics
 
-Phase 4 learns conditional approval and structured response-category probabilities. It does not claim to recover an objective, universal video-quality score, unseen subject preferences or uniquely identifiable weights from insufficient observations. Existing scorecards and published lists remain historical records.
+Deepvids learns conditional preferences from explicit feedback.
+It does not estimate an objective quality score for every video.
+Its conclusions apply to the retrieved videos and feature contexts that receive feedback.
 
-## Scores and priors
+## Terms
 
-Hard eligibility remains separate: verified playable duration at most 90 minutes, existing evidence quality at least 60/100, no excluded translation tag, and the existing watched/dismissed, pending-capacity and unfamiliar-content rules. Feedback cannot override these rules.
+| Term | Meaning |
+| --- | --- |
+| Prior | A model assumption before the current observations |
+| Posterior | The distribution after the model includes those observations |
+| Predictor | A measured or derived input to a model |
+| Likelihood | The probability model for observed feedback |
+| Holdout | Feedback reserved for testing before training |
+| Calibration | Comparison between predicted responses and observed responses |
+| Provenance | Information about a video's source and the uploader's contribution |
+| Ordinal response | An ordered category such as Low, Medium, or High |
 
-The initial content index has explicit weights: substance 40%, directness 25%, observed original contribution 25%, purposeful visuals 10%, within 95 content points. Length adds at most five points, rising linearly to one hour and then plateauing. These are transparent design priors, not empirically established optimal weights.
+## 1. Eligibility
 
-For assessed criterion grades, `u_j = grade_j / 4`. An unknown criterion uses an explicit uncertain prior mean of **0.5**, with a separate missingness predictor; it cannot borrow a high holistic grade from unrelated criteria. Its saved grade remains unknown. With `d = min(duration / 3600, 1)`,
+Eligibility checks operate separately from learned preferences.
+The engine requires a verified duration above zero and at most ninety minutes.
+The saved evidence quality must reach 60 points out of 100.
+The exact Bilibili tag `视频翻译` excludes a video from final selection.
+Watched and dismissed videos cannot enter a new final list.
+
+A learned preference cannot override these checks.
+An unavailable video remains an access failure.
+It does not receive an invented low-quality label.
+
+## 2. Community response and screening
+
+YouTube uses likes divided by views.
+Bilibili uses likes, coins, and favorites divided by views.
+These measures belong to community response, separate from content quality.
+
+For metric count \(c\), views \(v\), and platform baseline \(b\), the adjusted rate is
 
 \[
- Q_0=95\sum_j w_j u_j+5d.
+\widehat r=\frac{c+1000b}{v+1000}.
 \]
 
-The original holistic score and evidence identity are preserved. `Q_0` is a derived, versioned scoring prior. The initial interest probabilities are 0.75 for an onboarding-related domain, 0.35 for a known unrelated domain and 0.50 when domains are unknown. Query-domain tags remain imperfect predictors, not verified semantic labels.
+The baseline is the middle sorted rate when at least ten valid platform observations exist.
+Otherwise, initial baselines are 0.03 for likes, 0.01 for coins, and 0.02 for favorites.
+The implementation limits the baseline below by \(10^{-6}\).
 
-## Bayesian updates
-
-There are separate interest and quality Bernoulli likelihoods. For channel `c`,
+The metric score is
 
 \[
- y_{ic}\sim\operatorname{Bernoulli}(\sigma(o_{ic}+x_{ic}^{T}\beta_c)),
- \quad \beta_{cj}\sim N(0,s_j^2).
+ e=100\sigma\left(\operatorname{clip}\left(\log\frac{\max(\widehat r,10^{-12})}{b},-8,8\right)\right),
+ \qquad \sigma(z)=\frac{1}{1+e^{-z}}.
 \]
 
-Offsets are `logit(I_0)` and `logit(Q_0 / 100)`. Their finite baseline clipping avoids infinite offsets; it does not bound the learned probability. Coefficients have full support on the real line. Prior standard deviations are 0.35 for global, platform, duration, quality and creator corrections, and 0.60 for domain/topic corrections. Creator effects therefore shrink strongly after one observation. These are fixed, finite regularization strengths; they do not increase with sample size.
+A missing count or zero view denominator receives a neutral score of 50.
+Bilibili averages its three metric scores with equal weights.
+These correlated metrics do not count as independent evidence of quality.
 
-Legacy interest features include averaged domain memberships, finer query concepts, platform, length and creator. Multiple tags form one covariate vector for **one** label, not several independent observations. Quality uses the four centered criterion predictors, their missingness flags, duration, platform and provenance indicators. No waveform, voice-origin or background-audio feature is used. Audience level is a separate, evidence-referenced descriptor; old evidence without it remains unknown.
+Initial screening uses 70% community response and 30% title-anchor support.
+An anchor is a query term found in the returned metadata.
+The engine balances topic groups instead of selecting only the first search results.
+Pending recommendations keep guaranteed places within the fifty inspection slots.
 
-Each head includes its offset itself as a learnable predictor: a correction coefficient of minus one can cancel the baseline completely. The overall head also receives all five component values, so a different preference for popularity, recency or diversity is representable rather than permanently embedded in the offset. These coefficients have full-support priors.
+## 3. Initial quality and interest
 
-An unexplained overall vote has its own likelihood; it is not copied into either channel. The weighted base score is
+The assessment uses four content criteria:
+
+| Criterion | Initial content weight | Meaning |
+| --- | ---: | --- |
+| Substance | 40% | Useful explanations or substantive content |
+| Directness | 25% | Relevant content without avoidable repetition or filler |
+| Original contribution | 25% | Evidence of the uploader's own contribution |
+| Purposeful visuals | 10% | Visual material that supports the content |
+
+An assessed criterion has an integer grade from zero to four.
+Its normalized value is \(u_j=\mathrm{grade}_j/4\).
+An unknown criterion uses a prior mean of 0.5 and a separate missingness predictor.
+Its stored grade remains unknown.
+It does not inherit a high grade from another criterion.
+
+For duration \(t\) seconds, the derived initial quality index is
 
 \[
- B=0.60(100p_Q)+0.25(100p_I)+0.05E+0.05R+0.05D.
+d=\min(t/3600,1),\qquad Q_0=95\sum_j w_j u_j+5d.
 \]
 
-An overall calibration head uses `logit(B / 100)` as its offset and learns unrestricted context corrections. When overall labels exist, the ranking score is its posterior predictive approval percentage. Otherwise it is `B`. This makes the original weights an initial policy inside the overall model, **not a permanent blend that prevents learning a different preference**. Overall offsets are recomputed from the current interest/quality models for both training and prediction. This is a conditional empirical-Bayes calibration stage, not a claim of an exact joint posterior over all three heads. Its consistency requires the component offsets to stabilize uniformly on the covered feature support.
+Length contributes at most five points.
+The contribution rises to one hour and then remains constant.
+These initial weights express a design choice, not a fitted optimum.
+The saved holistic evidence score remains a separate historical observation.
 
-The display separates original evidence quality, the explicit criterion prior, learned channel probabilities, weighted base, overall adjustment, uncertainty and snapshot identity. Log-odds corrections are additive in the statistical model; they are not misrepresented as fixed percentage criterion weights.
+The initial interest probability \(I_0\) is 0.75 for a domain related to the user's stated interests.
+It is 0.35 for a known unrelated domain and 0.50 when domains are unknown.
+Search-domain labels describe retrieval context.
+They do not prove the video's semantic topic.
 
-## Mathematical prerequisite
+Source links, repost declarations, `中配`, and YouDub disclosures inform originality assessment.
+A source link alone does not prove copying.
+An unfamiliar copyright enum remains uninterpreted.
+The model must distinguish source teaching quality from the uploader's contribution.
 
-Infinite feedback **by itself** is insufficient. Repeated edits to one video's rating are one observation, not independent evidence. If subjects are never rated, or all observed creators always appear with the same topic, their separate effects cannot be identified. No inference algorithm can remove that ambiguity without additional assumptions or observations.
+## 4. Binary feedback models
 
-For a precise sufficient contract, consider a fixed model version and a finite covered set of feature contexts. Assume:
+Existing interest and quality votes use separate Bernoulli models.
+An overall vote trains a third model.
+The engine does not copy an overall vote into the other two models.
 
-1. Preferences are stationary, and distinct rated videos supply conditionally independent Bernoulli observations with probabilities strictly between zero and one.
-2. Each covered context is rated with a positive limiting frequency; missing ratings do not select outcomes after conditioning on the modeled features.
-3. The true conditional log-odds are representable by the channel's offset and feature functions.
-4. The target parameter is identifiable on that support. With redundant columns, the identifiable parameter is the vector of logits/predictions, not an arbitrary decomposition into correlated coefficients.
-5. The prior is proper, has positive density around the true identified parameter, and has fixed finite precision. For the overall head, its estimated offsets converge uniformly to their true limiting offsets.
+For channel \(c\),
 
-Then, for every positive `epsilon`, the exact posterior puts probability tending to one on an `epsilon` neighborhood of the true identified parameter. In particular, the posterior predictive probabilities converge to the user's probabilities on the covered support.
+\[
+y_{ic}\sim\operatorname{Bernoulli}(\sigma(o_{ic}+x_{ic}^{T}\beta_c)),
+\qquad \beta_{cj}\sim N(0,s_j^2).
+\]
 
-Proof sketch for this implementation: normalized log likelihood converges to a weighted sum of Bernoulli cross-entropies. Its difference from the true parameter is the negative weighted sum of Bernoulli KL divergences. Positive context frequencies and identifiability make that difference strictly negative away from the truth. The fixed Gaussian log prior divided by the number of observations tends to zero and its density is positive near the truth. Standard finite-dimensional GLM posterior-consistency conditions therefore yield concentration. For redundant features, apply the argument on the identifiable design span; null-space coefficients retain prior uncertainty. A uniformly vanishing plug-in offset error leaves the limiting overall likelihood contrast unchanged.
+The initial offsets are \(\operatorname{logit}(I_0)\) and \(\operatorname{logit}(Q_0/100)\).
+Numerical clipping keeps offsets finite.
+It does not limit the final learned probability.
+Each model includes its offset as a predictor, so learning can cancel that offset.
 
-This is a sufficient-conditions argument, **not an unconditional guarantee for arbitrary adaptive retrieval, nonstationary users, growing feature spaces or selectively supplied feedback**. Model misspecification can yield a best-fitting approximation rather than the actual preference. Adding infinitely many one-off creators does not supply infinitely many observations about each creator. General high-dimensional or adaptive-design guarantees require additional assumptions and are not asserted here. The implementation reports information rank where computed and does not call uncertain coefficients converged.
+Prior standard deviations are 0.60 for domain and topic corrections.
+They are 0.35 for the other implemented corrections.
+These proper Gaussian priors have full support and fixed finite precision.
+They do not impose a permanent correction limit.
 
-Routine inference rebuilds from all current, versioned training labels using MAP and a Laplace approximation. It does not repeatedly reuse an approximate posterior as the prior for the same historical data. Newton solves use a full Hessian for small models and matrix-free, preconditioned conjugate gradients for larger ones, with no fixed feature/observation truncation. The optimization stopping criteria control residuals or decrease with sample size. Under regular identifiable fixed-dimensional conditions, MAP converges and the inverse-information covariance shrinks; the Laplace approximation is asymptotically valid. Finite-sample approximation quality is separately tested against numerical integration. Neither passing simulations nor thirty ratings proves an infinite-sample theorem.
+Interest predictors include domains, topics, creator, platform, and duration.
+Quality predictors include the four criteria, missingness indicators, duration, platform, and source indicators.
+Several tags form one predictor vector for one observed judgment.
+They do not create duplicate observations.
 
-There is no fixed cap on learned correction magnitude, no recency forgetting and no capped effective sample count. Unknown-feature priors remain uncertain. Heuristic evidence-sensitivity intervals are reported separately: persistent artificial measurement noise is not convolved into the point prediction, which would otherwise introduce an asymptotic bias absent from the training likelihood.
+The engine rebuilds each model from current training labels.
+An edit replaces one effective observation.
+It does not repeatedly use the previous posterior as a new prior for the same data.
 
-## Ratings, evaluation and release
+## 5. Full ranking
 
-Interest, quality and overall ratings are independent editable channels. Replacing or clearing a channel rebuilds its observation set; another channel is not erased. Watch/dismiss actions and missing ratings never become preference labels. Reasons remain user-provided text and are not silently reclassified by a model.
+The initial weighted score is
 
-The calibration workflow reserves thirty previously unrated verified videos, fifteen per platform, balancing available familiarity/quality strata and limiting creator repetition. It excludes creators already present in current legacy or structured training data, caps repeated retrieval-family combinations and favors uncovered available domains. This is retrieval diversity, not complete semantic deduplication. Whole known creators are assigned together to training or holdout, and ordinary feedback from a reserved holdout creator is also withheld. New labels use frozen feature snapshots.
+\[
+B=0.60Q+0.25I+0.05E+0.05R+0.05D.
+\]
 
-Verified evidence corrections are append-only derived feature revisions. They preserve original scorecards, rating snapshots, comments and labels, while replacing the effective quality evidence used for fitting. Changed evidence invalidates affected evaluations. Complete Bilibili provenance metadata is required before quality training; an unknown numeric copyright enum is retained without interpreting it or discarding otherwise valid metadata. `learn repair-evidence` uses retained verified frames/captions within explicit bounds and never downloads replacement media or invents ratings.
+All components use a scale from zero to 100.
+Without ordinal feedback, \(Q=100p_Q\) and \(I=100p_I\) use the learned binary predictions.
+The next section defines the structured replacements.
+\(E\) is community response.
+For age \(a\) in years, recency is \(R=100/(1+a/10)\).
+A missing publication date gives \(R=50\).
 
-After a thirty-video review with at least 26 ratings in each main channel, evaluation is frozen **before** holdout labels are released into training; these need not be the same 26 videos. A reservation also expires after sixty distinct newly rated videos, so incomplete calibration cannot withhold a creator's feedback indefinitely. Release alone does not pass the Phase 4 gate. All its labels can then inform preferences. Another unseen cohort can be requested with `calibrate start --new`. Revisions invalidate a frozen evaluation whose label identities changed; evaluation is never recomputed on already-trained holdouts and presented as independent.
+Creator diversity is \(D=100/(1+n+0.1h)\).
+Here, \(n\) counts this creator in the developing list.
+The value \(h\) counts the creator in recent recommendation exposures.
+Randomness enters discovery rather than adding a random final-score bonus.
 
-Reports include held-out Brier score, log loss, prior comparison and paired loss differences resampled by whole creator groups. Reliability-bin observed intervals use the same cluster bootstrap and are omitted when not informative. These small-sample intervals do not guarantee nominal coverage. The development gate requires a thirty-video cohort, at least 26 independent ratings per main channel, ten per channel/platform, eighteen training and eight held-out labels with response variation and at least six held-out creator groups for each active main response type. Blanks are abstentions, not negative or Medium labels. Three-level ratings have separate multiclass Brier/log-loss reports; legacy binary validation cannot certify a newly added response type. Mixed legacy and structured heads are checked separately, as is known-level depth when active. A detectably worse Brier score fails the gate. Wide intervals do not prove equivalence or improvement. Metrics apply to explicitly rated retrieved videos, with no unbiased platform-wide claim. The small overall-approval head is outside this main-channel gate.
+When overall training labels exist, an overall logistic model calibrates \(B\).
+Its offset is \(\operatorname{logit}(B/100)\).
+Its predictors include all component values and context corrections.
+Its final score is the predicted overall approval percentage.
+Otherwise, the final score is \(B\).
 
-Read-only status and gate checks do not fit missing models. A frozen receipt records the pre-release tested snapshot; later fitting on released labels cannot replace that held-out result. Newly activated response types require a fresh unseen cohort rather than inheriting certification from a binary receipt.
+The overall stage recomputes component offsets for training and prediction.
+This is conditional empirical Bayes, not an exact joint posterior over every model.
+Its consistency requires uniformly stabilizing component offsets.
+Published historical lists retain their saved scores.
+Later runs use the current model.
 
-## Scoped feedback and depth — October 27 extension
+## 6. Structured feedback
 
-Four independent structured dimensions are editable in both lists:
+Topic interest, broad-subject interest, depth fit, and video quality are independent dimensions.
+Low, Medium, and High represent observed categories.
+Blank means no observation.
+Comments remain notes unless the user supplies an explicit structured judgment.
 
-| Dimension | Responses | Scope |
-| --- | --- | --- |
-| Specific-topic interest | Low / Medium / High | One explicitly confirmed topic |
-| Broad-subject interest | Low / Medium / High | One explicitly chosen subject |
-| Depth fit | Too elementary / About right / Too advanced | One topic and observed audience level |
-| Video quality | Low / Medium / High | Verified quality features |
+A topic or depth clarification excludes that video's old interest and overall votes from fitting.
+An ordinal quality judgment excludes that video's old binary quality vote from fitting.
+The engine preserves the original rows and comments.
+Clearing the clarification restores the earlier effective observation.
+Clear that earlier vote separately to abstain from it too.
 
-Medium is an actual response category. Blank is missing information. Free text is preserved as a note; it does not silently create additional votes. A specific-topic or depth clarification supersedes the same video's ambiguous legacy interest/overall observations during fitting, while preserving their original rows and comments. A three-level quality judgment supersedes that video's legacy quality observation. Clearing the clarification restores the earlier observation; clear the earlier vote separately to abstain from it too. Revisions replace one effective observation per video/dimension.
+### Topic and broad-subject interest
 
-Specific and broad interest use separate Dirichlet categorical posteriors. For a prior mean `b` (0.75 for an onboarding-related topic/subject, otherwise 0.35), the Low/Medium/High prior is `alpha = 2*((1-b)^2, 2*b*(1-b), b^2)`. A topic's parent-domain association is anchored by its earliest explicit topic/depth action and persists across edits and clears; new votes cannot change that association and move the prior. Explicit onboarding changes can revise the prior. Add the current distinct-video category counts to obtain the exact posterior. The expected interest score is `P(High) + 0.5*P(Medium)`. Topic labels are confirmed retrieval suggestions or user-entered labels, not automatic semantic truth. Matching currently uses normalized labels; a custom label is known for its rated video and transfers only to candidates with the same label.
+Each user-selected topic or subject uses a separate Dirichlet categorical model.
+For initial mean \(b\), its Low/Medium/High prior is
 
-Each named topic has its own likelihood and prior. Its observations are **not** added to a parent domain, global intercept, creator or sibling topic. Explicit broad-subject feedback can inform matching descendants at prediction time; a matching specific-topic posterior takes precedence. This deliberately gives zero upward propagation for a clearly scoped dislike, rather than merely using a smaller negative domain weight. Existing unexplained legacy votes keep their former interpretation until clarified or cleared.
+\[
+\alpha=2\left((1-b)^2,\ 2b(1-b),\ b^2\right).
+\]
 
-Depth uses a separate Dirichlet posterior for `(topic, observed audience level)` and responses `(want deeper, suitable, want lighter)`, with prior `(0.5,1,0.5)`. Let `s=P(suitable)`. For a known matching level, suitability changes interest odds by `s/(1-s)`; its prior mean 0.5 is neutral. Depth never changes quality or the subject-interest posterior. An introductory mismatch does not establish a preference for every advanced video. Unknown audience levels retain the feedback but do not adjust future candidate scores. New scorecards can supply a cited introductory/intermediate/advanced assessment; a user can explicitly provide the observed level for a reviewed video. No level is inferred from duration or substance grade.
+Use \(b=0.75\) for an onboarding-related topic or subject and \(b=0.35\) otherwise.
+Current distinct-video category counts \(n\) give posterior \(\operatorname{Dirichlet}(\alpha+n)\).
+The interest index is \(100[P(\mathrm{High})+0.5P(\mathrm{Medium})]\).
 
-Three-level quality uses a continuation-ratio categorical likelihood with two Gaussian-prior logistic heads: `a=P(Medium or High)` and `b=P(High | not Low)`. The probabilities are `(1-a, a*(1-b), a*b)`. A Low response observes only the first Bernoulli event; Medium and High also observe their conditional second event. This factorization is one categorical likelihood, not two duplicate votes or a fractional Bernoulli label. The ranking quality index is `100*(0.5*P(Medium)+P(High))`; it is explicitly an expected ordinal utility rather than an approval percentage. Initial stage offsets use the legacy quality posterior (or `Q_0` without legacy labels), via the categorical prior above, and can be fully cancelled by learned coefficients. This conditional empirical-Bayes transfer preserves earlier quality learning when the first ordinal rating arrives; it does not turn legacy thumbs into invented category observations. Numerical offset clipping is not a permanent bound on learned probabilities. Legacy binary quality remains available separately and supplies the component when no ordinal quality training data exists.
+The earliest explicit topic or depth action anchors the topic's parent domains.
+Edits and clears preserve that anchor.
+An explicit onboarding change can change the prior.
+A new dislike cannot move the prior by changing the parent association.
 
-For a fixed covered topic/level group with stationary independent categorical responses, the Dirichlet posterior is `Dirichlet(alpha+n)`. The empirical proportions converge almost surely to the category probabilities, the fixed prior contribution vanishes, and posterior variance tends to zero. This proves group prediction consistency under coverage; it does not prove generalization to an unrated child topic or an unknown level. The ordinal quality model inherits the logistic consistency conditions separately for its two conditional heads, with positive frequency of the second-stage event, correct model specification and uniformly stabilizing plug-in legacy offsets. Sparse feedback, misspecification and selective abstention remain limitations. There is no permanent shrinkage floor or observation cap.
+A topic judgment does not update parent, sibling, global, or creator dislikes.
+A matching specific-topic posterior takes precedence over a broad-subject posterior.
+Several matching topic scores use an average.
+Custom topic labels transfer only to matching normalized labels.
 
-Averaging several matching topic scores and multiplying by depth-suitability odds are ranking policies, not a theorem identifying their combination with true joint approval probability. Each named group's own distinct-video sample size must grow for its consistency result to apply. The current user's deliberate abstentions may depend on unmodeled difficulty, so the legacy model's missing-at-random condition is not established by the completed review.
+### Depth fit
+
+Depth uses a separate model for each topic and observed audience level.
+The responses are want deeper, suitable, and want lighter.
+Their Dirichlet prior is \((0.5,1,0.5)\).
+For \(s=P(\mathrm{suitable})\), the ranking multiplies interest odds by \(s/(1-s)\).
+The prior mean \(s=0.5\) is neutral.
+
+Depth does not change the quality or domain-interest posterior.
+Unknown audience levels retain feedback but do not adjust future candidate scores.
+Audience level requires cited evidence or an explicit user choice.
+Duration and substance grade do not establish audience level.
+
+Topic averaging and depth odds are ranking policies.
+They do not establish a true joint approval probability.
+
+### Ordinal quality
+
+The quality model uses two logistic stages:
+
+\[
+a=P(\mathrm{Medium\ or\ High}),\quad b=P(\mathrm{High}\mid\mathrm{not\ Low}).
+\]
+
+The category probabilities are \((1-a,\ a(1-b),\ ab)\).
+A Low response supplies only the first-stage event.
+Medium and High responses also supply the conditional second-stage event.
+This is one categorical likelihood, not duplicate votes or fractional Bernoulli labels.
+
+The quality index is \(Q=100[0.5P(\mathrm{Medium})+P(\mathrm{High})]\).
+It represents expected ordinal utility, not a binary approval percentage.
+Initial stage offsets transfer the legacy quality prediction without inventing category labels.
+Learned corrections can cancel these offsets.
+The binary quality model remains separate.
+
+## 7. Calibration and evaluation
+
+The calibration cohort contains thirty previously unrated videos, fifteen from each platform.
+Selection balances available groups and limits repeated creators and retrieval families.
+It excludes creators already present in active training feedback.
+This does not guarantee semantic diversity across all possible subjects.
+
+Known creators stay entirely in training or holdout.
+Feedback from other videos by a reserved holdout creator also waits for release.
+The engine saves evaluation before it releases reserved labels into training.
+It releases a completed review with at least 26 judgments in each main channel.
+An incomplete reservation also expires after sixty distinct newly rated videos.
+Expiration does not establish successful calibration.
+
+Reports include Brier score, log loss, prior comparisons, and creator-group bootstrap intervals.
+Binary reliability bins compare predicted and observed response frequencies.
+Categorical responses use multiclass losses.
+The small-sample bootstrap does not guarantee nominal interval coverage.
+
+The development check requires:
+
+1. A thirty-video cohort and at least 26 judgments per main channel.
+2. At least ten judgments per channel and platform.
+3. At least eighteen training judgments for each active main response type.
+4. At least eight holdout judgments with two examples in each of two response categories.
+5. At least six holdout creator groups for each checked response type.
+6. No detected Brier degradation relative to the prior.
+
+The check includes mixed binary and structured response types separately.
+Only known-level depth feedback can establish known-level depth coverage.
+The separate overall model is outside this main-channel check.
+Wide intervals do not prove equivalence or improvement.
+
+Read-only status does not fit a missing model.
+Changed labels or effective features invalidate affected frozen evaluations.
+A new response type requires new holdout coverage.
+Training on released labels does not replace the earlier test result.
+
+Evidence maintenance adds derived feature records after source checks.
+They preserve original ratings, comments, scorecards, and captured features.
+Incomplete source metadata can pause quality fitting.
+Maintenance uses retained frames and captions without downloading replacement media.
+
+## 8. Consistency assumptions
+
+Infinite feedback alone is insufficient.
+Repeated edits to one rating remain one observation.
+Unobserved topics and confounded creator effects cannot become identifiable through unrelated feedback.
+
+For a fixed model version and finite covered feature support, sufficient conditions are:
+
+1. Distinct videos supply stationary, conditionally independent responses with probabilities strictly between zero and one.
+2. Each covered context has positive limiting observation frequency. Missing labels do not select outcomes after conditioning on modeled features.
+3. The true conditional logits lie within the implemented offset and feature family.
+4. The prediction target is identifiable on the covered support. Redundant coefficients need not be separately identifiable.
+5. The prior is proper and positive near the true target, with fixed finite precision.
+6. Plug-in component offsets converge uniformly where an overall or ordinal stage uses them.
+
+Under regular finite-dimensional conditions, the exact posterior concentrates around the true identified target.
+Consequently, predictions converge on the covered support.
+
+The normalized likelihood contrast is a negative weighted sum of Bernoulli KL divergences.
+Positive coverage and identifiability separate the truth from alternatives.
+The fixed Gaussian log prior divided by sample size tends to zero.
+Its positive local density supplies prior mass near the truth.
+The standard concentration argument then applies on the identifiable design span.
+Null-space coefficients can retain prior uncertainty.
+Uniformly vanishing offset errors preserve the limiting likelihood contrast.
+
+Routine inference uses MAP with a Laplace approximation.
+Small models use a full Hessian.
+Larger models use matrix-free preconditioned conjugate gradients.
+Prediction uses finite Gaussian quadrature.
+These are numerical approximations, with conditional asymptotic justification rather than exact finite-sample posterior calculations.
+
+For a fixed categorical group, the exact posterior is \(\operatorname{Dirichlet}(\alpha+n)\).
+If that group's distinct-video sample grows under stationary independent responses, empirical proportions converge and posterior variance tends to zero.
+Each topic or level group needs its own coverage.
+The ordinal model also requires positive second-stage frequency and well-specified conditional models.
+
+The project does not claim unconditional consistency for growing hierarchies, changing preferences, missing predictors, selective feedback, or arbitrary adaptive retrieval.
+Difficulty-related abstentions can violate the missing-label assumption.
+Model misspecification can produce a best-fitting approximation instead of the actual preference.
+
+There is no fixed observation cap, forgetting window, or learned correction cap.
+Unseen features retain prior uncertainty.
+Evidence-sensitivity intervals remain separate from point predictions.
+Persistent artificial measurement noise does not enter the point prediction.
 
 ## References
 
-- [Stan regression models](https://mc-stan.org/docs/stan-users-guide/regression.html): logistic regression and hierarchical shrinkage.
-- [Stan multinomial and Dirichlet-multinomial distributions](https://mc-stan.org/docs/functions-reference/multinomial-distribution.html): categorical counts and positive Dirichlet parameters.
-- [Miller, JMLR 2021](https://www.jmlr.org/papers/v22/20-469.html): conditions for concentration, asymptotic normality and Laplace validity, including GLMs; the conditions must be checked rather than inferred from the word Bayesian.
-- [Kasprzak, Giordano and Broderick, JMLR 2025](https://www.jmlr.org/beta/papers/v26/24-0619.html): finite-sample Laplace approximation accuracy is a separate concern.
-- [Stan predictive checks](https://mc-stan.org/docs/stan-users-guide/posterior-predictive-checks.html): prior and posterior predictive assessment.
-- [Li et al., WSDM](https://arxiv.org/abs/1003.5956): offline recommendation evaluation needs appropriate logging assumptions; the current curated data does not establish those assumptions.
+- [Stan regression models](https://mc-stan.org/docs/stan-users-guide/regression.html).
+- [Stan categorical and Dirichlet distributions](https://mc-stan.org/docs/functions-reference/multinomial-distribution.html).
+- [Miller, 2021](https://www.jmlr.org/papers/v22/20-469.html): posterior concentration and Laplace conditions.
+- [Kasprzak, Giordano, and Broderick, 2025](https://www.jmlr.org/beta/papers/v26/24-0619.html): finite-sample Laplace accuracy.
+- [Li et al.](https://arxiv.org/abs/1003.5956): assumptions for offline recommendation evaluation.
