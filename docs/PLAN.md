@@ -1,6 +1,6 @@
 # Deepvids implementation plan
 
-Status: Phases 1–3 are implemented and verified on `probe-phase-3`. See [discovery verification](validation/PHASE1_VALIDATION.md), [the evidence trial](validation/PHASE2_VALIDATION.md), [the manual demo](validation/PHASE3_VALIDATION.md) and the [roadmap](PHASES.md). The local gate verifies complete 50-candidate/ten-pick runs on both platforms. Bayesian fitting and scheduling have not started. Earlier sampling and dated-catalog routes remain superseded research.
+Status: Phases 1–4 of the usable demo are verified after the October 27 audit. The existing binary-channel development holdout passes; newly added structured response types remain empirically provisional and require separate unseen validation. The user's completed review is preserved. See [the Phase 4 audit](validation/PHASE4_AUDIT.md), [the mathematical/scoring contract](SCORING.md) and [the roadmap](PHASES.md). Phase 5 scheduling has not started. Earlier sampling and dated-catalog routes remain superseded research.
 
 The user accepted curated keyword search mixed with creators on YouTube, adding isolated-session Home on Bilibili. The [research design](research/PROBE_DISCOVERY.md) is merged below. Historical catalog implementations have been removed; their research notes remain archived.
 
@@ -73,7 +73,7 @@ The ChatGPT-authenticated Codex JSON runner generates bilingual queries and up t
 
 Successful anonymous source receipts and at least one title/description anchor match activate an addition. Empty or unmatched successful searches leave it unconfirmed; access failures leave its query pending. Neither outcome changes preferences. Unconfirmed nodes retain their provenance but are not sampled as active topics. Query plans interleave new concepts with existing concepts before creator expansion. `topics` inspects the private map; `discover --seed N` permits reproducible selection, and `--max-planning-calls 0..2` bounds generation. `continue` preserves selections, generated queries, attempts, source cursors and budgets.
 
-Recommendation jobs share their model allowance with exploration: at most two planning attempts count against the configured `--max-assessments` total before new video assessments. Reports distinguish planning calls, assessment calls and their total. Reused discovery buffers consume no new planning calls in the current recommendation invocation. At 50 pending entries, discovery remains skipped. Evidence recovery for the historical 20 Bilibili failures is deferred at the user's request. Bayesian fitting and scheduling have not started.
+Recommendation jobs share their model allowance with exploration: at most two planning attempts count against the configured `--max-assessments` total before new video assessments. Reports distinguish planning calls, assessment calls and their total. Reused discovery buffers consume no new planning calls in the current recommendation invocation. At 50 pending entries, discovery remains skipped. Evidence recovery for the historical 20 Bilibili failures is deferred at the user's request. Phase 4 learning is implemented separately from retrieval; scheduling has not started.
 
 ## Phase 2: bounded evidence collection and quality assessment
 
@@ -135,7 +135,7 @@ Run the following funnel separately for YouTube and Bilibili, on both daily and 
 
 The Phase 1 preview selector remains retrieval scaffolding. The separate Phase 3 engine implements ratio screening, pending-slot reservations and quality-ranked recommendations without relabeling existing preview lists. Initial topic fit uses explicit onboarding interests and inherited exploration/curated domain tags, not a fitted profile or verified semantic content labels.
 
-Implementation: SQLite schema 7 retains onboarding, video state, append-only user actions, exposure history and count snapshots and adds the exploration graph and search observations. Older schema versions are migrated, with a pre-migration backup when upgrading an existing database. `profile`, `recommend`, `video`, `queue`, `publish` and loopback-only `serve` expose the manual workflow. Platform job leases serialize competing recommendation jobs; watched/feedback actions remain usable during collection, and publication rechecks current state under a SQLite write transaction. A changed profile or newly restored pending entry may require a new run. Digests can be regenerated from committed state if file export is interrupted.
+Implementation: SQLite schema 9 retains onboarding, video state, append-only actions, exposure history, count snapshots and the exploration graph, adding independent structured feedback to versioned learning/calibration state. Older schema versions are migrated with a pre-migration backup. `profile`, `recommend`, `video`, `rate`, `queue`, `publish` and loopback-only `serve` expose the manual workflow. Platform job leases serialize competing recommendation jobs; watched/feedback actions remain usable during collection, and publication rechecks current state under a SQLite write transaction. A changed profile or newly restored pending entry may require a new run. Digests can be regenerated from committed state if file export is interrupted.
 
 Each platform defaults to 160 metadata requests, up to 52 total model calls (at most two planning and fifty quality assessments), and 1 GiB media; both platforms share one 1,800-second batch allowance. Fresh discovery uses its separately recorded bounded request budget inside the same elapsed-time limit. Per-video evidence preparation is limited to the remaining time/bytes, at most 600 seconds and 128 MiB; assessments use one augmented call, reusing valid cached scorecards. Exhaustion checkpoints the cursor without resetting budgets. Explicit `publish RUN_ID --allow-incomplete` can save a provisional assessed-subset digest; a partial publication cannot satisfy Phase 3 readiness. New rounds reuse evidence while admitting new candidates within pending capacity.
 
@@ -200,25 +200,83 @@ Canonical YouTube video IDs and Bilibili archive/part IDs define deduplication a
 
 ## Bayesian learning design
 
+Implemented in `learning/`. The [scoring and consistency contract](SCORING.md) specifies the formulas, priors, conditional convergence argument, approximations, coverage limits and evaluation workflow. Schema 10 retains independent structured topic/subject/depth/quality judgments, legacy ratings, versioned posterior snapshots, calibration membership and frozen evaluations, adding persistent topic-prior anchors. Upgrades create `deepvids.before-v10.sqlite3`. Existing actions, profiles, published scores and earlier backups are preserved. Verified quality-feature repairs are append-only derived revisions rather than overwritten ratings or scorecards. Explicit topic/depth clarifications cannot train ancestor dislikes; separate categorical and ordinal likelihoods distinguish Medium from abstention. Evaluation counts channels independently and resamples creator groups. See [the audit](validation/PHASE4_AUDIT.md) and [the extended workflow checks](validation/SCOPED_FEEDBACK.md).
+
+The following original design is refined by that contract: criterion priors are now explicit; separate quality/interest/overall Bernoulli models use full-support finite Gaussian priors; overall calibration can override its initial weighted-policy offset without a permanent blend cap. The 60/25/5/5/5 weights remain the initial weighted base, while the final learned overall probability is not permanently constrained to that heuristic. Hard eligibility and queue/diversity protections remain unchanged. The likelihood uses one current, unweighted label per video/channel; no forgetting, sample-count cap or duplicate-vote inflation is allowed. Temporary heldouts are evaluated before release into training, including a finite reservation limit. Missing semantic depth/presentation features are not fabricated.
+
 Keep content observations, learned distributions and fixed policy separate.
 
-- Represent user interests, creator preferences, depth and presentation preferences using Bayesian logistic regression with hierarchical effects and informative, revisable priors from onboarding.
+- Represent interests, creator preferences, duration and available verified quality predictors using Bayesian logistic regression with shrunken effects and informative onboarding priors; do not fabricate unavailable semantic depth/presentation features.
 - Retain posterior uncertainty. Sparse creator preferences shrink toward the general prior rather than becoming confident after one vote.
 - Learn feature-quality relationships from separately labeled quality feedback, including the development calibration set. Translated reposts start as a hypothesis, not a proven cause.
-- Preserve the configured rising/plateau duration shape initially; its strength can be inferred within the configured nonnegative bound. The 90-minute cap remains a hard rule.
+- Preserve the rising/plateau shape and five-point bound in the raw duration prior. Learned approval corrections remain unrestricted so the prior cannot prevent preference consistency. The 90-minute exclusion remains a hard rule.
 - Route reason-specific feedback to the appropriate model. An unexplained vote informs overall preference and does not independently establish poor quality or disinterest in every topic. Missing feedback is unlabeled.
 - Use MAP estimation with a Laplace approximation for routine local posterior updates; rebuild from stored feedback batches so edits replace earlier observations. Check the approximation against a posterior-sampling reference during validation where needed.
-- Keep embeddings and Codex feature extraction fixed initially. Version observations and retain their evidence uncertainty.
-- Keep the 60/25/5/5/5 weights, target 25/25 shortlist subject to pending-slot guarantees, conditional minimum of two unrelated videos in each final 10, and hard exclusions fixed until explicitly changed.
+- Use fixed, versioned evidence predictors and retain uncertainty; no embedding model is trained in this implementation.
+- Keep the initial 60/25/5/5/5 weighted base, target 25/25 shortlist subject to pending-slot guarantees, conditional minimum of two unrelated videos and hard exclusions. Learned overall calibration can replace the heuristic ordering as feedback accumulates; a fixed blend would violate the requested asymptotic learning requirement.
 - Version query curation and retrieval allocation separately from Bayesian profile updates. Preserve independent horizon/intersection effort. Votes are conditional on exposure; missing feedback cannot establish that a query family is poor.
 
 Current discovery does not sample random video/user IDs. Bayesian inference estimates preference/quality parameters after evidence collection; it cannot recover material omitted by retrieval.
+
+## Phase 5 product, installation and distribution decisions
+
+This section specifies the proposed Phase 5 deliverable before implementation. Phase 5 is still unstarted; the existing launcher/package checks do not establish a successful installation through the Codex plugin interface.
+
+The target is a **desktop-only Codex plugin containing skills and a local engine**. The root `plugin.json` and `skills/` form the installable plugin; the current Python engine supplies the actual retrieval, evidence, ranking, learning and persistence. Codex executes the engine through the packaged Node launcher. A remote MCP server is not needed for this local workflow. This is a skills-based plugin, not a hosted service connected through an MCP URL. The same core skill can also be installed alone for development, provided its engine dependency is configured explicitly. A standalone skill is not the primary packaged deliverable. OpenAI documents [skills-based plugins](https://developers.openai.com/plugins/concepts/plugins) and [desktop-only execution](https://developers.openai.com/plugins/deploy/desktop-only).
+
+| Component | Responsibility | Phase 5 scope |
+| --- | --- | --- |
+| Codex plugin | Installable identity, discoverable skills and setup guidance | Primary user-facing integration, tested in a local Codex thread |
+| Deepvids skill | Onboarding, daily/additional-run instructions, result presentation, feedback and recovery | Packaged inside the plugin; no timer embedded in instructions |
+| Python wheel | Retrieval, evidence, Bayesian scoring, SQLite state and daily job semantics | Same engine used by CLI, skill and dashboard |
+| Node/npm package | Bundled plugin files, wheel, dependency locks and thin launcher | Optional delivery/install route, not an alternative scoring implementation |
+| Desktop scheduled task | Invokes the installed workflow at the user's chosen cadence | Primary recurring trigger; created only through explicit opt-in |
+| Loopback dashboard and local digests | Detailed review, feedback and retained results | Local companions; no public website deployment |
+
+### Installation and local testing come first
+
+Use the portable root manifest and introduce a canonical repo marketplace catalog under `.agents/plugins/marketplace.json`. Keep the existing `.claude-plugin/marketplace.json` only as a deliberate compatibility artifact if needed; its presence is not evidence of Claude runtime support. Resolve the installed plugin root and selected data directory explicitly, because Codex may execute an installed cache copy rather than the working checkout.
+
+Phase 5A will provide the exact tested Windows instructions: build the local package, register its local marketplace, install/enable Deepvids in the desktop Plugins Directory, restart as required, and open a fresh local Codex conversation. No GitHub push, npm publication, public plugin submission or remote MCP connection is required. Test the actual installed plugin's setup and main workflow before scheduling. The official [local packaging guide](https://developers.openai.com/plugins/build/plugins) covers local catalogs and cache behavior; [complete-plugin testing](https://developers.openai.com/plugins/deploy/connect-chatgpt) requires exercising the installed experience.
+
+The first host smoke test uses isolated state. Reusing the current demo requires explicitly selecting its existing absolute data directory; an installed plugin must not accidentally create a different profile because its working directory changed. Upgrades and uninstalling package files must preserve the chosen external profile, history, feedback and Bilibili isolated session. Test local tarball installation as well as the unpacked local source. A stale README command or assumed host capability is replaced with instructions verified against the installed Codex version.
+
+### Daily trigger and execution
+
+The selected first scheduler is the **ChatGPT desktop app's Scheduled feature for local Codex work**, invoking the installed Deepvids skill in a stable local project. Schedule availability and local plugin activation must be demonstrated on this machine in Phase 5C. The task uses the same configured external state directory and one engine daily entry point; a new worktree must not imply a fresh user profile.
+
+Official [scheduled-task documentation](https://learn.chatgpt.com/docs/automations) supports skills/plugins and local project work, but local runs require the computer on and the desktop app running. Browser-only cloud tasks cannot directly use this machine's files or signed-in browser. This project therefore does not promise daily operation while the computer is off. `/goal` maintains a thread objective; it is not our recurring clock ([Goals documentation](https://developers.openai.com/cookbook/examples/codex/using_goals_in_codex)). Installing a skill/plugin alone does not enable a daily schedule.
+
+The plugin will guide schedule setup, inspection, pausing and removal; it will not create a schedule on installation. The user chooses local time, timezone and data root during opt-in. Engine receipts remain the source of truth for completion, budgets and publication. Do not enable two independent schedulers for the same profile. If native scheduling or installed-plugin access is unavailable, Phase 5C remains blocked until an alternative is agreed; Windows Task Scheduler is a possible separate adapter, not a second scheduler silently installed by this plan.
+
+Daily engine semantics are independent of the trigger: one idempotent daily batch per profile/local date, serialized with manual additional rounds, a shared 30-minute allowance, pending carryover, bounded retries and inspectable recovery. After downtime, run at most one catch-up batch for the current date rather than replaying every missed day. Supersede unfinished earlier daily orchestration without deleting observations or unresolved recommendations. A new-day job gets its own explicit budget; continuing the same job never resets its allowance. Additional requests create separately identified extra rounds. Local digest publication means writing recommendations to the selected data directory, not uploading to the internet.
+
+### What building npm means
+
+`uv build --wheel --out-dir python` builds the Python engine wheel. `npm pack --ignore-scripts` assembles a local `.tgz` containing that wheel, the Node launcher, plugin manifest, skill and supporting documentation/locks. It neither publishes anything nor installs/enables a Codex plugin. Installing the npm package exposes the `deepvids` command; explicit setup installs the engine and selected optional dependencies outside the package. Codex plugin registration/activation is a separate host step. Phase 5 will validate a packaged install without relying on a public npm registry.
+
+The release-candidate plugin ZIP and npm tarball should come from one versioned source/payload, with format-appropriate paths and exclusion checks. They do not embed the user's Python environment, browser profile, database or model weights. No lifecycle install hook is needed to run the recommendation pipeline. Installing distribution files is distinct from downloading videos during an explicitly requested recommendation run.
+
+### Public release is separate from completing Phase 5
+
+Phase 5 ends with a locally installed, manually exercised and opt-in scheduled demo plus reviewed local release artifacts. Public distribution is an optional post-Phase-5 release track. Local testing must precede every first public release. Preparing files and archives is authorized planning/testing work; this plan does not authorize any upload, Git push, `npm publish`, portal submission or public deployment.
+
+| Destination | What could be published after explicit approval | What it accomplishes |
+| --- | --- | --- |
+| Project GitHub remote | Reviewed source, skills, manifests/catalog, license, docs and synthetic examples; optional release artifacts | Open-source development and Git-backed distribution; does not create an official plugin listing |
+| npm registry | Versioned launcher/engine/plugin bundle from the tested local tarball | CLI delivery and optional registry-backed plugin source; does not itself publish to OpenAI's directory |
+| OpenAI public Plugins Directory | A reviewed desktop-only skills-plugin ZIP and listing assets/metadata | A public listing shared by supported ChatGPT/Codex surfaces, subject to eligibility and approval |
+| Personal/repo local marketplace | Local files and catalog on this computer | Private testing without publishing to any of the above |
+
+A public release must exclude real preferences, feedback/comments, watch history, recommendation/calibration records, transcripts, frames, downloaded videos, authentication/session material, private logs and backups. Use synthetic state for screenshots/examples unless separately approved. Installation on other machines creates their own external state and sign-in; it does not distribute this user's session.
+
+The intended optional public target is OpenAI's directory for a desktop-only plugin, with GitHub source and npm as complementary distribution channels rather than substitutes. Official [desktop-only submission guidance](https://developers.openai.com/plugins/deploy/desktop-only) documents skills-only local execution; [submission guidance](https://developers.openai.com/plugins/deploy/submission) documents ZIP validation, publishing identity, review and publication. Acceptance and account eligibility are external requirements, not promised by a local test. A future cloud service, hosted dashboard, local/remote MCP adapter or Claude runtime integration needs its own design and validation. In particular, the current submission guide does not support adding MCP to an already submitted skills-only plugin; revisit the release identity before changing that architecture.
 
 ## Runtime architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the implemented package boundaries. Use a UV-managed Python core, SQLite and a dependency-free npm launcher. Explicit setup installs a bundled wheel into a versioned external runtime; npm lifecycle scripts are unnecessary. Keep state under `%LOCALAPPDATA%/deepvids`, with configurable data roots.
 
-The engine owns discovery, evidence, deterministic scoring, feedback, profiles, history, job state and migrations. The Codex skill owns conversation and presentation. Add a Claude adapter later; defer MCP until needed.
+The engine owns discovery, evidence, deterministic scoring, feedback, profiles, history, job state and migrations. The Codex skill, distributed inside the desktop plugin, owns conversation and presentation. The desktop scheduler supplies the recurring trigger; the engine owns daily idempotency and recovery. Add a Claude adapter later; defer MCP until a separately justified design requires it.
 
 The user authorizes the plugin's runtime AI to use subagents automatically for independent exploration and video analysis when host support and a time benefit exist. This is runtime authorization, not repository-development authorization. All child work shares the parent invocation's budgets and provenance requirements; the parent validates results and coordinates engine writes and publication. The current isolated `codex exec` assessment worker disables tools, so enabling delegation within that worker would require an explicit execution-path change; skill instructions alone do not implement it.
 
@@ -232,7 +290,7 @@ Save profile/history, watched/dismissed state, pending membership, recommendatio
 2. Evidence and quality assessment for discovered videos, including explicit Bilibili playback access and per-part durations.
 3. Onboarding and the complete manual recommendation funnel: fresh collection and cheap screening, 50 inspection candidates including guaranteed pending entries, evidence/full scoring, 10 recommendations per platform, digests, watched/dismissed actions, stored feedback and more rounds.
 4. Bayesian learning and roughly 30 development videos rated separately for interest and quality, with held-out checks and rejected-candidate audits.
-5. Validate scheduling and Windows local/npm installations with scripts disabled, unrelated working directories, spaces in paths, read-only package directories and upgrades preserving history.
+5. Complete the ordered Phase 5A–5D checks in [PHASES.md](PHASES.md): actual local Codex-plugin installation and manual invocation first, then engine daily semantics, native desktop scheduling and local release-candidate packaging. Validate local/npm installation with lifecycle scripts disabled, unrelated working directories, spaces in paths, read-only package directories and upgrades preserving history. Internet publication is an optional separately approved release track after local acceptance.
 
 Track quality agreement, satisfaction for familiar/unfamiliar topics, first-pass false negatives, engagement-count coverage and ratio calibration, new versus pending exposures, prohibited watched/dismissed repeats, queue occupancy, runtime, subscription usage, downloaded bytes, transcription time and completion yield. Test small/zero denominators, missing metrics, mismatched archive/part scope, extreme rates, snapshot caching and request limits, plus carryover after a day change and additional runs, full pending capacity, independent watch/vote actions, undo/revisions, cache reuse and concurrent publication. Do not evaluate on feedback already used for fitting.
 

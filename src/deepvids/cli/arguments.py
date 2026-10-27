@@ -21,6 +21,62 @@ def parser():
         "status", help="List discovery, evidence and recommendation checkpoints"
     )
     commands.add_parser("gate", help="Explain why the full recommender is gated")
+    learning = commands.add_parser(
+        "learn", help="Inspect, rebuild or evaluate explicit-feedback Bayesian models"
+    )
+    learning.add_argument(
+        "operation",
+        choices=("status", "fit", "evaluate", "repair-evidence"),
+        default="status",
+        nargs="?",
+    )
+    learning.add_argument("--max-seconds", type=float, default=180)
+    learning.add_argument("--max-videos", type=int, default=1)
+    calibration = commands.add_parser(
+        "calibrate",
+        help="Create or inspect the 30-video interest/quality calibration cohort",
+    )
+    calibration.add_argument(
+        "operation", choices=("start", "list"), default="list", nargs="?"
+    )
+    calibration.add_argument("--seed", type=int, default=42)
+    calibration.add_argument(
+        "--new",
+        action="store_true",
+        help="Start another unseen cohort after the previous reservation is released",
+    )
+    metadata = commands.add_parser(
+        "metadata",
+        help="Refresh one video's public metadata without downloading media or calling AI",
+    )
+    metadata.add_argument(
+        "identifier", help="Canonical video URL or platform/video/part ID"
+    )
+    metadata.add_argument(
+        "--use-browser",
+        action="store_true",
+        help="Use the existing isolated Bilibili login; no anonymous fallback",
+    )
+    rate = commands.add_parser(
+        "rate",
+        help="Rate a specific topic, broad subject, depth fit or quality independently",
+    )
+    rate.add_argument("identifier")
+    rate.add_argument(
+        "dimension",
+        choices=("topic_interest", "domain_interest", "depth", "quality_level"),
+    )
+    rate.add_argument(
+        "value",
+        choices=("high", "medium", "low", "deeper", "suitable", "lighter", "clear"),
+    )
+    rate.add_argument("--target", default="")
+    rate.add_argument(
+        "--level",
+        choices=("unknown", "introductory", "intermediate", "advanced"),
+        default="unknown",
+    )
+    rate.add_argument("--note", default="")
     cleanup = commands.add_parser(
         "cleanup",
         help="Preview removal of assessed full videos and obsolete evidence intermediates",

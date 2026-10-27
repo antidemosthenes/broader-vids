@@ -4,12 +4,32 @@ Independent YouTube and Bilibili recommendations, built in five verified phases.
 
 The project implements curated discovery, bounded caption/frame quality assessment and the manual recommendation workflow for YouTube and Bilibili.
 
-**Current stage:** Phases 1–3 are complete in the reference workspace. The live demo has 10 YouTube and 10 Bilibili picks, selected from 50 inspection candidates per platform. See [Phase 3 verification](docs/validation/PHASE3_VALIDATION.md), [the roadmap](docs/PHASES.md) and [the plan](docs/PLAN.md). `gate` checks local evidence; a fresh installation starts at Phase 1. Scorecards are provisional. Bayesian fitting and daily scheduling have not started.
+**Current stage:** Phases 1–4 of the usable demo are complete after the October 27 audit. The existing binary interest/quality development holdout passes; newly added structured heads remain empirically provisional until rated and independently checked. The live demo retains 10 YouTube and 10 Bilibili picks and the user's completed thirty-video review. Specific-topic interest, broad-subject interest, depth fit and three-level quality are independently editable. See [the scoring and consistency contract](docs/SCORING.md), [the Phase 4 audit](docs/validation/PHASE4_AUDIT.md) and [the roadmap](docs/PHASES.md). `gate` checks local evidence; a fresh installation starts at Phase 1. Daily scheduling has not started.
 
 
 The recommendation funnel collects fresh candidates in batches of approximately 100, screens cheaply into 50 inspection candidates per platform, then uses quality evidence and full scoring to select 10 YouTube and 10 Bilibili videos. Unwatched recommendations retain guaranteed places in later inspection lists until marked watched or dismissed, reusing cached assessments. Watched status and thumbs-up/down feedback are separate. At 50 pending on a platform, fresh admissions wait for queue space.
 
 ## Manual recommendation demo
+
+Phase 4 updates Bayesian interest, quality and overall models from independent rating channels. Editing one channel replaces its previous observation; it does not erase other channels or imply watched status. Proper finite priors shrink sparse effects without a permanent learning cap. Parameter/predictive consistency is conditional on stationarity, model specification and informative coverage; infinite feedback alone is insufficient. See [the mathematical assumptions and scoring formulas](docs/SCORING.md).
+
+```powershell
+uv run --no-sync deepvids --data-dir .localdata calibrate start
+uv run --no-sync deepvids --data-dir .localdata learn status
+uv run --no-sync deepvids --data-dir .localdata learn evaluate
+```
+
+The dashboard separates **specific-topic interest**, **broad-subject interest**, **depth fit** and **video quality** in both lists. Topic/subject/quality use High, Medium and Low. Depth uses Too elementary, About right and Too advanced, with an optional observed audience level. A specific-topic dislike or depth mismatch does not update parent-subject dislikes; depth changes suitability rather than quality. Confirm the suggested topic label before saving. Blank means no judgment. Earlier thumbs and comments are retained and individually clearable; structured clarification takes precedence for that video during learning. See [the scoped-feedback contract](docs/SCORING.md#scoped-feedback-and-depth--october-27-extension).
+
+You do not need to repeat existing ratings. Use the new fields to clarify ambiguous dislikes. Free-text comments remain notes; explicit fields determine their learning effect. Evaluation counts interest and quality independently, allowing abstentions rather than requiring thirty paired votes. It is frozen before reserved labels enter training. An incomplete reservation expires after sixty distinct newly rated videos. `calibrate start --new` requests another unseen cohort after release. Historical published scores and frozen evidence remain intact; later runs use the current posterior. See [verification of the extended workflow](docs/validation/SCOPED_FEEDBACK.md).
+
+```powershell
+uv run --no-sync deepvids --data-dir .localdata rate VIDEO_URL topic_interest low --target topology
+uv run --no-sync deepvids --data-dir .localdata rate VIDEO_URL depth deeper --target topology --level introductory
+uv run --no-sync deepvids --data-dir .localdata rate VIDEO_URL quality_level medium
+```
+
+`VIDEO_URL` is a placeholder. Each command changes one dimension; `clear` removes only that dimension. Unknown audience levels are retained without guessing depth suitability for future candidates. Fresh assessments can provide cited audience-level evidence without an additional model call or media download.
 
 Use one combined command for both platforms and a single 30-minute allowance:
 
@@ -25,7 +45,17 @@ Alpha.10 removes full videos after augmented assessment while retaining verified
 
 Bilibili metadata now includes tags and description in the same request as counts. The exact `视频翻译` tag excludes a fresh candidate before the 50-video list and blocks a pending entry from final selection without evicting it. `中配`, YouDub, source YouTube links and uploader repost declarations are separately recorded originality clues. Source links alone are not proof of copying, and none of these rules detects synthetic speech. New originality reviews can reuse verified media/captions/frames with a separately hashed metadata context; historical numeric scores are preserved. The dashboard shows these disclosures and flags historical excluded entries.
 
-Complete the discovery/evidence prerequisites reported by `gate`, and install the evidence extra (plus ASR if wanted). Set explicit interests once; feedback is stored with revisions and will support learning in Phase 4.
+To verify access or repair one saved metadata entry, use the existing isolated login without downloading video or calling AI:
+
+```powershell
+uv run --no-sync deepvids --data-dir .localdata metadata "https://www.bilibili.com/video/BV1ig87zeE9q" --use-browser
+```
+
+For stale rated evidence, `learn repair-evidence --max-seconds 180 --max-videos 1` refreshes relevant metadata and reuses retained frames/captions for a bounded quality review. It preserves votes and historical scorecards and starts no media download.
+
+The command makes one metadata request within a sixty-second allowance. It saves identity-verified counts, description, tags and the uploader's authorship declaration, with a request receipt. Access failures retain the previous snapshot and return a paused diagnostic with exit code 2; rerun this command after correcting access. Recommendation metadata failures preserve the candidate cursor and pause before screening. Continue the recommendation run with its original budgets. Anonymous Bilibili discovery remains separate from the isolated login. See [the access investigation](docs/validation/BILIBILI_ACCESS.md).
+
+Complete the discovery/evidence prerequisites reported by `gate`, and install the evidence extra (plus ASR if wanted). Set explicit interests once; versioned feedback now drives the Phase 4 models.
 
 ```powershell
 uv --cache-dir .cache/uv sync --extra evidence --extra asr
@@ -38,7 +68,7 @@ Open `http://127.0.0.1:8765` for video links, scores and watched/dismiss/feedbac
 
 The dashboard uses Python's `ThreadingHTTPServer`; the npm command is a launcher for that same Python engine. To stop a foreground server, press **Ctrl+C** in its terminal. Closing a browser tab does not stop it. For a background server on Windows, inspect `Get-NetTCPConnection -LocalPort 8765 -State Listen` and the matching Python command line, then use `Stop-Process -Id SERVER_PID` with that process ID. An external launcher may also need to be stopped. Stopping the dashboard preserves saved recommendations and feedback; run `serve` again to reopen it.
 
-Expand **Score details** on a card to see weighted final contributions, the content/length split, saved criterion grades and engagement ratios. Content quality uses substance, directness, original contribution and purposeful visuals in a holistic judgment out of 95, plus up to five length points. Criterion grades do not have separate numerical weights.
+Expand **Score details** to see weighted contributions, saved criterion grades, engagement ratios and any personal calibration. Historical evidence retains its holistic content judgment out of 95 plus up to five length points. Phase 4 derives an explicit 40/25/25/10 criterion prior, then learns quality, interest and overall approval corrections; see [the formulas](docs/SCORING.md).
 
 Screening uses smoothed likes/views on YouTube and likes/views, coins/views and favorites/views on Bilibili, with missing counts neutral. `--use-browser` enables the isolated Bilibili session for count enrichment and content evidence, without adding it to anonymous discovery. Content quality uses verified captions/frames. Topic fit initially uses inherited exploration or curated domain tags rather than a fitted preference model.
 
@@ -124,21 +154,24 @@ uv build --out-dir python
 npm pack --ignore-scripts
 ```
 
-The tarball contains the wheel, launcher and Codex skill. To use a packed/local package:
+The tarball contains the wheel, launcher, plugin manifest and Codex skill. `uv build` builds the engine; `npm pack` creates a local archive. Neither command publishes it or activates the plugin in Codex. To use the launcher from an unpacked package:
 
 ```powershell
 node bin/deepvids.cjs setup
 node bin/deepvids.cjs doctor
 ```
 
-After building the wheel, register the local source in Codex:
+Phase 5 will verify the actual desktop plugin installation, starting with a local marketplace and a fresh local Codex conversation. The official [local plugin guide](https://developers.openai.com/plugins/build/plugins) documents marketplace registration:
 
 ```powershell
 codex plugin marketplace add C:\path\to\deepvids
-codex plugin add deepvids@deepvids-local
 ```
 
-The plugin marketplace manifest also travels with the npm package; its package directory can be registered as the local source. Host activation is a separate local setup step. The Claude Code runtime adapter remains a later milestone.
+Then install/enable Deepvids from that local source in the desktop Plugins Directory and start a fresh local conversation, restarting the app when required. This host workflow is a Phase 5A acceptance requirement, not an already completed test. The earlier `codex plugin add` instruction has been removed because it was not verified against the current documented installation flow.
+
+The planned product is a **desktop-only Codex plugin containing skills and the local engine**, with npm as an optional delivery route. Native desktop scheduled tasks will provide opt-in daily triggers; `/goal` is not the daily scheduler. The dashboard and digests remain local. The computer and desktop app must be running for the local schedule. A standalone skill remains a development option, while remote MCP/cloud hosting and a Claude runtime adapter are outside Phase 5.
+
+Local source and packed-file installs must work before any public release. GitHub source, npm distribution and the OpenAI public Plugins Directory are distinct optional publishing steps, each requiring explicit authorization after local acceptance. See [the clarified design](docs/PLAN.md#phase-5-product-installation-and-distribution-decisions) and [Phase 5A–5D](docs/PHASES.md).
 
 Setup requires UV and installs only the bundled wheel into an external versioned environment. An npm installation also exposes `deepvids setup`. No postinstall script or model API key is used. No package has been published to npm.
 

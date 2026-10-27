@@ -17,7 +17,7 @@ from deepvids.recommendations.originality import context_identity
 
 
 CRITERIA = ("substance", "directness", "originality", "visuals")
-RUBRIC_VERSION = 2
+RUBRIC_VERSION = 3
 
 
 def current_card(card):
@@ -83,6 +83,20 @@ def scorecard_schema():
         "additionalProperties": False,
         "properties": {
             "summary": {"type": "string"},
+            "audience": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "level": {
+                        "type": "string",
+                        "enum": ["unknown", "introductory", "intermediate", "advanced"],
+                    },
+                    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["level", "confidence", "evidence_ids", "rationale"],
+            },
             "criteria": {
                 "type": "object",
                 "additionalProperties": False,
@@ -101,6 +115,7 @@ def scorecard_schema():
         },
         "required": [
             "summary",
+            "audience",
             "criteria",
             "content_quality",
             "quality_low",
@@ -112,7 +127,11 @@ def scorecard_schema():
 
 
 def validate_card(card, evidence_ids, mode, rubric_version=RUBRIC_VERSION):
-    if not isinstance(card, dict) or set(card) != set(scorecard_schema()["required"]):
+    required = set(scorecard_schema()["required"]) - {"audience"}
+    if not isinstance(card, dict) or set(card) not in (
+        required,
+        required | {"audience"},
+    ):
         raise ValueError("The scorecard has an invalid top-level schema.")
     if not all(
         isinstance(card[field], str) and 1 <= len(card[field]) <= 4000
@@ -123,8 +142,28 @@ def validate_card(card, evidence_ids, mode, rubric_version=RUBRIC_VERSION):
         isinstance(s, str) for s in card["unknowns"]
     ):
         raise ValueError("Scorecard unknowns must be an explicit text list.")
-    if rubric_version not in {1, RUBRIC_VERSION}:
+    if rubric_version not in {1, 2, RUBRIC_VERSION}:
         raise ValueError("Unsupported quality rubric version.")
+    if "audience" in card:
+        audience = card["audience"]
+        if (
+            not isinstance(audience, dict)
+            or set(audience) != {"level", "confidence", "evidence_ids", "rationale"}
+            or audience["level"]
+            not in ("unknown", "introductory", "intermediate", "advanced")
+            or audience["confidence"] not in ("low", "medium", "high")
+            or not isinstance(audience["rationale"], str)
+            or not 1 <= len(audience["rationale"]) <= 600
+            or not isinstance(audience["evidence_ids"], list)
+            or any(
+                not isinstance(ref, str) or ref not in evidence_ids
+                for ref in audience["evidence_ids"]
+            )
+            or (audience["level"] != "unknown" and not audience["evidence_ids"])
+        ):
+            raise ValueError(
+                "Audience level needs a supported label and references to supplied evidence."
+            )
     if not isinstance(card["criteria"], dict) or not set(CRITERIA).issubset(
         card["criteria"]
     ):
@@ -245,7 +284,11 @@ def assessment_prompt(run, mode, cues, frames):
 
 Rubric: substance means relevant explanatory depth and supported examples; directness means coherent, to-the-point progression with little needless repetition; originality means observed contribution, not proven authorship; visuals means purposeful presentation rather than unnecessary montage. Slides and talking heads can be appropriate. Stock/meme/AI visual assets and translated reposts are uncertain soft predictors, not exclusions. Authorship, provenance and factual accuracy cannot be certified from sparse evidence. Caption-only mode must leave visuals UNKNOWN. Never treat missing evidence as a zero or neutral grade.
 
+Report audience level separately from quality: introductory, intermediate or advanced relative to the video's own subject and prerequisite knowledge. Cite supplied evidence IDs and explain the prerequisites briefly; use unknown when unsupported. An introductory lesson can have excellent quality, and an advanced lesson can have poor quality. Do not infer a viewer's expertise or preferred depth from the video's subject, duration or substance grade.
+
 When provenance_metadata is supplied, cite its M... IDs when discussing original contribution. Chinese-dub labels, YouDub disclosures and source links can indicate translated or republished material; consider whether the supplied content shows substantial added explanation or analysis. A source link alone is not proof of copying, and uploader copyright declarations are unverified claims. Never infer whether a voice is synthetic; no audio-origin detection was performed. The caller separately enforces the explicit 视频翻译 tag exclusion.
+
+Distinguish the source lecturer's contribution from this uploader's added contribution. Do not award uploader originality for explanations or diagrams that the supplied evidence identifies as republished source material. A translation-only repost can explain a subject well while adding little original contribution. Attribution alone is not substantive analysis. If additions cannot be determined, leave originality unknown rather than rewarding unestablished authorship; a reference link alone must not penalize otherwise original analysis.
 
 Use grades 0–4 only for supported criterion assessments. Cite exact C... caption or F... frame IDs in every observation. Do not cite unsupplied frames. Unknown criteria may have empty observations and must have null grade. Describe limits from temporal gaps and sparse frames. Apparent visual style does not establish asset provenance.
 

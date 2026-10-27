@@ -1,6 +1,6 @@
 {
   "name": "deepvids",
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.13",
   "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
   "license": "MIT",
   "engines": {
@@ -11,7 +11,7 @@
   },
   "files": [
     "bin/",
-    "python/deepvids-0.1.0a10-*.whl",
+    "python/deepvids-0.1.0a13-*.whl",
     "python/evidence-requirements.txt",
     "python/asr-requirements.txt",
     "skills/",
@@ -23,6 +23,7 @@
     "docs/PHASES.md",
     "docs/ARCHITECTURE.md",
     "docs/AUDIT.md",
+    "docs/SCORING.md",
     "docs/validation/",
     "docs/research/"
   ],

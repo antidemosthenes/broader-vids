@@ -1,6 +1,8 @@
 # Architecture
 
-Deepvids has one Python engine, a thin npm launcher and a Codex skill. The CLI and optional local dashboard use the same SQLite state and application services. Phase 4 learning and Phase 5 scheduling are not implemented.
+Deepvids has one Python engine, a thin npm launcher and a Codex skill. The CLI and optional local dashboard use the same SQLite state and application services. Phase 4 learning is audited and its existing binary-channel development gate passes; new structured heads remain empirically provisional. Phase 5 scheduling is not implemented.
+
+The Phase 5 target is a desktop-only Codex plugin containing the skill and invoking that engine locally. The desktop app's Scheduled feature will trigger daily runs; the engine will own daily identity, concurrency and rollover. npm distributes the plugin files and runtime launcher rather than providing a scheduler or hosted service. Actual Codex-plugin installation is the first pending acceptance check. Local plugin testing precedes any optional GitHub, npm or OpenAI-directory release. See [the delivery decisions](PLAN.md#phase-5-product-installation-and-distribution-decisions) and [ordered Phase 5 checks](PHASES.md).
 
 ```text
 bin/deepvids.cjs             npm setup and Python process launcher
@@ -11,6 +13,7 @@ src/deepvids/
   exploration/              domain graph, weighted selection, bounded AI proposals and search activation
   evidence/                 bounded preparation process, media/captions, ASR, assessment and reports
   recommendations/          metadata provenance, screening/ranking, shared worker pool, batches and digests
+  learning/                 feature snapshots, Bayesian inference, model revisions and calibration
   web/                      loopback server and separate HTML/CSS/JavaScript assets
   data/queries.json         versioned query bank; byte identity is part of provenance
   preferences.py            explicit interests, watch/dismiss state, feedback revisions
@@ -53,9 +56,11 @@ flowchart LR
 
 Discovery sources supply metadata; they do not decide content quality. Evidence services resolve the playable unit, enforce the 90-minute exclusion, collect timestamped inputs and ask the ChatGPT-authenticated Codex CLI for a structured assessment. Recommendation services own screening, budgets, pending-slot reservations and publication. The web layer renders application state and submits validated actions; it has no ranking algorithm of its own.
 
+`learning/feedback.py` validates independent structured judgments and captures their features outside the short write transaction; schema 10 stores current judgments separately from legacy thumbs, with append-only action history and a pre-migration backup. `learning/scoped.py` owns topic/subject categorical posteriors, topic-and-level depth suitability and the three-level quality likelihood. `learning/service.py` fits only training observations, applies explicit clarification precedence and publishes versioned snapshots. The shared dashboard control submits one dimension per action. New audience-level evidence is a descriptor separate from quality, and historical unknown levels are preserved. See [scoped feedback verification](validation/SCOPED_FEEDBACK.md).
+
 `recommendations/ranking.py` contains selection policy. `quality.py` validates cached evidence and derives quality, including the separate duration prior. `service.py` orchestrates checkpointed jobs and atomic publication. `reports.py` renders digests and checks recommendation readiness. Evidence preparation and pilot reporting have corresponding separate modules.
 
-The content score remains a provisional holistic judgment using substance, directness, original contribution and visuals. Quality adds at most five duration points. Final ranking weights remain 60/25/5/5/5. No preference fitting occurs when feedback is stored.
+Historical evidence retains its provisional holistic judgment and duration prior. Phase 4 derives an explicit criterion prior and learns independent approval channels from stored feedback. The initial weighted base remains 60/25/5/5/5; the overall calibration can override that prior without a permanent blend cap. Original scorecards are not rewritten.
 
 ## Persistence and concurrency
 
@@ -63,7 +68,9 @@ Private state lives outside the installed package, selected by `--data-dir`, `DE
 
 `evidence/retention.py` releases full videos after validated augmented assessment, retaining caption/frame hashes, scorecards and a source-bound release receipt. Unfinished and baseline-only jobs retain media for resumption. Cached judgments and metadata reviews reuse the compact bundle; no implicit redownload occurs. Cleanup uses the same evidence token lease, records intent before unlinking and rejects path escapes or links. `cleanup` previews older disposable media; `cleanup --apply` applies that policy. See [storage and memory verification](validation/STORAGE_MEMORY_AUDIT.md).
 
-Schema 7 retains the exploration graph and existing application tables, adding indexed run-kind/platform, evidence-cache, playable-identity and pending-state lookups. Upgrades from schemas 1–6 create `deepvids.before-v7.sqlite3` first and preserve existing rows, historical tables and earlier backups. A current-schema connection performs no schema-writing transaction.
+Schema 10 retains current binary and structured ratings, model snapshots, calibration membership and frozen evaluation receipts, adding persistent topic-prior anchors in `feedback_scopes`. Upgrades from schemas 1–9 create `deepvids.before-v10.sqlite3` first and preserve existing rows and earlier backups. Anchors are reconstructed from the earliest explicit topic/depth action, including subsequently cleared actions. Legacy feedback migration keeps only each video's latest active vote, avoiding resurrection of earlier cleared/replaced labels. A current-schema connection performs no schema-writing transaction.
+
+`learning/features.py` captures immutable predictors at feedback time. `inference.py` implements the unweighted Bernoulli likelihood with proper Gaussian priors, MAP/Laplace inference and matrix-free solves for larger dictionaries. `service.py` fits the three channels, checks source identities before saving and retains snapshots referenced by published runs/evaluations. `calibration.py` selects unseen development videos, reserves creator groups and releases labels after freezing evaluation. `evaluation.py` computes per-response held-out metrics and creator-cluster uncertainty; read-only checks never fit a missing model. `learning/evidence.py` journals verified quality-feature corrections while preserving original snapshots and user labels. Feedback capture runs outside the short action write transaction; concurrent changes trigger optimistic fitting retries. Publication rechecks the learning snapshot before committing. See [the scoring and consistency contract](SCORING.md).
 
 Hierarchical discovery stores selected concepts, random seed, profile revision, generated bilingual queries, provisional additions and model-attempt receipts in the discovery checkpoint. `exploration/domains.py` manages graph records and weighted selection; `proposals.py` defines and validates the AI response; `planning.py` coordinates bounded generation and receipt-backed activation. The existing authenticated Codex JSON runner is reused without images or API-key fallback. Generation finishes before any source requests, and the anonymous discovery transport stays separate from evidence access. Search receipts and title-anchor matches activate provisional nodes without modifying preferences. Multi-parent descendants inherit the union of ancestor interest domains.
 
@@ -86,6 +93,8 @@ On Windows, a gated bootstrap starts commands only after assignment to a native 
 Batch creation is atomic, and platform children record their parent batch ID. Continue the batch ID to retain shared concurrency and time limits; a child cannot run independently. `recommendations/timing.py` checkpoints active attempts and conservatively recovers unobserved elapsed time after a crash. Normal continuation keeps the configured allowance unchanged and applies shutdown headroom only to the current invocation. See [the concurrency audit](validation/CONCURRENCY_AUDIT.md) for verification and recovery limits.
 
 Retryable access, extraction and assessment failures leave the current candidate pending and preserve its cursor. Content that cannot be assessed is reported explicitly; it does not receive a fabricated low score. Previous model output files are cleared before a new attempt, so an incomplete response cannot reuse stale output. Cached original scorecards can be reused only when retired fields were unassessed; current views expose the active rubric.
+
+`recommendations/metadata.py` shares the isolated Bilibili metadata session between normal enrichment and the metadata-only diagnostic command. Session cookies remain in memory and are removed from the HTTP client when the scope ends; the browser retains its existing login. A Bilibili snapshot is current only with versioned, complete provenance metadata. Failed metadata reads leave enrichment in its current phase and at its current candidate; they cannot advance into screening. The standalone command saves its snapshot and completed diagnostic atomically, without changing feedback, frozen calibration features or historical scorecards. See [live access verification](validation/BILIBILI_ACCESS.md).
 
 ## Distribution and development
 

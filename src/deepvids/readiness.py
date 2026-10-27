@@ -46,7 +46,24 @@ def release_gate(store):
     phase_one = all(value["candidate_discovery_ready"] for value in platforms.values())
     phase_two = phase_one and evidence["phase_two_complete"]
     phase_three = phase_two and recommendations["phase_three_complete"]
-    current = 4 if phase_three else 3 if phase_two else 2 if phase_one else 1
+    from deepvids.learning.calibration import evaluate
+
+    try:
+        learning = evaluate(store, fit=False) if phase_three else None
+    except (ValueError, OSError) as error:
+        learning = {"phase_four_complete": False, "reasons": [str(error)]}
+    phase_four = bool(phase_three and learning["phase_four_complete"])
+    current = (
+        5
+        if phase_four
+        else 4
+        if phase_three
+        else 3
+        if phase_two
+        else 2
+        if phase_one
+        else 1
+    )
     names = (
         "Candidate discovery",
         "Evidence and quality assessment",
@@ -54,7 +71,7 @@ def release_gate(store):
         "Bayesian feedback learning",
         "Daily installable demo",
     )
-    complete = {1: phase_one, 2: phase_two, 3: phase_three}
+    complete = {1: phase_one, 2: phase_two, 3: phase_three, 4: phase_four}
     return {
         "generated_at": utc_now(),
         "ready": False,
@@ -63,6 +80,8 @@ def release_gate(store):
         "phase_one_complete": phase_one,
         "phase_two_complete": phase_two,
         "phase_three_complete": phase_three,
+        "phase_four_complete": phase_four,
+        "learning": learning,
         "verified_recommendation_runs": recommendations["verified_runs"],
         "platforms": platforms,
         "phases": [
@@ -78,7 +97,9 @@ def release_gate(store):
             for index, name in enumerate(names, 1)
         ],
         "next_step": (
-            "Validate Bayesian feedback learning in Phase 4 when requested."
+            "Validate opt-in scheduling and deployment in Phase 5 when requested."
+            if phase_four
+            else "Rate the saved calibration cohort separately for interest and quality, then run learn evaluate."
             if phase_three
             else "Run and inspect manual recommendations on both platforms."
             if phase_two

@@ -100,7 +100,13 @@ def merge_page(run, items, source, task, receipt, cursor=None):
         "receipt": receipt,
         **{
             key: task[key]
-            for key in ("node_id", "new_topic", "topic_ancestors", "topic_depth")
+            for key in (
+                "node_id",
+                "topic_label",
+                "new_topic",
+                "topic_ancestors",
+                "topic_depth",
+            )
             if key in task
         },
     }
@@ -136,6 +142,7 @@ def merge_page(run, items, source, task, receipt, cursor=None):
                         key: task[key]
                         for key in (
                             "node_id",
+                            "topic_label",
                             "new_topic",
                             "topic_ancestors",
                             "topic_depth",
@@ -230,6 +237,7 @@ def _creator_tasks(run):
                             key: creator[key]
                             for key in (
                                 "node_id",
+                                "topic_label",
                                 "new_topic",
                                 "topic_ancestors",
                                 "topic_depth",

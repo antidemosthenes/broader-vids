@@ -11,7 +11,7 @@ from deepvids.storage import utc_now
 
 def normalized(value):
     value = unicodedata.normalize("NFKC", value).casefold().strip()
-    value = re.sub(r"[\W_]+", " ", value, flags=re.UNICODE).strip()
+    value = re.sub(r"[^\w+#*]+|_+", " ", value, flags=re.UNICODE).strip()
     return ALIASES.get(value, value).replace("-", " ")
 
 

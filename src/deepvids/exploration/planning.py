@@ -164,6 +164,7 @@ def prepare_plan(store, run, save, remaining, model_runner=run_codex):
             {
                 "family_id": node["id"],
                 "node_id": node["id"],
+                "topic_label": node["label"],
                 "new_topic": node["id"] in {n["id"] for n in state["new_nodes"]},
                 "intent": "intersection"
                 if len(node["parents"]) > 1

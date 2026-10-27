@@ -1,13 +1,12 @@
 from collections import Counter
-from contextlib import nullcontext
 import copy
 import json
 import time
 
 from deepvids.evidence.assessment import assess_evidence
-from deepvids.evidence.browser import bilibili_browser, browser_cookie_jar
 from deepvids.discovery.service import create_discovery, execute_discovery
-from deepvids.recommendations.engagement import collect_snapshot, fresh
+from deepvids.recommendations.engagement import collect_snapshot, fresh, metadata_fresh
+from deepvids.recommendations.metadata import metadata_session
 from deepvids.evidence.service import create_evidence, prepare_evidence
 from deepvids.evidence.media import EvidencePending, public_error
 from deepvids.http import AccessPaused, BudgetExhausted, PublicHttp
@@ -124,10 +123,27 @@ def create_recommendation(
     )
 
 
-def _publish(store, run):
+def _publish(store, run, remaining=None):
+    from deepvids.learning.inference import work_scope
+
+    def check():
+        if remaining is not None and remaining() <= 0:
+            raise BudgetExhausted(
+                "The scoring deadline was reached; feedback and evidence are preserved."
+            )
+
+    with work_scope(check):
+        return _publish_scored(store, run, check)
+
+
+def _publish_scored(store, run, check):
+    from deepvids.learning.service import ensure_model
+
+    learning = ensure_model(store)
     draft = copy.deepcopy(run)
     state = draft["state"]
     for key, observation in state["evidence"].items():
+        check()
         if observation.get("quality") is not None:
             state["evidence"][key] = cached_quality(
                 store, observation["evidence_run"]
@@ -137,22 +153,47 @@ def _publish(store, run):
                 raise ValueError(
                     "Quality evidence belongs to a different playable video."
                 )
+    _publish_locked(store, draft, learning, prepare_only=True)
+    check()
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
-        _publish_locked(store, draft)
+        _publish_locked(store, draft, learning)
     run.clear()
     run.update(draft)
 
 
-def _publish_locked(store, run):
+def _publish_locked(store, run, learning=None, *, prepare_only=False):
     state = run["state"]
+    action_epoch = store.db.execute(
+        "SELECT COALESCE(MAX(a.id),0) FROM user_actions a JOIN video_state v USING(canonical_id) WHERE v.platform=?",
+        (run["platform"],),
+    ).fetchone()[0]
+    if prepare_only:
+        state["publication_actions_revision"] = action_epoch
+    elif state.get("publication_actions_revision") != action_epoch:
+        raise EvidencePending(
+            "Video actions changed during scoring; continue to rerank before publication.",
+            retryable=True,
+        )
+    if learning is not None:
+        from deepvids.learning.service import change_epoch
+
+        if change_epoch(store) != learning["epoch"]:
+            raise EvidencePending(
+                "Feedback changed before publication; continue to rerank with the current posterior.",
+                retryable=True,
+            )
+        state["learning_snapshot"] = {
+            "id": learning["id"],
+            "version": learning["version"],
+        }
     if get_profile(store)["revision"] != run["settings"]["profile"]["revision"]:
         raise ValueError(
             "The profile changed; start a new run to rescore with the revised profile."
         )
-    states = video_states(store, run["platform"])
     pending = pending_videos(store, run["platform"])
     short_ids = {i["canonical_id"] for i in state["shortlist"]}
+    states = video_states(store, run["platform"], identifiers=list(short_ids))
     if len(pending) > 50 or any(i["canonical_id"] not in short_ids for i in pending):
         raise ValueError(
             "Pending membership changed; a new run is required to honor guaranteed slots."
@@ -166,21 +207,24 @@ def _publish_locked(store, run):
     observations = {
         k: v for k, v in state["evidence"].items() if v.get("quality") is not None
     }
-    recent = Counter()
-    rows = store.db.execute(
-        "SELECT v.payload FROM recommendation_exposures e JOIN video_state v USING(canonical_id) WHERE v.platform=? ORDER BY e.created_at DESC LIMIT 100",
-        (run["platform"],),
-    ).fetchall()
-    for row in rows:
-        item = json.loads(row[0])
-        recent[item.get("creator_id") or item["canonical_id"]] += 1
-    state["selected"] = rank_slate(
-        candidates,
-        observations,
-        run["settings"]["profile"],
-        run["settings"]["weights"],
-        recent=recent,
-    )
+    if prepare_only:
+        recent = Counter()
+        rows = store.db.execute(
+            "SELECT v.payload FROM recommendation_exposures e JOIN video_state v USING(canonical_id) WHERE v.platform=? ORDER BY e.created_at DESC LIMIT 100",
+            (run["platform"],),
+        ).fetchall()
+        for row in rows:
+            item = json.loads(row[0])
+            recent[item.get("creator_id") or item["canonical_id"]] += 1
+        state["selected"] = rank_slate(
+            candidates,
+            observations,
+            run["settings"]["profile"],
+            run["settings"]["weights"],
+            recent=recent,
+            learning=learning,
+        )
+        return
     state["pending_at_publication"] = len(pending)
     state["published_at"] = utc_now()
     state["assessment_complete"] = all(
@@ -260,18 +304,8 @@ def publish_recommendation(store, identifier, allow_incomplete=False):
 def enrich_buffer(store, run, http, remaining, save):
     state = run["state"]
     authenticated = run["settings"]["use_browser"] and run["platform"] == "bilibili"
-    with (
-        bilibili_browser(store.root) if authenticated else nullcontext(None) as browser
-    ):
-        if browser:
-            jar = browser_cookie_jar(browser)
-            if not {"SESSDATA", "DedeUserID"}.issubset({c.name for c in jar}):
-                raise EvidencePending(
-                    "The isolated Bilibili profile is not signed in; no anonymous retry was made."
-                )
-            for cookie in jar:
-                http.cookies.set_cookie(cookie)
-            http.transport = "isolated_browser_http"
+    state.pop("metadata_route_paused", None)
+    with metadata_session(store, http, authenticated):
         while state["enrichment_index"] < len(state["buffer"]):
             if remaining() <= 0:
                 raise BudgetExhausted("Recommendation time budget exhausted.")
@@ -281,14 +315,7 @@ def enrich_buffer(store, run, http, remaining, save):
                 (item["canonical_id"],),
             ).fetchone()
             snapshot = json.loads(cached[0]) if cached else None
-            if (
-                not snapshot
-                or not fresh(snapshot)
-                or (
-                    run["platform"] == "bilibili"
-                    and snapshot.get("metadata_version") != 2
-                )
-            ):
+            if not snapshot or not metadata_fresh(snapshot, run["platform"]):
                 try:
                     snapshot = collect_snapshot(http, item)
                     with store.db:
@@ -305,7 +332,8 @@ def enrich_buffer(store, run, http, remaining, save):
                         }
                     )
                     state["metadata_route_paused"] = True
-                    snapshot = None
+                    save()
+                    raise
             if snapshot:
                 item["engagement"] = snapshot
                 if run["platform"] == "youtube" and snapshot.get("duration_seconds"):
@@ -327,22 +355,13 @@ def enrich_buffer(store, run, http, remaining, save):
                         )
             state["enrichment_index"] += 1
             save()
-            if state.get("metadata_route_paused"):
-                break
-        if state["buffer"] and not state.get("metadata_route_paused"):
+        if state["buffer"]:
             for item in pending_videos(store, run["platform"]):
                 row = store.db.execute(
                     "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
                     (item["canonical_id"],),
                 ).fetchone()
-                if (
-                    row
-                    and fresh(json.loads(row[0]))
-                    and (
-                        run["platform"] != "bilibili"
-                        or json.loads(row[0]).get("metadata_version") == 2
-                    )
-                ):
+                if row and metadata_fresh(json.loads(row[0]), run["platform"]):
                     continue
                 if remaining() <= 0:
                     raise BudgetExhausted(
@@ -364,7 +383,8 @@ def enrich_buffer(store, run, http, remaining, save):
                         }
                     )
                     state["metadata_route_paused"] = True
-                    break
+                    save()
+                    raise
     pending = pending_videos(store, run["platform"])
     for item in pending:
         row = store.db.execute(
@@ -721,7 +741,7 @@ def execute_recommendation(
                     "The parent stopped before publication; progress is checkpointed."
                 )
             run["elapsed"] = initial_elapsed + time.monotonic() - started
-            _publish(store, run)
+            _publish(store, run, remaining)
         except (BudgetExhausted, EvidencePending, AccessPaused) as error:
             run.update(status="paused", reason=str(error))
             save()

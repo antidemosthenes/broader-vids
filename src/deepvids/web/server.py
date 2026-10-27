@@ -43,6 +43,9 @@ def score_details(store, item):
 
 
 def dashboard_state(store):
+    from deepvids.learning.feedback import details, context_from_features
+    from deepvids.learning.features import capture
+
     runs = {}
     current = []
     visible = {
@@ -117,6 +120,12 @@ def dashboard_state(store):
                 if run["platform"] not in runs or not runs[run["platform"]]["selected"]:
                     runs[run["platform"]] = entry
     states = video_states(store, identifiers=list(visible))
+    structured = details(store, list(visible))
+    contexts = {
+        item["canonical_id"]: context_from_features(capture(item))
+        for run in current
+        for item in run["state"].get("selected", [])
+    }
     pending = {
         p: [
             v["payload"] for v in states.values() if v["pending"] and v["platform"] == p
@@ -129,8 +138,18 @@ def dashboard_state(store):
         "pending_items": pending,
         "videos": {
             k: {
-                field: v[field]
-                for field in ("watched", "dismissed", "pending", "feedback")
+                "details": structured.get(k, {}),
+                "feedback_context": contexts.get(k, {}),
+                **{
+                    field: v[field]
+                    for field in (
+                        "watched",
+                        "dismissed",
+                        "pending",
+                        "feedback",
+                        "ratings",
+                    )
+                },
             }
             for k, v in states.items()
         },
@@ -170,6 +189,29 @@ def make_server(root, port=8765):
                 return self.send(403, '{"error":"Invalid local host"}')
             if self.path == "/":
                 return self.send(200, PAGE.replace("__TOKEN__", token), "text/html")
+            if self.path in {"/api/learning", "/api/calibration"}:
+                from deepvids.learning.service import learning_status
+                from deepvids.learning.calibration import calibration_list
+
+                store = Store(root)
+                try:
+                    value = (
+                        learning_status(store)
+                        if self.path == "/api/learning"
+                        else [
+                            {
+                                "item": r["item"],
+                                "ratings": r["ratings"],
+                                "watched": r["watched"],
+                                "details": r["details"],
+                                "feedback_context": r["feedback_context"],
+                            }
+                            for r in calibration_list(store, latest=True)
+                        ]
+                    )
+                    return self.send(200, json.dumps(value, ensure_ascii=False))
+                finally:
+                    store.close()
             assets = {
                 "/static/dashboard.js": ("dashboard.js", "text/javascript"),
                 "/static/dashboard.css": ("dashboard.css", "text/css"),
@@ -219,13 +261,26 @@ def make_server(root, port=8765):
                 ):
                     raise ValueError("An action needs a video ID and action name.")
                 store = Store(root)
-                user_action(
-                    store,
-                    value["id"],
-                    value["action"],
-                    value.get("reason", ""),
-                    value.get("kind", "overall"),
-                )
+                if value["action"] == "rate":
+                    from deepvids.learning.feedback import save_detail
+
+                    save_detail(
+                        store,
+                        value["id"],
+                        value.get("kind"),
+                        value.get("value"),
+                        target=value.get("target", ""),
+                        level=value.get("level", "unknown"),
+                        note=value.get("note", ""),
+                    )
+                else:
+                    user_action(
+                        store,
+                        value["id"],
+                        value["action"],
+                        value.get("reason", ""),
+                        value.get("kind", "overall"),
+                    )
                 self.send(200, '{"saved":true}')
             except (ValueError, OSError, sqlite3.Error) as error:
                 self.send(400, json.dumps({"error": str(error)}))

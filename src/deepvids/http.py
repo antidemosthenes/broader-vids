@@ -93,6 +93,7 @@ class PublicHttp:
             self.sleeper(max(0, 1.0 - (self.clock() - self.last_request)))
         self.check()
         request_id = self.store.begin_request(self.run["id"], url)
+        self.last_receipt = None
         self.last_request = self.clock()
         headers = {
             "User-Agent": "Deepvids/0.1 sampling-feasibility",
@@ -158,6 +159,19 @@ class PublicHttp:
                 else type(error).__name__
             )
             self.store.end_request(request_id, "unresolved", detail)
+            if (
+                isinstance(error, urllib.error.HTTPError)
+                and error.code == 412
+                and parsed.hostname == "api.bilibili.com"
+            ):
+                raise AccessPaused(
+                    "Bilibili rejected the metadata request (HTTP 412). "
+                    + (
+                        "The signed-in session needs access review; no anonymous fallback was made."
+                        if self.transport == "isolated_browser_http"
+                        else "Use --use-browser with the existing isolated Bilibili login, or run login bilibili first."
+                    )
+                ) from None
             raise AccessPaused(
                 f"Public request failed ({detail}); no conclusion about video existence was made."
             ) from None

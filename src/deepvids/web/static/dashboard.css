@@ -139,3 +139,42 @@ th {
   font-size: 15px;
   margin: 16px 0 6px;
 }
+.calibration-card {
+  border-top: 1px solid #e5e9ef;
+  padding: 14px 0;
+}
+.calibration-card > a {
+  display: block;
+  margin-bottom: 8px;
+}
+.feedback-editor {
+  margin: 14px 0;
+}
+.feedback-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid #e5e9ef;
+  min-width: 0;
+}
+.feedback-row label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+.feedback-row input,
+.feedback-row select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #cdd5e0;
+  border-radius: 6px;
+  font: inherit;
+}
+.feedback-row button {
+  justify-self: start;
+}
+.legacy-feedback {
+  overflow-wrap: anywhere;
+}

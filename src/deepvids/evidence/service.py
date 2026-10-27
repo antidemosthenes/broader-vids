@@ -92,7 +92,7 @@ def create_evidence(
         "max_images": 8,
         "max_model_calls": 2,
         "caption_character_limit": 12000,
-        "rubric_version": 2,
+        "rubric_version": 3,
         "originality_context": originality_context,
         "reasoning_effort": reasoning_effort,
     }
@@ -129,6 +129,7 @@ def create_evidence(
         ).encode()
     ).hexdigest()
     reusable = None
+    existing = None
     for row in store.db.execute(
         "SELECT id FROM runs WHERE json_extract(settings,'$.cache_key')=? AND platform=? ORDER BY created_at",
         (cache_key, identity["platform"]),
@@ -140,37 +141,51 @@ def create_evidence(
             and not previous["settings"]["use_browser"]
         ):
             continue
+        if (
+            not media
+            and (originality_context or reasoning_effort != "low")
+            and previous["state"]["phase"] == "prepare"
+            and not previous["state"].get("media")
+        ):
+            existing = previous
+            break
         return previous["id"]
     if not media and (originality_context or reasoning_effort != "low"):
         row = store.db.execute(
-            "SELECT id FROM runs WHERE json_extract(settings,'$.identity.canonical_id')=? AND platform=? AND json_extract(settings,'$.local_media') IS NULL AND json_extract(state,'$.phase') IN ('prepared','completed') ORDER BY created_at DESC LIMIT 1",
+            "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='evidence' AND json_extract(settings,'$.identity.canonical_id')=? AND platform=? AND json_extract(settings,'$.local_media') IS NULL AND json_extract(state,'$.media') IS NOT NULL AND json_extract(state,'$.caption_excerpt') IS NOT NULL AND json_extract(state,'$.phase') IN ('prepared','completed') ORDER BY created_at DESC LIMIT 1",
             (identity["canonical_id"], identity["platform"]),
         ).fetchone()
         reusable = store.get(row[0]) if row else None
+    if existing and not reusable:
+        return existing["id"]
     settings["cache_key"] = cache_key
     source_lease = store.lease(reusable["id"]) if reusable else nullcontext(None)
     with source_lease as owner:
-        identifier = store.create(
-            identity["platform"],
-            settings,
-            {
-                "phase": "prepare",
-                "metadata": None,
-                "media": None,
-                "captions": None,
-                "frames": [],
-                "frame_positions_done": [],
-                "assessments": {},
-                "attempts": [],
-                "submitted_images": 0,
-                "model_calls": 0,
-                "resources": {
-                    "media_download_bytes": 0,
-                    "caption_download_bytes": 0,
-                    "preparation_seconds": 0,
-                    "transcription_seconds": 0,
+        identifier = (
+            existing["id"]
+            if existing
+            else store.create(
+                identity["platform"],
+                settings,
+                {
+                    "phase": "prepare",
+                    "metadata": None,
+                    "media": None,
+                    "captions": None,
+                    "frames": [],
+                    "frame_positions_done": [],
+                    "assessments": {},
+                    "attempts": [],
+                    "submitted_images": 0,
+                    "model_calls": 0,
+                    "resources": {
+                        "media_download_bytes": 0,
+                        "caption_download_bytes": 0,
+                        "preparation_seconds": 0,
+                        "transcription_seconds": 0,
+                    },
                 },
-            },
+            )
         )
         if reusable:
             run = store.get(identifier)

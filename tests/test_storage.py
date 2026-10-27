@@ -64,7 +64,7 @@ class StorageTests(unittest.TestCase):
                 )
                 self.assertEqual(set_profile(store, ["math", "physics"]), profile)
                 with closing(
-                    sqlite3.connect(Path(directory) / "deepvids.before-v7.sqlite3")
+                    sqlite3.connect(Path(directory) / "deepvids.before-v10.sqlite3")
                 ) as backup:
                     self.assertEqual(
                         backup.execute("PRAGMA user_version").fetchone()[0], 5
@@ -88,7 +88,7 @@ class StorageTests(unittest.TestCase):
             store = Store(directory)
             try:
                 self.assertEqual(
-                    store.db.execute("PRAGMA user_version").fetchone()[0], 7
+                    store.db.execute("PRAGMA user_version").fetchone()[0], 10
                 )
                 self.assertEqual(
                     store.get(identifier)["state"], {"checkpoint": "preserve"}
@@ -106,7 +106,7 @@ class StorageTests(unittest.TestCase):
                     set_profile(store, ["math"])["revision"], profile["revision"]
                 )
                 with closing(
-                    sqlite3.connect(Path(directory) / "deepvids.before-v7.sqlite3")
+                    sqlite3.connect(Path(directory) / "deepvids.before-v10.sqlite3")
                 ) as backup:
                     self.assertEqual(
                         backup.execute("PRAGMA user_version").fetchone()[0], 4

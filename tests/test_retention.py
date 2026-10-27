@@ -88,6 +88,120 @@ class RetentionTests(unittest.TestCase):
             self.store, self.identifier, mode, lambda *args: (card(mode), {})
         )
 
+    def test_metadata_only_job_cannot_be_selected_as_a_reusable_bundle(self):
+        self.assess()
+        identity = self.store.get(self.identifier)["settings"]["identity"]
+        self.store.create(
+            "youtube",
+            {"kind": "metadata", "identity": identity},
+            {"phase": "completed", "snapshot": {"views": 1}},
+        )
+        review = create_evidence(
+            self.store,
+            identity["url"],
+            originality_context={"signals": [{"id": "M1", "kind": "source"}]},
+        )
+        run = self.store.get(review)
+        self.assertEqual(run["state"]["inherited_from"], self.identifier)
+        self.assertEqual(run["state"]["resources"]["media_download_bytes"], 0)
+        verify_bundle(self.store, run)
+
+    def test_interrupted_bundle_inheritance_reuses_its_existing_checkpoint(self):
+        self.assess()
+        identity = self.store.get(self.identifier)["settings"]["identity"]
+        context = {"signals": [{"id": "M1", "kind": "source"}]}
+        with patch(
+            "deepvids.evidence.service.inherit_bundle",
+            side_effect=ValueError("Interrupted inheritance"),
+        ):
+            with self.assertRaises(ValueError):
+                create_evidence(
+                    self.store, identity["url"], originality_context=context
+                )
+        children = [
+            run["id"]
+            for run in self.store.iter_runs(kind="evidence")
+            if run["id"] != self.identifier
+        ]
+        self.assertEqual(len(children), 1)
+        repaired = create_evidence(
+            self.store, identity["url"], originality_context=context
+        )
+        self.assertEqual(repaired, children[0])
+        self.assertEqual(self.store.get(repaired)["state"]["phase"], "prepared")
+        verify_bundle(self.store, self.store.get(repaired))
+
+    def test_calibration_revision_preserves_votes_and_original_scorecards(self):
+        from deepvids.learning.evidence import record_review, latest_revisions
+        from deepvids.learning.service import capture_rating, source_data
+        from deepvids.preferences import user_action, set_profile
+        from deepvids.recommendations.originality import assessment_context
+
+        self.assess()
+        set_profile(self.store, ["mathematics"])
+        identity = self.store.get(self.identifier)["settings"]["identity"]
+        observation = cached_quality(self.store, self.identifier)
+        item = {
+            **identity,
+            "title": "Fixture",
+            "domains": ["mathematics"],
+            "quality_evidence": observation,
+        }
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO video_state VALUES(?,?,?,0,0,0,?)",
+                (identity["canonical_id"], "youtube", json.dumps(item), "fixture"),
+            )
+        with patch("deepvids.learning.service.refresh_after_feedback"):
+            user_action(
+                self.store,
+                identity["canonical_id"],
+                "down",
+                "Keep this explicit judgment",
+                "quality",
+            )
+        before = [
+            tuple(row) for row in self.store.db.execute("SELECT * FROM user_actions")
+        ]
+        original = self.store.get(self.identifier)
+        metadata = {
+            "description": "https://www.youtube.com/watch?v=GAkVaD1ihi4",
+            "declared_copyright": 2,
+        }
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO engagement_snapshots VALUES(?,?)",
+                (identity["canonical_id"], json.dumps(metadata)),
+            )
+        review = create_evidence(
+            self.store,
+            identity["url"],
+            originality_context=assessment_context({"engagement": metadata}),
+        )
+        value = card()
+        value["content_quality"] = 65
+        assess_evidence(self.store, review, "augmented", lambda *args: (value, {}))
+        revision = record_review(self.store, identity["canonical_id"], review)
+        self.assertEqual(
+            record_review(self.store, identity["canonical_id"], review), revision
+        )
+        self.assertEqual(
+            [tuple(row) for row in self.store.db.execute("SELECT * FROM user_actions")],
+            before,
+        )
+        self.assertEqual(self.store.get(self.identifier), original)
+        self.assertEqual(
+            capture_rating(self.store, identity["canonical_id"])["evidence_run"], review
+        )
+        self.assertEqual(
+            source_data(self.store)["ratings"][0]["features"]["quality_revision"],
+            revision,
+        )
+        self.assertFalse(
+            source_data(self.store)["ratings"][0]["quality_review_pending"]
+        )
+        self.assertEqual(len(latest_revisions(self.store)), 1)
+
     def test_automatic_cleanup_retains_verified_quality_and_prevents_new_calls(self):
         result = self.assess()
         self.assertFalse(self.media.exists())

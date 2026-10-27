@@ -33,7 +33,7 @@ def cached_quality(store, evidence_run):
         }
         if observation["evidence_identity"] != identity or observation.get(
             "rubric_version"
-        ) not in {1, 2}:
+        ) not in {1, 2, 3}:
             raise ValueError("Cached scorecard evidence identity or rubric differs.")
         cues = json.loads(
             Path(state["caption_excerpt"]["path"]).read_text(encoding="utf-8")
@@ -68,6 +68,10 @@ def cached_quality(store, evidence_run):
             "duration_seconds": duration,
             "summary": card["summary"],
             "unknowns": card["unknowns"],
+            "content_quality": card["content_quality"],
+            "criteria": card["criteria"],
+            "audience_level": card.get("audience", {}).get("level", "unknown"),
+            "audience_assessment": card.get("audience"),
             "quality_interval": [
                 round(card["quality_low"] + duration_prior, 2),
                 round(card["quality_high"] + duration_prior, 2),

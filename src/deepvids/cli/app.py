@@ -100,7 +100,7 @@ def main(argv=None):
                     "authentication_checked": False,
                     "model_calls_required_for_assessment": True,
                     "recommendations_available": True,
-                    "bayesian_learning_available": False,
+                    "bayesian_learning_available": True,
                 }
             )
             return 0
@@ -124,6 +124,61 @@ def main(argv=None):
             return 0
         store = Store(data_root(args.data_dir))
         try:
+            if args.command == "rate":
+                from deepvids.learning.feedback import save_detail
+
+                emit(
+                    save_detail(
+                        store,
+                        args.identifier,
+                        args.dimension,
+                        args.value,
+                        target=args.target,
+                        level=args.level,
+                        note=args.note,
+                    )
+                )
+                return 0
+            if args.command == "metadata":
+                from deepvids.recommendations.metadata import refresh_metadata
+
+                result = refresh_metadata(
+                    store, args.identifier, use_browser=args.use_browser
+                )
+                emit(result)
+                return 0 if result["status"] == "completed" else 2
+            if args.command == "learn":
+                from deepvids.learning.service import ensure_model, learning_status
+                from deepvids.learning.calibration import evaluate
+
+                if args.operation == "repair-evidence":
+                    from deepvids.learning.evidence import repair_pending
+
+                    result = repair_pending(
+                        store, max_seconds=args.max_seconds, max_videos=args.max_videos
+                    )
+                    emit(result)
+                    return 0 if not result["remaining"] else 2
+                if args.operation == "fit":
+                    ensure_model(store)
+                emit(
+                    evaluate(store)
+                    if args.operation == "evaluate"
+                    else learning_status(store)
+                )
+                return 0
+            if args.command == "calibrate":
+                from deepvids.learning.calibration import (
+                    start_calibration,
+                    calibration_list,
+                )
+
+                emit(
+                    start_calibration(store, seed=args.seed, new=args.new)
+                    if args.operation == "start"
+                    else calibration_list(store)
+                )
+                return 0
             if args.command == "cleanup":
                 from deepvids.maintenance import cleanup_storage
 

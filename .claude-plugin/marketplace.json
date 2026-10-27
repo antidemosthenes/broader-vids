@@ -6,7 +6,7 @@
       "name": "deepvids",
       "description": "Local YouTube and Bilibili recommendations with evidence and feedback",
       "source": "./",
-      "version": "0.1.0-alpha.10"
+      "version": "0.1.0-alpha.13"
     }
   ]
 }

@@ -169,16 +169,23 @@ def recency(item, now):
         return 50
 
 
-def rank_slate(items, observations, profile, weights, now=None, recent=None):
+def rank_slate(
+    items, observations, profile, weights, now=None, recent=None, learning=None
+):
     now, recent = now or datetime.now(timezone.utc), recent or Counter()
     pool = [
         dict(i)
         for i in items
         if i["canonical_id"] in observations
         and observations[i["canonical_id"]]["quality"] >= 60
+        and isinstance(
+            observations[i["canonical_id"]].get("duration_seconds"), (int, float)
+        )
+        and 0 < observations[i["canonical_id"]]["duration_seconds"] <= 5400
         and not provenance(i)["excluded"]
     ]
     slate, creators = [], Counter()
+    learned_channels, learned_scores = {}, {}
     target_unrelated = min(2, sum(not related(i, profile) for i in pool))
     while pool and len(slate) < 10:
         need = target_unrelated - sum(not i["related"] for i in slate)
@@ -204,8 +211,36 @@ def rank_slate(items, observations, profile, weights, now=None, recent=None):
                 "diversity": 100 / (1 + creators[creator] + 0.1 * recent[creator]),
             }
             total = round(sum(parts[k] * weights[k] for k in parts), 4)
-            scored.append((total, item["canonical_id"], item, parts))
-        total, _, chosen, parts = max(scored, key=lambda entry: (entry[0], entry[1]))
+            details = None
+            if learning is not None:
+                from deepvids.learning.features import capture
+                from deepvids.learning.service import final_score, score_components
+
+                key = item["canonical_id"]
+                if key not in learned_channels:
+                    features = capture(item, observations[key])
+                    learned_channels[key] = (
+                        features,
+                        score_components(
+                            features,
+                            learning["profile"],
+                            learning["models"],
+                            {},
+                            structured=learning.get("structured"),
+                        ),
+                    )
+                cache_key = (key, parts["diversity"])
+                if cache_key not in learned_scores:
+                    features, channels = learned_channels[key]
+                    learned_scores[cache_key] = final_score(
+                        features, learning, parts, weights, channel_cache=channels
+                    )
+                total, parts, details = learned_scores[cache_key]
+                total = round(total, 4)
+            scored.append((total, item["canonical_id"], item, parts, details))
+        total, _, chosen, parts, details = max(
+            scored, key=lambda entry: (entry[0], entry[1])
+        )
         slate.append(
             {
                 **chosen,
@@ -213,6 +248,11 @@ def rank_slate(items, observations, profile, weights, now=None, recent=None):
                 "score": total,
                 "components": parts,
                 "quality_evidence": observations[chosen["canonical_id"]],
+                **(
+                    {"learning": details, "base_score": details["base_score"]}
+                    if details
+                    else {}
+                ),
             }
         )
         creators[chosen.get("creator_id") or chosen["canonical_id"]] += 1

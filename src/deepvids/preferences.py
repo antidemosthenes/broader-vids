@@ -86,16 +86,34 @@ def video_states(store, platform=None, *, identifiers=None):
         args.extend(identifiers)
     rows = store.db.execute(
         """SELECT v.*, (SELECT payload FROM user_actions a
-        WHERE a.canonical_id=v.canonical_id AND a.action='feedback' ORDER BY a.id DESC LIMIT 1) AS feedback_payload
+        WHERE a.canonical_id=v.canonical_id AND a.action='feedback'
+        AND COALESCE(json_extract(a.payload,'$.kind'),'overall') IN ('interest','quality','overall')
+        ORDER BY a.id DESC LIMIT 1) AS feedback_payload
         FROM video_state v"""
         + (" WHERE " + " AND ".join(conditions) if conditions else ""),
         args,
     )
     result = {}
+    ratings = {}
+    rating_query = "SELECT canonical_id,dimension,payload FROM feedback_ratings"
+    if identifiers is not None:
+        rating_query += (
+            " WHERE canonical_id IN (" + ",".join("?" for _ in identifiers) + ")"
+        )
+    for row in store.db.execute(rating_query, identifiers or []):
+        payload = json.loads(row["payload"])
+        ratings.setdefault(row["canonical_id"], {})[row["dimension"]] = {
+            k: v for k, v in payload.items() if k != "features"
+        }
     for row in rows:
         item = {**dict(row), "payload": json.loads(row["payload"])}
         vote = item.pop("feedback_payload")
-        item["feedback"] = json.loads(vote) if vote else None
+        item["feedback"] = (
+            {k: v for k, v in json.loads(vote).items() if k != "features"}
+            if vote
+            else None
+        )
+        item["ratings"] = ratings.get(item["canonical_id"], {})
         item["pending"] = bool(
             item["recommended"] and not item["watched"] and not item["dismissed"]
         )
@@ -105,7 +123,11 @@ def video_states(store, platform=None, *, identifiers=None):
 
 def pending_videos(store, platform):
     return [
-        v["payload"] for v in video_states(store, platform).values() if v["pending"]
+        json.loads(row[0])
+        for row in store.db.execute(
+            "SELECT payload FROM video_state WHERE platform=? AND recommended=1 AND watched=0 AND dismissed=0",
+            (platform,),
+        )
     ]
 
 
@@ -131,6 +153,11 @@ def user_action(store, identifier, action, reason="", kind="overall"):
             "Feedback requires a supported reason kind and at most 1,000 reason characters."
         )
     key = identity["canonical_id"]
+    features = None
+    if action in {"up", "down"}:
+        from deepvids.learning.service import capture_rating
+
+        features = capture_rating(store, key)
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
         store.db.execute(
@@ -163,8 +190,25 @@ def user_action(store, identifier, action, reason="", kind="overall"):
             if not field
             else {"value": action in {"watched", "dismiss"}}
         )
-        store.db.execute(
+        if not field and action != "clear":
+            payload["features"] = features
+        cursor = store.db.execute(
             "INSERT INTO user_actions(canonical_id,created_at,action,payload) VALUES(?,?,?,?)",
             (key, utc_now(), action if field else "feedback", json.dumps(payload)),
         )
-    return video_states(store, identity["platform"])[key]
+        if not field:
+            if action == "clear":
+                store.db.execute(
+                    "DELETE FROM feedback_ratings WHERE canonical_id=? AND dimension=?",
+                    (key, kind),
+                )
+            else:
+                store.db.execute(
+                    "INSERT INTO feedback_ratings VALUES(?,?,?,?) ON CONFLICT(canonical_id,dimension) DO UPDATE SET action_id=excluded.action_id,payload=excluded.payload",
+                    (key, kind, cursor.lastrowid, json.dumps(payload)),
+                )
+    if not field:
+        from deepvids.learning.service import refresh_after_feedback
+
+        refresh_after_feedback(store)
+    return video_states(store, identifiers=[key])[key]

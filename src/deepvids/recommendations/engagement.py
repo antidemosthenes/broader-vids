@@ -33,6 +33,16 @@ def fresh(snapshot, max_hours=24):
         return False
 
 
+def metadata_fresh(snapshot, platform):
+    return fresh(snapshot) and (
+        platform != "bilibili"
+        or (
+            snapshot.get("metadata_version") == 2
+            and snapshot.get("provenance_status") == "complete"
+        )
+    )
+
+
 def parse_youtube(body, identifier):
     player = embedded_json(body, r"(?:var\s+)?ytInitialPlayerResponse\s*=\s*")
     details = player.get("videoDetails", {})
@@ -113,6 +123,11 @@ def parse_bilibili(value, identifier):
         "title": data.get("title", ""),
         "description": data.get("desc", ""),
         "declared_copyright": data.get("copyright"),
+        "declared_copyright_status": "recognized"
+        if type(data.get("copyright")) is int and data["copyright"] in (1, 2)
+        else "unrecognized"
+        if type(data.get("copyright")) is int
+        else "missing",
         "tags": [
             t["tag_name"]
             for t in tags
@@ -121,6 +136,18 @@ def parse_bilibili(value, identifier):
         if isinstance(tags, list)
         else [],
         "tags_status": "observed" if isinstance(tags, list) else "unknown",
+        "provenance_status": "complete"
+        if (
+            isinstance(data.get("title"), str)
+            and data["title"].strip()
+            and isinstance(data.get("desc"), str)
+            and type(data.get("copyright")) is int
+            and isinstance(tags, list)
+            and all(
+                isinstance(t, dict) and isinstance(t.get("tag_name"), str) for t in tags
+            )
+        )
+        else "incomplete",
         "pages": [
             {"page": p.get("page"), "cid": p.get("cid"), "duration": p.get("duration")}
             for p in pages
@@ -138,6 +165,10 @@ def collect_snapshot(http, item):
             ),
             item["video_id"],
         )
+        if value["provenance_status"] != "complete":
+            raise AccessPaused(
+                "Bilibili metadata is missing its title, description, authorship declaration or tags; screening remains paused."
+            )
     return {
         **value,
         "observed_at": utc_now(),

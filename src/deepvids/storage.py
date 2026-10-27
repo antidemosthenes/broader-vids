@@ -32,16 +32,16 @@ class Store:
         self.db = sqlite3.connect(self.root / "deepvids.sqlite3", timeout=5)
         self.db.row_factory = sqlite3.Row
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
             self.db.close()
             raise ValueError(
                 f"Unsupported database version {version}; use a compatible Deepvids release."
             )
         self.db.execute("PRAGMA foreign_keys=ON")
-        if version == 7:
+        if version == 10:
             return
-        backup = self.root / "deepvids.before-v7.sqlite3"
-        if version in (1, 2, 3, 4, 5, 6) and not backup.exists():
+        backup = self.root / "deepvids.before-v10.sqlite3"
+        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9) and not backup.exists():
             target = sqlite3.connect(backup)
             try:
                 self.db.backup(target)
@@ -106,7 +106,46 @@ class Store:
             CREATE INDEX IF NOT EXISTS pending_video_lookup ON video_state(recommended,watched,dismissed,platform);
             CREATE INDEX IF NOT EXISTS evidence_cache_lookup ON runs(json_extract(settings,'$.cache_key'),platform);
             CREATE INDEX IF NOT EXISTS evidence_identity_lookup ON runs(json_extract(settings,'$.identity.canonical_id'),platform);
-            PRAGMA user_version=7;
+            CREATE TABLE IF NOT EXISTS feedback_ratings (
+                canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                dimension TEXT NOT NULL CHECK(dimension IN ('interest','quality','overall')),
+                action_id INTEGER NOT NULL REFERENCES user_actions(id), payload TEXT NOT NULL,
+                PRIMARY KEY(canonical_id,dimension)
+            );
+            CREATE TABLE IF NOT EXISTS learning_models (
+                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS calibration_items (
+                canonical_id TEXT PRIMARY KEY, cohort TEXT NOT NULL,
+                split TEXT NOT NULL CHECK(split IN ('train','holdout')),
+                payload TEXT NOT NULL, released INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS learning_evaluations (
+                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS feedback_details (
+                canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                dimension TEXT NOT NULL CHECK(dimension IN ('topic_interest','domain_interest','depth','quality_level')),
+                action_id INTEGER NOT NULL REFERENCES user_actions(id), payload TEXT NOT NULL,
+                PRIMARY KEY(canonical_id,dimension)
+            );
+            CREATE TABLE IF NOT EXISTS feedback_scopes (
+                target TEXT PRIMARY KEY, payload TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO feedback_scopes
+            SELECT json_extract(payload,'$.target'),
+                json_object('domains',json(COALESCE(json_extract(payload,'$.features.domains'),'[]')),'source_action',id)
+            FROM user_actions WHERE action='feedback'
+                AND json_extract(payload,'$.kind') IN ('topic_interest','depth')
+                AND json_extract(payload,'$.value')!='clear'
+                AND json_extract(payload,'$.target') IS NOT NULL
+            ORDER BY id;
+            INSERT OR IGNORE INTO feedback_ratings
+            SELECT canonical_id,COALESCE(json_extract(payload,'$.kind'),'overall'),id,payload
+            FROM user_actions WHERE action='feedback'
+            AND id IN (SELECT MAX(id) FROM user_actions WHERE action='feedback' GROUP BY canonical_id)
+            AND json_extract(payload,'$.vote') IN ('up','down');
+            PRAGMA user_version=10;
             COMMIT;
         """)
         self.db.commit()
