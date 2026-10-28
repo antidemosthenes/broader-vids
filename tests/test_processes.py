@@ -8,10 +8,24 @@ import threading
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from deepvids.processes import ProcessCleanupError, run_bounded
+from broader_vids.processes import ProcessCleanupError, run_bounded
 
 
 class ProcessTests(unittest.TestCase):
+    def test_timeout_retains_bounded_worker_diagnostics(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
+            run_bounded(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys,time;print('stage ready',flush=True);print('diagnostic detail',file=sys.stderr,flush=True);time.sleep(10)",
+                ],
+                timeout=0.8,
+            )
+        self.assertIn("stage ready", caught.exception.output)
+        self.assertIn("diagnostic detail", caught.exception.stderr)
+        self.assertLessEqual(len(caught.exception.stderr), 4096)
+
     def test_excessive_logs_stop_a_worker_before_its_time_allowance(self):
         started = time.monotonic()
         with self.assertRaisesRegex(OSError, "log exceeded"):
@@ -56,7 +70,7 @@ class ProcessTests(unittest.TestCase):
             ready = Path(directory) / "ready"
             finished = Path(directory) / "finished"
             child = f"from pathlib import Path;import time;Path({str(ready)!r}).touch();time.sleep(0.7);Path({str(finished)!r}).touch()"
-            parent = f"from deepvids.processes import run_bounded;import sys;run_bounded([sys.executable,'-c',{child!r}],timeout=5)"
+            parent = f"from broader_vids.processes import run_bounded;import sys;run_bounded([sys.executable,'-c',{child!r}],timeout=5)"
             process = subprocess.Popen(
                 [sys.executable, "-c", parent],
                 stdout=subprocess.DEVNULL,

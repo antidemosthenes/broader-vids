@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from deepvids.discovery.service import (
+from broader_vids.discovery.service import (
     create_discovery,
     discovery_checks,
     discovery_report,
@@ -16,12 +16,16 @@ from deepvids.discovery.service import (
     merge_page,
     write_discovery_report,
 )
-from deepvids.discovery.sources import bilibili_cards, duration_seconds, youtube_page
-from deepvids.http import AccessPaused, BudgetExhausted, PublicHttp
-from deepvids.discovery.state import pinia_state
-from deepvids.discovery.queries import load_bank, query_plan
-from deepvids.readiness import release_gate
-from deepvids.storage import Store
+from broader_vids.discovery.sources import (
+    bilibili_cards,
+    duration_seconds,
+    youtube_page,
+)
+from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
+from broader_vids.discovery.state import pinia_state
+from broader_vids.discovery.queries import load_bank, query_plan
+from broader_vids.readiness import release_gate
+from broader_vids.storage import Store
 
 
 def bvid(number):

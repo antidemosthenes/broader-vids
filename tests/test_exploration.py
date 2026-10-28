@@ -4,26 +4,26 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from deepvids.discovery.service import (
+from broader_vids.discovery.service import (
     create_discovery,
     execute_discovery,
     discovery_report,
 )
-from deepvids.evidence.media import EvidencePending
-from deepvids.exploration.domains import (
+from broader_vids.evidence.media import EvidencePending
+from broader_vids.exploration.domains import (
     nodes,
     put_node,
     seed_interests,
     select_existing,
 )
-from deepvids.exploration.proposals import validate_response
-from deepvids.preferences import get_profile, set_profile
-from deepvids.recommendations.ranking import related
-from deepvids.recommendations.service import (
+from broader_vids.exploration.proposals import validate_response
+from broader_vids.preferences import get_profile, set_profile
+from broader_vids.recommendations.ranking import related
+from broader_vids.recommendations.service import (
     create_recommendation,
     execute_recommendation,
 )
-from deepvids.storage import Store
+from broader_vids.storage import Store
 from test_discovery import FixtureHttp
 
 
@@ -273,7 +273,7 @@ class ExplorationTests(unittest.TestCase):
     def test_reusing_a_finished_buffer_does_not_charge_historical_planning(self):
         identifier = create_discovery(self.store, "youtube")
         execute_discovery(self.store, identifier, FixtureHttp, model_runner=self.model)
-        with patch("deepvids.recommendations.service.enrich_buffer"):
+        with patch("broader_vids.recommendations.service.enrich_buffer"):
             run = execute_recommendation(
                 self.store,
                 create_recommendation(
@@ -291,10 +291,10 @@ class ExplorationTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.recommendations.service.execute_discovery",
+                "broader_vids.recommendations.service.execute_discovery",
                 side_effect=discovery,
             ),
-            patch("deepvids.recommendations.service.enrich_buffer") as enrich,
+            patch("broader_vids.recommendations.service.enrich_buffer") as enrich,
         ):
             run = execute_recommendation(
                 self.store,
@@ -312,15 +312,17 @@ class ExplorationTests(unittest.TestCase):
             )
 
         def enrich(store, run, *args):
-            run["state"]["shortlist"] = run["state"]["buffer"][:1]
+            run["state"]["shortlist"] = run["state"]["candidate_pool"][:1]
             run["state"]["phase"] = "assess"
 
         with (
             patch(
-                "deepvids.recommendations.service.execute_discovery",
+                "broader_vids.recommendations.service.execute_discovery",
                 side_effect=discovery,
             ),
-            patch("deepvids.recommendations.service.enrich_buffer", side_effect=enrich),
+            patch(
+                "broader_vids.recommendations.service.enrich_buffer", side_effect=enrich
+            ),
         ):
             run = execute_recommendation(
                 self.store,

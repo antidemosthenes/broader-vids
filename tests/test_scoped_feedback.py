@@ -3,17 +3,22 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from deepvids.learning.feedback import save_detail, details
-from deepvids.learning.features import capture
-from deepvids.learning.scoped import (
+from broader_vids.learning.feedback import save_detail, details
+from broader_vids.learning.features import capture
+from broader_vids.learning.scoped import (
     category_posterior,
     interest_prediction,
     quality_prediction,
 )
-from deepvids.learning.service import ensure_model, source_data, train, score_components
-from deepvids.learning.calibration import evaluate, finalize_ready_cohort
-from deepvids.preferences import set_profile, user_action, video_states
-from deepvids.storage import Store
+from broader_vids.learning.service import (
+    ensure_model,
+    source_data,
+    train,
+    score_components,
+)
+from broader_vids.learning.calibration import evaluate, finalize_ready_cohort
+from broader_vids.preferences import set_profile, user_action, video_states
+from broader_vids.storage import Store
 from test_learning import example
 
 
@@ -37,7 +42,7 @@ class ScopedFeedbackTests(unittest.TestCase):
         self.directory.cleanup()
 
     def save(self, dimension, value, **options):
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             return save_detail(self.store, self.key, dimension, value, **options)
 
     def test_specific_dislike_does_not_train_parent_or_sibling_dislikes(self):
@@ -90,9 +95,11 @@ class ScopedFeedbackTests(unittest.TestCase):
             "canonical_id": "youtube:0000000002A",
             "audience_level": "advanced",
         }
-        self.assertIsNone(
-            interest_prediction(advanced, 0.75, snapshot["structured"])["depth"]
+        advanced_prediction = interest_prediction(
+            advanced, 0.75, snapshot["structured"]
         )
+        self.assertGreater(advanced_prediction["probability"], 0.75)
+        self.assertTrue(advanced_prediction["depth"]["directional_transfer"])
 
     def test_unknown_depth_is_saved_without_inventing_an_audience_level(self):
         self.save("depth", "deeper", target="topology")
@@ -103,7 +110,7 @@ class ScopedFeedbackTests(unittest.TestCase):
         )
 
     def test_clarification_preserves_but_supersedes_ambiguous_legacy_votes(self):
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(self.store, self.key, "down", "Too elementary", "interest")
             user_action(self.store, self.key, "down", "Level mismatch", "overall")
         self.save("depth", "deeper", target="topology", level="introductory")
@@ -121,7 +128,7 @@ class ScopedFeedbackTests(unittest.TestCase):
     def test_editing_one_dimension_never_duplicates_observations_or_erases_another(
         self,
     ):
-        self.save("quality_level", "high", note="Well explained")
+        self.save("quality_level", "high")
         for value in ("low", "medium", "high", "low"):
             self.save("topic_interest", value, target="topology")
         snapshot = ensure_model(self.store)
@@ -197,7 +204,7 @@ class ScopedFeedbackTests(unittest.TestCase):
         self.assertEqual(source_data(self.store)["details"][0]["split"], "holdout")
 
     def test_schema_eight_migration_preserves_existing_tables(self):
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(self.store, self.key, "down", "Original reason", "quality")
         before = list(self.store.db.execute("SELECT * FROM feedback_ratings"))
         self.store.db.executescript(
@@ -206,10 +213,23 @@ class ScopedFeedbackTests(unittest.TestCase):
         self.store.close()
         self.store = Store(self.directory.name)
         self.assertEqual(
-            [tuple(r) for r in self.store.db.execute("SELECT * FROM feedback_ratings")],
-            [tuple(r) for r in before],
+            [
+                (*tuple(r)[:3], json.loads(r["payload"]))
+                for r in self.store.db.execute("SELECT * FROM feedback_ratings")
+            ],
+            [
+                (
+                    *tuple(r)[:3],
+                    {
+                        k: v
+                        for k, v in json.loads(r["payload"]).items()
+                        if k not in {"note", "reason"}
+                    },
+                )
+                for r in before
+            ],
         )
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 12)
 
     def test_abstentions_do_not_require_thirty_paired_votes(self):
         from test_learning import LearningStorageTests
@@ -217,7 +237,7 @@ class ScopedFeedbackTests(unittest.TestCase):
         fixture = LearningStorageTests()
         fixture.store = self.store
         fixture.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i in range(1, 31):
                 user_action(
                     self.store,
@@ -268,7 +288,7 @@ class ScopedFeedbackTests(unittest.TestCase):
                     ),
                 ),
             )
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(self.store, self.key, "down", "Translated repost", "quality")
         snapshot = ensure_model(self.store)
         self.assertTrue(source_data(self.store)["ratings"][0]["quality_review_pending"])
@@ -284,7 +304,7 @@ class ScopedFeedbackTests(unittest.TestCase):
         )
 
     def test_audience_level_requires_evidence_and_does_not_change_quality_grade(self):
-        from deepvids.evidence.assessment import validate_card
+        from broader_vids.evidence.assessment import validate_card
         from test_evidence import card
 
         value = card()
@@ -302,7 +322,7 @@ class ScopedFeedbackTests(unittest.TestCase):
             validate_card(value, {"C00001"}, "baseline")
 
     def test_legacy_feedback_remains_a_binary_channel_after_structured_feedback(self):
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(self.store, self.key, "up", "Keep legacy quality", "quality")
         self.save("topic_interest", "low", target="topology")
         state = video_states(self.store)[self.key]

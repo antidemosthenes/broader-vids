@@ -1,6 +1,6 @@
 # Scoring, calibration, and mathematics
 
-Deepvids learns conditional preferences from explicit feedback.
+Broader Vids learns conditional preferences from explicit feedback.
 It does not estimate an objective quality score for every video.
 Its conclusions apply to the retrieved videos and feature contexts that receive feedback.
 
@@ -20,8 +20,13 @@ Its conclusions apply to the retrieved videos and feature contexts that receive 
 ## 1. Eligibility
 
 Eligibility checks operate separately from learned preferences.
-The engine requires a verified duration above zero and at most ninety minutes.
+The engine requires a verified playable duration greater than sixty seconds and at most ninety minutes.
 The saved evidence quality must reach 60 points out of 100.
+For new assessments without a usable transcript, subtract ten points from quality after adding the duration prior, with a floor of zero.
+The same deduction applies to the learned quality component during ranking.
+Audio quality is not a criterion.
+Captions and frames support the four existing content criteria.
+Stored older scorecards retain their recorded policy.
 The exact Bilibili tag `视频翻译` excludes a video from final selection.
 Watched and dismissed videos cannot enter a new final list.
 
@@ -34,6 +39,10 @@ It does not receive an invented low-quality label.
 YouTube uses likes divided by views.
 Bilibili uses likes, coins, and favorites divided by views.
 These measures belong to community response, separate from content quality.
+Before admission to the 100-video buffer, both platforms require views >= 100, likes >= 3, and likes/views >= 0.01.
+Bilibili additionally requires coins/views >= 0.001 and favorites/views >= 0.002.
+Missing required metrics fail admission.
+These hard floors use raw rates before the smoothing described below.
 
 For metric count \(c\), views \(v\), and platform baseline \(b\), the adjusted rate is
 
@@ -52,14 +61,25 @@ The metric score is
  \qquad \sigma(z)=\frac{1}{1+e^{-z}}.
 \]
 
-A missing count or zero view denominator receives a neutral score of 50.
+The rate-score helper assigns 50 to a missing count or zero denominator.
+Such entries fail the hard admission floors and cannot enter a new recommendation shortlist.
 Bilibili averages its three metric scores with equal weights.
 These correlated metrics do not count as independent evidence of quality.
 
 Initial screening uses 70% community response and 30% title-anchor support.
 An anchor is a query term found in the returned metadata.
-The engine balances topic groups instead of selecting only the first search results.
-Pending recommendations keep guaranteed places within the fifty inspection slots.
+Collection interleaves retrieval families until 100 eligible videos are available.
+The global top fifty screening scores receive inspection slots.
+Canonical IDs break ties.
+There are no fixed topic or creator quotas at this step.
+Pending entries compete on the same score without guaranteed slots.
+A creator exclusion removes eligibility without creating negative feedback.
+Creator IDs determine these exclusions.
+Account names serve only as labels.
+Unresolved creators remain eligible.
+Each round retains a fixed creator-rule snapshot for screening, assessment scheduling, and final selection.
+Rule changes apply to later rounds rather than changing an active or resumed round.
+Manual and account-specific imported rules remain separate from learning parameters.
 
 ## 3. Initial quality and interest
 
@@ -71,6 +91,17 @@ The assessment uses four content criteria:
 | Directness | 25% | Relevant content without avoidable repetition or filler |
 | Original contribution | 25% | Evidence of the uploader's own contribution |
 | Purposeful visuals | 10% | Visual material that supports the content |
+
+Rubric 4 distinguishes an explained method from a software demonstration.
+Substance includes explanations needed to understand the selected video.
+A course label alone does not reduce quality.
+A short, complete explanation can have high quality.
+Visual assessment includes text readability, useful contrast, framing, and legible diagrams.
+Simple slides and phone recordings can satisfy these checks.
+Caption evidence cannot establish visual quality or AI generation.
+Creator reputation does not guarantee a high grade.
+Historical scorecards retain their original rubric and scores.
+New assessments use the clarified rubric.
 
 An assessed criterion has an integer grade from zero to four.
 Its normalized value is \(u_j=\mathrm{grade}_j/4\).
@@ -99,37 +130,34 @@ A source link alone does not prove copying.
 An unfamiliar copyright enum remains uninterpreted.
 The model must distinguish source teaching quality from the uploader's contribution.
 
-## 4. Binary feedback models
+## 4. Logistic components
 
-Existing interest and quality votes use separate Bernoulli models.
-An overall vote trains a third model.
-The engine does not copy an overall vote into the other two models.
-
-For channel \(c\),
+Current ratings use categorical topic, subject, depth, and quality responses.
+The quality model factors its categorical likelihood into logistic events.
+Each event uses a predictor vector and a proper Gaussian prior:
 
 \[
-y_{ic}\sim\operatorname{Bernoulli}(\sigma(o_{ic}+x_{ic}^{T}\beta_c)),
-\qquad \beta_{cj}\sim N(0,s_j^2).
+y_i\sim\operatorname{Bernoulli}(\sigma(o_i+x_i^T\beta)),
+\qquad \beta_j\sim N(0,s_j^2).
 \]
 
-The initial offsets are \(\operatorname{logit}(I_0)\) and \(\operatorname{logit}(Q_0/100)\).
 Numerical clipping keeps offsets finite.
 It does not limit the final learned probability.
-Each model includes its offset as a predictor, so learning can cancel that offset.
+An offset also enters as a predictor, so learning can cancel that offset.
+Prior standard deviations are 0.60 for domain and topic corrections and 0.35 for other implemented corrections.
+These priors have full support and fixed finite precision.
 
-Prior standard deviations are 0.60 for domain and topic corrections.
-They are 0.35 for the other implemented corrections.
-These proper Gaussian priors have full support and fixed finite precision.
-They do not impose a permanent correction limit.
-
-Interest predictors include domains, topics, creator, platform, and duration.
-Quality predictors include the four criteria, missingness indicators, duration, platform, and source indicators.
-Several tags form one predictor vector for one observed judgment.
+Quality predictors include criteria, missingness indicators, duration, platform, and source indicators.
+Several tags form one predictor vector for one judgment.
 They do not create duplicate observations.
-
-The engine rebuilds each model from current training labels.
+The engine rebuilds models from current training labels.
 An edit replaces one effective observation.
-It does not repeatedly use the previous posterior as a new prior for the same data.
+
+The current interface omits binary upvote and downvote controls.
+Migration maps interest votes to topic High or Low after content labeling.
+It maps quality votes to quality High or Low.
+An overall vote does not identify a current dimension, so its fields remain empty.
+Migration removes binary ratings from active storage and training after it creates a private recovery backup.
 
 ## 5. Full ranking
 
@@ -140,7 +168,7 @@ B=0.60Q+0.25I+0.05E+0.05R+0.05D.
 \]
 
 All components use a scale from zero to 100.
-Without ordinal feedback, \(Q=100p_Q\) and \(I=100p_I\) use the learned binary predictions.
+Without structured feedback, quality and interest use their initial priors.
 The next section defines the structured replacements.
 \(E\) is community response.
 For age \(a\) in years, recency is \(R=100/(1+a/10)\).
@@ -150,16 +178,14 @@ Creator diversity is \(D=100/(1+n+0.1h)\).
 Here, \(n\) counts this creator in the developing list.
 The value \(h\) counts the creator in recent recommendation exposures.
 Randomness enters discovery rather than adding a random final-score bonus.
+This diversity factor compares creators, not content overlap with watched videos.
+Different videos about the same subject can therefore recur.
+A subject match alone does not establish repeated content or equal explanatory depth.
 
-When overall training labels exist, an overall logistic model calibrates \(B\).
-Its offset is \(\operatorname{logit}(B/100)\).
-Its predictors include all component values and context corrections.
-Its final score is the predicted overall approval percentage.
-Otherwise, the final score is \(B\).
-
-The overall stage recomputes component offsets for training and prediction.
-This is conditional empirical Bayes, not an exact joint posterior over every model.
-Its consistency requires uniformly stabilizing component offsets.
+Current migrated profiles rank with \(B\), using learned structured quality and interest.
+The initial component weights remain a ranking policy.
+An empty internal overall model does not change this score.
+Historical snapshots can retain an older overall adjustment.
 Published historical lists retain their saved scores.
 Later runs use the current model.
 
@@ -168,13 +194,22 @@ Later runs use the current model.
 Topic interest, broad-subject interest, depth fit, and video quality are independent dimensions.
 Low, Medium, and High represent observed categories.
 Blank means no observation.
-Comments remain notes unless the user supplies an explicit structured judgment.
+Medium interest means indifference.
+Medium quality means acceptable quality.
+An empty field is not a Medium response.
+The dashboard shows Not rated yet as a placeholder.
+Use Clear to remove a saved dimension.
 
-A topic or depth clarification excludes that video's old interest and overall votes from fitting.
-An ordinal quality judgment excludes that video's old binary quality vote from fitting.
-The engine preserves the original rows and comments.
-Clearing the clarification restores the earlier effective observation.
-Clear that earlier vote separately to abstain from it too.
+New assessments provide cited content topics and audience levels.
+A separate bounded labeling job can update older videos from retained captions.
+Search queries do not populate rating topics.
+The user can edit each label or audience level.
+
+Ratings provide the observations used for learning.
+Tag exclusions remain separate explicit rules.
+Applied tag rules operate during screening and final selection.
+They require matching observed tags.
+The user can remove an exclusion.
 
 ### Topic and broad-subject interest
 
@@ -201,19 +236,46 @@ Custom topic labels transfer only to matching normalized labels.
 
 ### Depth fit
 
-Depth uses a separate model for each topic and observed audience level.
+Depth uses an exact categorical model for each observed topic and audience level.
 The responses are want deeper, suitable, and want lighter.
 Their Dirichlet prior is \((0.5,1,0.5)\).
-For \(s=P(\mathrm{suitable})\), the ranking multiplies interest odds by \(s/(1-s)\).
-The prior mean \(s=0.5\) is neutral.
+For an observed level, \(s=P(\mathrm{suitable})\) multiplies interest odds by \(s/(1-s)\).
+Its prior mean of 0.5 is neutral.
 
-Depth does not change the quality or domain-interest posterior.
-Unknown audience levels retain feedback but do not adjust future candidate scores.
-Audience level requires cited evidence or an explicit user choice.
-Duration and substance grade do not establish audience level.
+For a level without direct feedback, a separate directional model transfers information within that topic.
+Encode introductory, intermediate, and advanced as \(l=0,1,2\).
+A latent preferred level has prior \(\mu\sim N(1,1.5^2)\).
+With \(w=0.75\), its likelihood is
 
-Topic averaging and depth odds are ranking policies.
-They do not establish a true joint approval probability.
+\[
+P(\mathrm{deeper}\mid\mu,l)=\sigma(\mu-l-w),
+\quad P(\mathrm{lighter}\mid\mu,l)=\sigma(l-\mu-w),
+\]
+\[
+P(\mathrm{suitable}\mid\mu,l)=1-P(\mathrm{deeper})-P(\mathrm{lighter}).
+\]
+
+Adaptive one-dimensional quadrature approximates this posterior.
+The transfer adds \(\operatorname{logit}(s_{post})-\operatorname{logit}(s_{prior})\) to interest log odds.
+Thus, no feedback gives no adjustment.
+Want deeper shifts preference upward, while want lighter shifts it downward.
+Direct categorical feedback takes precedence when that candidate level receives observations.
+The directional model does not add duplicate categorical counts.
+
+This transfer is a ranking policy, not a calibrated joint probability model.
+Its fixed noise width cannot represent every possible response distribution.
+The exact categorical consistency result applies to directly observed topic-level groups.
+No unconditional convergence claim applies to transferred scores at an unobserved level.
+
+Depth does not change quality or domain interest.
+Unknown audience levels retain feedback but do not adjust future scores.
+The model supplies a cited level when the evidence supports one.
+The user can override that level.
+The engine distinguishes an AI estimate from an explicit user level.
+An explicit Unknown choice prevents the AI estimate from overriding that judgment.
+Later labels can resolve a pending AI level.
+Errors in estimated levels can still bias depth predictions.
+Duration does not establish audience level.
 
 ### Ordinal quality
 
@@ -230,9 +292,9 @@ This is one categorical likelihood, not duplicate votes or fractional Bernoulli 
 
 The quality index is \(Q=100[0.5P(\mathrm{Medium})+P(\mathrm{High})]\).
 It represents expected ordinal utility, not a binary approval percentage.
-Initial stage offsets transfer the legacy quality prediction without inventing category labels.
+Initial stage offsets use the quality prior when the retired binary model has no observations.
 Learned corrections can cancel these offsets.
-The binary quality model remains separate.
+An empty compatibility model supplies the baseline without retaining binary votes.
 
 ## 7. Calibration and evaluation
 
@@ -273,11 +335,53 @@ A new response type requires new holdout coverage.
 Training on released labels does not replace the earlier test result.
 
 Evidence maintenance adds derived feature records after source checks.
-They preserve original ratings, comments, scorecards, and captured features.
+They preserve original ratings, scorecards, and captured features.
 Incomplete source metadata can pause quality fitting.
 Maintenance uses retained frames and captions without downloading replacement media.
 
-## 8. Consistency assumptions
+## 8. Transfer of learned parameters
+
+Preference format 1 transfers interests and model version 8 parameters without individual video records.
+Logistic channels retain parameter names, posterior means, and the full covariance or precision matrix.
+Sparse fits aggregate their precision matrix before export. They do not export per-observation feature rows.
+Categorical groups retain Dirichlet concentration parameters and aggregate observation counts.
+Depth models retain their posterior summaries and a three-by-three table of level/response counts per topic.
+These counts are sufficient statistics for the implemented depth likelihood. They contain no video identities or chronology.
+Quality calibration retains both continuation-stage models.
+Transfers exclude per-video topic and level corrections, test cohorts, and validation claims.
+Local saved corrections remain visible in the dashboard.
+They continue to label local videos without adding their old ratings to training.
+
+For a logistic parameter vector, import uses the saved Gaussian approximation as a proper prior:
+
+\[
+\beta\sim N(m_0,\Sigma_0),\qquad
+\log p(\beta\mid D_{\mathrm{new}})
+=-\tfrac12(\beta-m_0)^\top\Sigma_0^{-1}(\beta-m_0)
++\sum_{i\in D_{\mathrm{new}}}\log p(y_i\mid x_i,\beta)+C.
+\]
+
+The implementation preserves off-diagonal correlations.
+New coefficients receive the usual independent proper priors.
+MAP fitting and a full Hessian update the imported Gaussian approximation.
+This is sequential approximate Bayesian learning. It does not reconstruct the original non-Gaussian posterior from raw observations.
+Immediately after import, predictions and parameter uncertainty match the exported approximation, subject to floating-point arithmetic.
+Per-video corrections and local exclusion rules are outside this comparison.
+
+For each categorical group, new counts add to the imported concentration vector.
+Depth fitting combines imported aggregate counts with new counts and repeats its numerical integration.
+Local ratings saved before import do not enter these likelihoods again.
+Editing an older rating supplies one new post-import observation. Later edits replace that post-import observation.
+Clearing it removes its post-import contribution.
+Clearing cannot remove an unidentified historical observation embedded in the imported aggregate posterior.
+Replacing the imported baseline with an earlier recovery file can restore its earlier parameters.
+Repeated import replaces the baseline. It does not add two copies of the same parameters.
+Frozen evaluation results cannot cross an import boundary.
+
+The consistency assumptions below apply to a fixed imported proper prior and sufficiently many subsequent distinct-video observations.
+Repeated transfers of successively approximated posteriors do not establish unconditional consistency.
+
+## 9. Consistency assumptions
 
 Infinite feedback alone is insufficient.
 Repeated edits to one rating remain one observation.

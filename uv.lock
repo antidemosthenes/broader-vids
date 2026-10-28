@@ -410,8 +410,8 @@ wheels = [
 ]
 
 [[package]]
-name = "deepvids"
-version = "0.1.0a13"
+name = "broader-vids"
+version = "0.1.0a17"
 source = { editable = "." }
 
 [package.optional-dependencies]

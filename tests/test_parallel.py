@@ -4,21 +4,65 @@ import time
 import unittest
 from unittest.mock import patch
 
-from deepvids.evidence.media import EvidencePending
-from deepvids.evidence.service import create_evidence
-from deepvids.preferences import set_profile
-from deepvids.recommendations.parallel import (
+from broader_vids.evidence.media import EvidencePending
+from broader_vids.evidence.service import create_evidence
+from broader_vids.preferences import set_profile
+from broader_vids.recommendations.parallel import (
     assess_parallel,
     Runtime,
     process_candidate,
 )
-from deepvids.recommendations.batch import create_batch, execute_batch
-from deepvids.recommendations.service import create_recommendation
-from deepvids.storage import Store
+from broader_vids.recommendations.batch import create_batch, execute_batch
+from broader_vids.recommendations.service import create_recommendation
+from broader_vids.storage import Store
 from test_recommendations import candidate, quality
 
 
 class ParallelTests(unittest.TestCase):
+    def test_validation_repair_can_use_the_saved_total_call_allowance(self):
+        run, save = self.run_fixture(count=50, calls=52)
+        first = run["state"]["shortlist"][0]["canonical_id"]
+
+        def worker(root, work, *args):
+            local = Store(root)
+            try:
+                child = local.get(work["evidence_run"])
+                child["state"]["model_calls"] += 1
+                child["state"]["attempts"].append(
+                    {"work_token": work["preparation_token"]}
+                )
+                child["state"].setdefault("preparation_usage", {})[
+                    work["preparation_token"]
+                ] = 0
+                calls = child["state"]["model_calls"]
+                local.save(child)
+            finally:
+                local.close()
+            if work["canonical_id"] == first and calls == 1:
+                return {
+                    "status": "pending",
+                    "reason": "topics.specific[0] exceeds its bound",
+                    "failure": {
+                        "category": "validation",
+                        "stage": "assessment",
+                        "scope": "candidate",
+                        "reason": "topics.specific[0] exceeds its bound",
+                    },
+                    "evidence_run": work["evidence_run"],
+                }
+            return quality(work["evidence_run"])
+
+        assess_parallel(
+            self.store,
+            run,
+            save,
+            lambda: 100,
+            worker=worker,
+            quality_lookup=lambda *args: None,
+        )
+        self.assertEqual(run["state"]["model_calls"], 51)
+        self.assertEqual(run["state"]["assessment_index"], 50)
+
     def test_saved_unknown_result_does_not_require_a_new_model_call(self):
         run, save = self.run_fixture(count=1, calls=0)
         identifier = create_evidence(self.store, run["state"]["shortlist"][0]["url"])
@@ -87,10 +131,10 @@ class ParallelTests(unittest.TestCase):
     def test_batch_child_cannot_run_outside_its_shared_coordinator(self):
         identifier = create_batch(self.store)
         child = self.store.get(identifier)["state"]["children"]["youtube"]
-        from deepvids.recommendations.service import execute_recommendation
+        from broader_vids.recommendations.service import execute_recommendation
 
         with (
-            patch("deepvids.recommendations.service.execute_discovery"),
+            patch("broader_vids.recommendations.service.execute_discovery"),
             self.assertRaisesRegex(ValueError, "batch"),
         ):
             execute_recommendation(self.store, child)
@@ -176,15 +220,15 @@ class ParallelTests(unittest.TestCase):
         }
         with (
             patch(
-                "deepvids.recommendations.parallel.prepare_evidence",
+                "broader_vids.recommendations.parallel.prepare_evidence",
                 side_effect=assert_owned,
             ),
             patch(
-                "deepvids.recommendations.parallel.assess_evidence",
+                "broader_vids.recommendations.parallel.assess_evidence",
                 side_effect=assert_owned,
             ),
             patch(
-                "deepvids.recommendations.parallel.cached_quality",
+                "broader_vids.recommendations.parallel.cached_quality",
                 return_value=quality(identifier),
             ),
         ):

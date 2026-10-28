@@ -1,98 +1,140 @@
-# Deepvids
+# Broader Vids
 
-Deepvids recommends YouTube and Bilibili videos from your interests and feedback.
-It aims to find useful videos beyond the topics that you already watch.
-Older videos remain eligible.
+Broader Vids recommends YouTube and Bilibili videos from your interests and feedback.
+It searches beyond familiar topics and keeps older videos eligible.
+Each complete round produces ten recommendations per platform.
+Captions and selected frames support quality assessment.
+You can rate topic interest, depth, and quality separately.
 
-Each complete run produces ten YouTube recommendations and ten Bilibili recommendations.
-Deepvids checks captions and selected frames before it ranks videos.
-You can rate a topic, the content depth, and the video quality separately.
-Your profile, feedback, and results stay on your computer.
-
-The current preview supports manual runs from a terminal.
-Codex plugin installation and automatic daily runs are not ready yet.
+This preview runs locally through Codex CLI or Codex in the ChatGPT desktop app.
+Recommendation rounds are manual. Automatic daily runs remain planned.
+The project is not yet published to npm or the public Plugins Directory.
 
 ## Requirements
 
 - Windows with PowerShell.
+- [Node.js](https://nodejs.org/) 20 or later, including npm.
 - [UV](https://docs.astral.sh/uv/getting-started/installation/) to manage Python 3.12 or later.
-- [Codex CLI](https://developers.openai.com/codex/cli/) with an active ChatGPT sign-in and access to GPT-6.1 Sol.
-- Edge or Chrome for the separate Bilibili sign-in window.
-- Internet access for video discovery and analysis.
+- [Codex CLI](https://learn.chatgpt.com/docs/cli) with ChatGPT sign-in and access to the model you select.
+- The ChatGPT desktop app for installation through the app.
+- Internet access for discovery, downloads, and AI assessment.
 
-Deepvids uses your Codex access for model calls.
-It does not require an OpenAI API key.
+Bilibili access also needs Edge, Chrome, or Playwright Chromium for manual sign-in.
+Setup installs the media and browser libraries.
+Speech transcription is optional and helps when captions are unavailable.
+`ffprobe` is optional. Broader Vids does not need an OpenAI API key.
 
-## Start from the source folder
+## Prepare the local preview
 
-Open PowerShell in the project folder.
-Install the dependencies:
+Both installation methods currently use this repository's local marketplace.
+Download or clone the repository. Open PowerShell in its root folder.
+Build the plugin files once:
 
 ```powershell
-uv sync --locked --extra evidence --extra asr
-uv run --no-sync deepvids doctor
+uv sync --locked
+uv build --wheel --out-dir python
+npm pack --ignore-scripts
+uv run --no-sync scripts/build_plugin.py
+```
+
+The prepared plugin is at `dist/plugins/broader-vids`.
+The repository's marketplace file points to that directory.
+If these files are already prepared, continue with either method below.
+These commands build local files. They do not publish or install the plugin.
+
+## Option 1: Install with Codex CLI
+
+Run these commands from the repository root:
+
+```powershell
 codex login
+codex plugin marketplace add .
+codex plugin add broader-vids@broader-vids-local
 ```
 
-The `asr` option installs speech transcription tools for videos without usable captions.
-Model weights download when transcription first needs them.
+Start a new Codex CLI session with `codex`.
+Continue with **Set up Broader Vids** below.
+You can also use `/plugins` inside Codex CLI to inspect the local marketplace and install its plugin.
+See the [official plugin guide](https://learn.chatgpt.com/docs/plugins).
 
-Set your interests:
+## Option 2: Install in the ChatGPT desktop app
 
-```powershell
-uv run --no-sync deepvids profile set --interest mathematics --interest travel --interest music
-```
+1. Open this repository as a local Codex project in the ChatGPT desktop app.
+2. Restart the app after preparing the plugin files.
+3. Open **Plugins** and select the **Broader Vids (local)** marketplace.
+4. Select **Broader Vids**, then **Install**.
+5. Start a new Codex conversation in the app.
+6. Continue with **Set up Broader Vids** below.
 
-Sign into Bilibili in the separate browser window:
+The app discovers the repository catalog at `.agents/plugins/marketplace.json`.
+This is a local marketplace installation, not a public directory listing.
+See the [official local plugin instructions](https://developers.openai.com/plugins/build/plugins#install-a-local-plugin-manually).
 
-```powershell
-uv run --no-sync deepvids login bilibili
-```
+## Set up Broader Vids
 
-Complete sign-in in that window.
-Keep the original terminal open.
-Use a second PowerShell terminal in the project folder to check the saved session:
+Select the installed **Set up Broader Vids** skill in the new conversation.
+You can also ask:
 
-```powershell
-uv run --no-sync deepvids login bilibili --confirm
-```
+> Use Broader Vids to set up this computer with the default data directory.
 
-Request recommendations:
+Setup installs the separate Python runtime and checks its tools.
+It guides you through interests and Bilibili sign-in.
+Sign in yourself in the separate browser window.
+Setup does not start recommendations or enable a schedule.
 
-```powershell
-uv run --no-sync deepvids recommend both --use-browser --asr-model base
-```
+If you have an exported preference file, give its full path to the setup skill and request a restore.
+You can also import it through the dashboard after setup.
+Manual interest entry is unnecessary when the import supplies your interests.
 
-Open the review page:
+## Import saved preferences and weights
 
-```powershell
-uv run --no-sync deepvids serve
-```
+1. Ask the **Broader Vids dashboard** skill to open the dashboard.
+2. Select **Import/Export**.
+3. Select **Choose file** and open your exported JSON file.
+4. Check the automatic preview.
+5. Select **Import preferences**.
 
-Visit [the local review page](http://127.0.0.1:8765).
-Use its controls to mark videos watched and give feedback.
-Press **Ctrl+C** in the server terminal to stop the page server.
+Import replaces learned preferences and weights. It creates a recovery file first.
+It does not import calibration examples, individual feedback, recommendation history, or exclusion rules.
+For a fresh profile, the recommendation and calibration lists remain empty until you request videos.
+New feedback continues learning from the imported parameters.
 
-## What to expect
+## Request and review videos
 
-The default run allows 30 minutes for both platforms.
+Use the **Broader Vids recommendations** skill, or ask:
+
+> Use Broader Vids to recommend ten YouTube videos and ten Bilibili videos.
+
+Recommendations appear in chat.
+Open the dashboard to mark videos watched, give ratings, or manage exclusions.
+Select YouTube or Bilibili above the list.
+Select **Rate** to open a video's separate review panel.
+Calibration is optional.
+
+The default combined run allows thirty minutes.
 Access failures or missing evidence can leave a run incomplete.
-Use the printed batch ID to continue that run.
-See the [terminal reference](docs/REFERENCE.md#continue-an-incomplete-run).
+Use its printed batch ID to continue that run.
+Unwatched videos compete with new candidates in later inspection lists.
+A new round can recommend an unwatched video again.
 
-An unwatched recommendation keeps its place in later inspection lists until you watch or dismiss it.
-A new run can recommend that video again.
-Watching and rating are separate actions.
+## Where Broader Vids stores data
 
-Deepvids stores data under `%LOCALAPPDATA%\deepvids` by default.
-Use the same data directory for every command.
-The [terminal reference](docs/REFERENCE.md#choose-a-data-directory) explains how to select another directory.
+The default Windows directory is `%LOCALAPPDATA%\broader-vids`.
+Broader Vids keeps its profile, imported parameters, feedback, results, browser session, and runtime outside the plugin installation.
+Import reads your JSON file and stores its parameters in `broader-vids.sqlite3` under that directory.
+The original JSON file stays where you saved it.
+Recovery files are under `backups/` in the same data directory.
 
-## Documentation
+A normal installation does not create a `.localdata` folder in this repository.
+An explicit data selection or override can choose another location.
+Use the same directory for setup, the dashboard, and recommendations.
+See [data directory selection](docs/REFERENCE.md#choose-a-data-directory).
 
-- [Workflow](docs/WORKFLOW.md): what each recommendation step does.
+## More documentation
+
+- [Workflow](docs/WORKFLOW.md): recommendation steps and feedback.
 - [Architecture](docs/ARCHITECTURE.md): files, folders, and data flow.
-- [Scoring](docs/SCORING.md): quality, feedback, calibration, and mathematics.
-- [Reference](docs/REFERENCE.md): commands, tests, distribution, dependencies, and copyright.
+- [Scoring](docs/SCORING.md): quality, calibration, and mathematics.
+- [Reference](docs/REFERENCE.md): terminal commands, tests, builds, dependencies, and copyright.
 
-Deepvids uses the [MIT license](LICENSE).
+Broader Vids uses the [MIT license](LICENSE).

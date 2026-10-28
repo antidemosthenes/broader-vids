@@ -4,9 +4,9 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 
-from deepvids.http import AccessPaused, BudgetExhausted, NoRedirect, PublicHttp
-from deepvids.parsing import embedded_json
-from deepvids.storage import Store
+from broader_vids.http import AccessPaused, BudgetExhausted, NoRedirect, PublicHttp
+from broader_vids.parsing import embedded_json
+from broader_vids.storage import Store
 
 
 class HttpTests(unittest.TestCase):

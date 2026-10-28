@@ -9,21 +9,21 @@ import unittest
 import threading
 from unittest.mock import patch
 
-from deepvids.evidence.assessment import (
+from broader_vids.evidence.assessment import (
     CRITERIA,
     assess_evidence,
     run_codex,
     validate_card,
 )
-from deepvids.evidence.browser import browser_cookie_jar, confirm_bilibili_login
-from deepvids.evidence.service import (
+from broader_vids.evidence.browser import browser_cookie_jar, confirm_bilibili_login
+from broader_vids.evidence.service import (
     add_evidence_frame,
     create_evidence,
     prepare_evidence,
     verify_bundle,
 )
-from deepvids.evidence.reports import evidence_checks
-from deepvids.evidence.media import (
+from broader_vids.evidence.reports import evidence_checks
+from broader_vids.evidence.media import (
     EvidencePending,
     VideoFetcher,
     compact_captions,
@@ -32,8 +32,8 @@ from deepvids.evidence.media import (
     probe_media,
     public_error,
 )
-from deepvids.storage import Store
-from deepvids.identity import identify
+from broader_vids.storage import Store
+from broader_vids.identity import identify
 
 
 def card(mode="baseline"):
@@ -69,6 +69,15 @@ def card(mode="baseline"):
 
 
 class CaptionTests(unittest.TestCase):
+    def test_historical_and_current_rubrics_remain_readable(self):
+        for version in (3, 4):
+            self.assertEqual(
+                validate_card(card(), {"C00001"}, "baseline", rubric_version=version)[
+                    "content_quality"
+                ],
+                70,
+            )
+
     def test_bounded_format_unavailability_does_not_masquerade_as_an_access_challenge(
         self,
     ):
@@ -100,10 +109,11 @@ class CaptionTests(unittest.TestCase):
             response = subprocess.CompletedProcess([], 0, "", "")
             with (
                 patch(
-                    "deepvids.evidence.assessment.shutil.which", return_value="fixture"
+                    "broader_vids.evidence.assessment.shutil.which",
+                    return_value="fixture",
                 ),
                 patch(
-                    "deepvids.evidence.assessment.run_bounded",
+                    "broader_vids.evidence.assessment.run_bounded",
                     side_effect=[login, response],
                 ),
             ):
@@ -234,13 +244,17 @@ class CaptionTests(unittest.TestCase):
             b"Duration: 01:30:00.00\nStream #0:0: Video: h264, yuv420p, 320x180\n",
         )
         with (
-            patch("deepvids.evidence.media.ffmpeg_executable", return_value="fixture"),
+            patch(
+                "broader_vids.evidence.media.ffmpeg_executable", return_value="fixture"
+            ),
             patch("subprocess.run", return_value=reply),
         ):
             self.assertEqual(probe_media("fixture")["duration_seconds"], 5400)
         reply.stderr = reply.stderr.replace(b"01:30:00.00", b"01:30:00.01")
         with (
-            patch("deepvids.evidence.media.ffmpeg_executable", return_value="fixture"),
+            patch(
+                "broader_vids.evidence.media.ffmpeg_executable", return_value="fixture"
+            ),
             patch("subprocess.run", return_value=reply),
         ):
             with self.assertRaises(EvidencePending):
@@ -283,10 +297,82 @@ class CaptionTests(unittest.TestCase):
     "Optional evidence dependencies are required",
 )
 class EvidencePipelineTests(unittest.TestCase):
+    def test_invalid_scorecard_retry_keeps_attempts_and_receives_a_repair_hint(self):
+        identifier = self.prepare()
+        prompts = []
+
+        def model(prompt, *args):
+            prompts.append(prompt)
+            response = card("augmented")
+            response["topics"] = {
+                "specific": ["x" * 121 if len(prompts) == 1 else "algebra"],
+                "broad": ["mathematics"],
+                "confidence": "medium",
+                "evidence_ids": ["C00001"],
+                "rationale": "The caption supports this label.",
+            }
+            return response, None
+
+        failed = assess_evidence(
+            self.store, identifier, "augmented", model_runner=model
+        )
+        self.assertEqual(failed["state"]["failure"]["category"], "validation")
+        result = assess_evidence(
+            self.store, identifier, "augmented", model_runner=model
+        )
+        self.assertIsNotNone(
+            result["state"]["assessments"]["augmented"]["overall_quality"]
+        )
+        self.assertIn("received length 121", prompts[1])
+        self.assertIn("Correct the previous response", prompts[1])
+        directory = self.store.root / "evidence" / identifier
+        self.assertTrue((directory / "augmented-response-1.json").is_file())
+        self.assertTrue((directory / "augmented-response-2.json").is_file())
+
+    def test_captionless_video_is_assessed_from_frames_with_explicit_penalty(self):
+        from broader_vids.recommendations.quality import cached_quality
+
+        identifier = create_evidence(
+            self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y", self.media
+        )
+        run = prepare_evidence(self.store, identifier)
+        self.assertEqual(run["status"], "prepared")
+        self.assertEqual(run["state"]["captions"]["source"], "unavailable")
+        self.assertEqual(run["state"]["caption_excerpt"]["selected_cues"], 0)
+        verify_bundle(self.store, run)
+        with self.store.db:
+            run["settings"]["local_media"] = None
+            run["state"]["metadata"]["source"] = "yt_dlp_playable_unit"
+            self.store.db.execute(
+                "UPDATE runs SET settings=? WHERE id=?",
+                (json.dumps(run["settings"]), identifier),
+            )
+        self.store.save(run)
+        prompts = []
+
+        def model(prompt, *args):
+            prompts.append(prompt)
+            response = card("augmented")
+            for criterion in response["criteria"].values():
+                for observation in criterion["observations"]:
+                    observation["evidence_ids"] = ["F01"]
+            return response, {}
+
+        assessed = assess_evidence(self.store, identifier, "both", model_runner=model)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("No transcript or audio is supplied", prompts[0])
+        self.assertEqual(set(assessed["state"]["assessments"]), {"augmented"})
+        result = cached_quality(self.store, identifier)
+        self.assertEqual(result["missing_captions_penalty"], 10)
+        self.assertAlmostEqual(result["quality"], 60.01, places=1)
+        self.assertAlmostEqual(result["quality_interval"][0], 45.01, places=1)
+        with self.assertRaises(ValueError):
+            assess_evidence(self.store, identifier, "baseline", model_runner=model)
+
     def test_preparation_process_returns_a_verified_bundle_without_credentials_files(
         self,
     ):
-        from deepvids.evidence.preparation_worker import prepare_bounded
+        from broader_vids.evidence.preparation_worker import prepare_bounded
 
         identifier = create_evidence(
             self.store,
@@ -309,7 +395,7 @@ class EvidencePipelineTests(unittest.TestCase):
         self.assertFalse((self.store.root / (identifier + ".lock")).exists())
 
     def test_quality_interval_uses_the_same_duration_bonus_as_the_score(self):
-        from deepvids.recommendations.quality import cached_quality
+        from broader_vids.recommendations.quality import cached_quality
 
         identifier = self.prepare()
         assess_evidence(
@@ -408,12 +494,12 @@ class EvidencePipelineTests(unittest.TestCase):
         self.assertIn("chinese_dub_label", prompts[0])
         self.assertIsNotNone(
             __import__(
-                "deepvids.recommendations.quality", fromlist=["cached_quality"]
+                "broader_vids.recommendations.quality", fromlist=["cached_quality"]
             ).cached_quality(self.store, review)
         )
 
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="deepvids evidence ")
+        self.directory = tempfile.TemporaryDirectory(prefix="broader-vids evidence ")
         self.root = Path(self.directory.name)
         self.store = Store(self.root / "state")
         self.media = self.root / "original clip.mp4"
@@ -460,6 +546,7 @@ class EvidencePipelineTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("yt_dlp"), "yt-dlp is required")
     def test_dash_only_formats_above_480p_remain_downloadable(self):
         fetcher = VideoFetcher(1024 * 1024, time.monotonic() + 60)
+        self.addCleanup(fetcher.close)
         audio = {
             "format_id": "audio",
             "url": "https://example.invalid/audio.m4a",
@@ -491,17 +578,23 @@ class EvidencePipelineTests(unittest.TestCase):
 
         selected = select([audio, video])
         self.assertEqual(len(selected), 1)
-        self.assertEqual(
-            [f["format_id"] for f in selected[0]["requested_formats"]],
-            ["portrait", "audio"],
-        )
+        self.assertEqual(selected[0]["format_id"], "portrait")
         low = {**video, "format_id": "low", "height": 360, "width": 640}
         self.assertEqual(
-            select([audio, low, video])[0]["requested_formats"][0]["format_id"],
+            select([audio, low, video])[0]["format_id"],
             "low",
         )
-        self.assertEqual(fetcher.options["max_filesize"], 1024 * 1024)
+        self.assertNotIn("max_filesize", fetcher.options)
         self.assertEqual(select([audio, {**video, "width": 1080, "height": 1920}]), [])
+        fetcher.configure_audio(True)
+        selector = fetcher.ydl.format_selector
+        self.assertEqual(
+            [
+                f["format_id"]
+                for f in select([audio, low, video])[0]["requested_formats"]
+            ],
+            ["low", "audio"],
+        )
 
     @unittest.skipUnless(importlib.util.find_spec("yt_dlp"), "yt-dlp is required")
     def test_downloader_requests_bilibili_subtitles_before_choosing_asr(self):
@@ -557,18 +650,17 @@ class EvidencePipelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assess_evidence(self.store, identifier, "baseline", invalid)
 
-    def test_incomplete_speech_evidence_is_pending_not_empty_or_success(self):
+    def test_unavailable_speech_is_explicit_and_visual_bundle_is_prepared(self):
         identifier = create_evidence(
             self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y", self.media
         )
         result = prepare_evidence(self.store, identifier)
-        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["status"], "prepared")
         self.assertTrue(result["state"]["frames"])
-        self.assertIsNone(result["state"]["captions"])
-        with self.assertRaises(ValueError):
-            assess_evidence(self.store, identifier)
+        self.assertEqual(result["state"]["captions"]["source"], "unavailable")
+        self.assertEqual(result["state"]["caption_excerpt"]["characters"], 0)
 
-    def test_transcription_choice_survives_a_paused_preparation(self):
+    def test_transcription_failure_retains_choice_and_allows_visual_fallback(self):
         identifier = create_evidence(
             self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y", self.media
         )
@@ -579,11 +671,17 @@ class EvidencePipelineTests(unittest.TestCase):
             raise EvidencePending("Temporary worker failure")
 
         with patch(
-            "deepvids.evidence.service.transcribe_media", side_effect=transcribe
+            "broader_vids.evidence.service.transcribe_media", side_effect=transcribe
         ):
             prepare_evidence(self.store, identifier, "base")
             prepare_evidence(self.store, identifier)
-        self.assertEqual(calls, ["base", "base"])
+        self.assertEqual(calls, ["base"])
+        result = self.store.get(identifier)
+        self.assertEqual(result["status"], "prepared")
+        self.assertEqual(result["state"]["asr_model"], "base")
+        self.assertEqual(
+            result["state"]["caption_access_issue"], "Temporary worker failure"
+        )
 
     def test_targeted_frames_need_a_reason_and_respect_eight_image_cap(self):
         identifier = self.prepare()
@@ -606,7 +704,7 @@ class EvidencePipelineTests(unittest.TestCase):
             self.media,
             self.captions,
         )
-        from deepvids.evidence.service import extract_frame
+        from broader_vids.evidence.service import extract_frame
 
         calls = []
 
@@ -616,7 +714,9 @@ class EvidencePipelineTests(unittest.TestCase):
                 raise EvidencePending("Fixture interruption")
             return extract_frame(media, timestamp, target)
 
-        with patch("deepvids.evidence.service.extract_frame", side_effect=interrupted):
+        with patch(
+            "broader_vids.evidence.service.extract_frame", side_effect=interrupted
+        ):
             partial = prepare_evidence(self.store, identifier)
         self.assertEqual(partial["status"], "pending")
         self.assertEqual(len(partial["state"]["frame_positions_done"]), 1)

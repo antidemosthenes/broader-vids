@@ -3,8 +3,8 @@ requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "deepvids"
-version = "0.1.0a13"
+name = "broader-vids"
+version = "0.1.0a17"
 description = "Curated live discovery for independent video recommendations"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [project.scripts]
-deepvids = "deepvids.cli:main"
+broader-vids = "broader_vids.cli:main"
 
 [project.optional-dependencies]
 evidence = [
@@ -32,5 +32,5 @@ asr = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/deepvids"]
+packages = ["src/broader_vids"]
 

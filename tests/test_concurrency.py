@@ -8,19 +8,19 @@ import sys
 import subprocess
 from unittest.mock import patch
 
-from deepvids.evidence.preparation_worker import record_preparation_receipt
-from deepvids.evidence.preparation_worker import prepare_bounded
-from deepvids.processes import start_owned
-from deepvids.http import PublicHttp, BudgetExhausted
-from deepvids.preferences import set_profile
-from deepvids.recommendations.batch import create_batch, execute_batch
-from deepvids.recommendations.timing import recover_elapsed
-from deepvids.recommendations.service import (
+from broader_vids.evidence.preparation_worker import record_preparation_receipt
+from broader_vids.evidence.preparation_worker import prepare_bounded
+from broader_vids.processes import start_owned
+from broader_vids.http import PublicHttp, BudgetExhausted
+from broader_vids.preferences import set_profile
+from broader_vids.recommendations.batch import create_batch, execute_batch
+from broader_vids.recommendations.timing import recover_elapsed
+from broader_vids.recommendations.service import (
     create_recommendation,
     execute_recommendation,
 )
-from deepvids.evidence.media import EvidencePending
-from deepvids.storage import Store
+from broader_vids.evidence.media import EvidencePending
+from broader_vids.storage import Store
 
 
 class ConcurrencyTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class ConcurrencyTests(unittest.TestCase):
         run["state"]["phase"] = "assess"
         self.store.save(run)
         with patch(
-            "deepvids.recommendations.parallel.assess_parallel",
+            "broader_vids.recommendations.parallel.assess_parallel",
             side_effect=EvidencePending("Fixture pause", retryable=True),
         ):
             for _ in range(3):
@@ -50,7 +50,8 @@ class ConcurrencyTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.evidence.preparation_worker.start_owned", side_effect=sleeping
+                "broader_vids.evidence.preparation_worker.start_owned",
+                side_effect=sleeping,
             ),
             self.assertRaises(subprocess.TimeoutExpired),
         ):
@@ -144,7 +145,9 @@ class ConcurrencyTests(unittest.TestCase):
                 "elapsed": 3,
                 "state": {"active_attempt": {"started_wall": 100, "prior_elapsed": 2}},
             }
-            with patch("deepvids.recommendations.timing.time.time", return_value=now):
+            with patch(
+                "broader_vids.recommendations.timing.time.time", return_value=now
+            ):
                 recover_elapsed(run)
                 recover_elapsed(run)
             self.assertEqual(run["elapsed"], expected)

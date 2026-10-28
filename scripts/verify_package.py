@@ -34,7 +34,8 @@ def main(archive_path):
         )
         wheel_names = [name for name in names if name.endswith(".whl")]
         assert (
-            len(wheel_names) == 1 and f"deepvids-{expected_python}-" in wheel_names[0]
+            len(wheel_names) == 1
+            and f"broader_vids-{expected_python}-" in wheel_names[0]
         )
         for name in names:
             item = archive.getmember(name)
@@ -52,7 +53,7 @@ def main(archive_path):
             assert not any(
                 "__pycache__" in name or name.endswith(".pyc") for name in packaged
             )
-            for source in (root / "src/deepvids").rglob("*"):
+            for source in (root / "src/broader_vids").rglob("*"):
                 if not source.is_file() or "__pycache__" in source.parts:
                     continue
                 name = source.relative_to(root / "src").as_posix()
@@ -67,10 +68,10 @@ def main(archive_path):
                 "audio",
                 "audio_worker",
             ):
-                assert f"deepvids/{retired}.py" not in packaged
+                assert f"broader_vids/{retired}.py" not in packaged
         documents = [
             root / "README.md",
-            root / "skills/deepvids/SKILL.md",
+            *(root / "skills").rglob("*.md"),
             *(root / "docs").rglob("*.md"),
         ]
         for source in documents:
@@ -85,12 +86,25 @@ def main(archive_path):
                     assert "package/" + target.relative_to(root).as_posix() in names, (
                         f"Unshipped linked file: {link}"
                     )
-        for name in ("plugin.json", ".claude-plugin/marketplace.json"):
-            data = json.loads((root / name).read_text(encoding="utf-8"))
-            version = (
-                data["plugins"][0]["version"] if "plugins" in data else data["version"]
-            )
-            assert version == manifest["version"]
+        plugin = json.loads((root / "plugin.json").read_text(encoding="utf-8"))
+        assert plugin["version"] == manifest["version"]
+        onboarding = plugin["extensions"]["com.openai"]["onboardingSkill"]
+        assert "package/" + onboarding.removeprefix("./") in names
+        catalog = json.loads(
+            (root / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
+        )
+        entry = next(
+            item for item in catalog["plugins"] if item["name"] == plugin["name"]
+        )
+        assert entry["source"] == {
+            "source": "local",
+            "path": "./dist/plugins/broader-vids",
+        }
+        assert entry["policy"] == {
+            "installation": "AVAILABLE",
+            "authentication": "ON_USE",
+        }
+        assert not any(".claude-plugin/" in name for name in names)
     print(
         f"Verified {Path(archive_path).name}: current source, assets, documentation links, versions and private-state exclusions."
     )
@@ -101,4 +115,4 @@ if __name__ == "__main__":
         raise SystemExit("Usage: uv run scripts/verify_package.py [ARCHIVE.tgz]")
     root = Path(__file__).resolve().parent.parent
     version = json.loads((root / "package.json").read_text(encoding="utf-8"))["version"]
-    main(sys.argv[1] if len(sys.argv) == 2 else root / f"deepvids-{version}.tgz")
+    main(sys.argv[1] if len(sys.argv) == 2 else root / f"broader-vids-{version}.tgz")

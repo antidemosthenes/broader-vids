@@ -1,22 +1,21 @@
 {
-  "name": "deepvids",
-  "version": "0.1.0-alpha.13",
+  "name": "broader-vids",
+  "version": "0.1.0-alpha.17",
   "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
   "license": "MIT",
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "deepvids": "bin/deepvids.cjs"
+    "broader-vids": "bin/broader-vids.cjs"
   },
   "files": [
     "bin/",
-    "python/deepvids-0.1.0a13-*.whl",
+    "python/broader_vids-0.1.0a17-*.whl",
     "python/evidence-requirements.txt",
     "python/asr-requirements.txt",
     "skills/",
     "plugin.json",
-    ".claude-plugin/marketplace.json",
     "LICENSE",
     "README.md",
     "docs/WORKFLOW.md",
@@ -26,7 +25,7 @@
   ],
   "scripts": {
     "test": "node --test tests/launcher.test.cjs",
-    "check:web": "prettier --check src/deepvids/web/static"
+    "check:web": "prettier --check src/broader_vids/web/static"
   },
   "devDependencies": {
     "prettier": "3.6.2"

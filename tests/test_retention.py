@@ -10,19 +10,19 @@ import wave
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
-from deepvids.evidence.assessment import assess_evidence
-from deepvids.evidence.media import file_hash
-from deepvids.evidence.retention import compact_evidence, owned_file
-from deepvids.evidence.service import (
+from broader_vids.evidence.assessment import assess_evidence
+from broader_vids.evidence.media import file_hash
+from broader_vids.evidence.retention import compact_evidence, owned_file
+from broader_vids.evidence.service import (
     atomic_json,
     create_evidence,
     prepare_evidence,
     verify_bundle,
 )
-from deepvids.evidence.media import EvidencePending
-from deepvids.maintenance import cleanup_storage
-from deepvids.recommendations.quality import cached_quality
-from deepvids.storage import Store
+from broader_vids.evidence.media import EvidencePending
+from broader_vids.maintenance import cleanup_storage
+from broader_vids.recommendations.quality import cached_quality
+from broader_vids.storage import Store
 from test_evidence import card
 
 
@@ -32,7 +32,9 @@ class RetentionTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.store = Store(self.root / "state")
         self.identifier = create_evidence(
-            self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y"
+            self.store,
+            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+            reasoning_effort="low",
         )
         run = self.store.get(self.identifier)
         root = self.store.root / "evidence" / self.identifier
@@ -88,6 +90,25 @@ class RetentionTests(unittest.TestCase):
             self.store, self.identifier, mode, lambda *args: (card(mode), {})
         )
 
+    def test_learning_evidence_is_readable_but_not_reused_by_new_jobs(self):
+        self.assess()
+        run = self.store.get(self.identifier)
+        run["settings"]["kind"] = "learning_evidence"
+        run["settings"].pop("cache_key", None)
+        with self.store.db:
+            self.store.db.execute(
+                "UPDATE runs SET settings=? WHERE id=?",
+                (json.dumps(run["settings"]), self.identifier),
+            )
+        self.assertIsNotNone(cached_quality(self.store, self.identifier))
+        self.assertEqual(list(self.store.iter_runs(kind="evidence")), [])
+        fresh = self.store.get(
+            create_evidence(self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y")
+        )
+        self.assertNotEqual(fresh["id"], self.identifier)
+        self.assertNotIn("inherited_from", fresh["state"])
+        self.assertIsNone(fresh["state"].get("media"))
+
     def test_metadata_only_job_cannot_be_selected_as_a_reusable_bundle(self):
         self.assess()
         identity = self.store.get(self.identifier)["settings"]["identity"]
@@ -111,7 +132,7 @@ class RetentionTests(unittest.TestCase):
         identity = self.store.get(self.identifier)["settings"]["identity"]
         context = {"signals": [{"id": "M1", "kind": "source"}]}
         with patch(
-            "deepvids.evidence.service.inherit_bundle",
+            "broader_vids.evidence.service.inherit_bundle",
             side_effect=ValueError("Interrupted inheritance"),
         ):
             with self.assertRaises(ValueError):
@@ -132,10 +153,10 @@ class RetentionTests(unittest.TestCase):
         verify_bundle(self.store, self.store.get(repaired))
 
     def test_calibration_revision_preserves_votes_and_original_scorecards(self):
-        from deepvids.learning.evidence import record_review, latest_revisions
-        from deepvids.learning.service import capture_rating, source_data
-        from deepvids.preferences import user_action, set_profile
-        from deepvids.recommendations.originality import assessment_context
+        from broader_vids.learning.evidence import record_review, latest_revisions
+        from broader_vids.learning.service import capture_rating, source_data
+        from broader_vids.preferences import user_action, set_profile
+        from broader_vids.recommendations.originality import assessment_context
 
         self.assess()
         set_profile(self.store, ["mathematics"])
@@ -152,7 +173,7 @@ class RetentionTests(unittest.TestCase):
                 "INSERT INTO video_state VALUES(?,?,?,0,0,0,?)",
                 (identity["canonical_id"], "youtube", json.dumps(item), "fixture"),
             )
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(
                 self.store,
                 identity["canonical_id"],
@@ -233,7 +254,7 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(self.store.get(self.identifier)["state"]["model_calls"], 1)
 
     def test_dry_run_and_busy_lease_do_not_mutate_evidence(self):
-        with patch("deepvids.evidence.retention.compact_evidence"):
+        with patch("broader_vids.evidence.retention.compact_evidence"):
             self.assess()
         before = self.store.get(self.identifier)
         stray = self.media.parent / "media.f123.webm.part"
@@ -385,7 +406,7 @@ class TranscriptionMemoryTests(unittest.TestCase):
         importlib.util.find_spec("imageio_ffmpeg"), "FFmpeg is required"
     )
     def test_real_ffmpeg_chunk_uses_a_temporary_file_and_no_full_audio_capture(self):
-        from deepvids.evidence.asr_worker import transcribe_chunks
+        from broader_vids.evidence.asr_worker import transcribe_chunks
 
         class Model:
             def transcribe(self, audio, **kwargs):
@@ -407,7 +428,7 @@ class TranscriptionMemoryTests(unittest.TestCase):
             self.assertEqual(cues[0]["end"], 0.5)
 
     def test_chunking_bounds_audio_and_preserves_global_timestamps(self):
-        from deepvids.evidence.asr_worker import transcribe_chunks
+        from broader_vids.evidence.asr_worker import transcribe_chunks
 
         chunks, buffers, arrays = [], [], []
 
@@ -440,7 +461,7 @@ class TranscriptionMemoryTests(unittest.TestCase):
         )
 
     def test_oversized_audio_is_rejected_before_loading_an_array(self):
-        from deepvids.evidence.asr_worker import transcribe_chunks
+        from broader_vids.evidence.asr_worker import transcribe_chunks
 
         def oversized(media, offset, seconds, target):
             target.seek(600 * 16000 * 4 + 65536)
@@ -451,7 +472,7 @@ class TranscriptionMemoryTests(unittest.TestCase):
         allocated.assert_not_called()
 
     def test_decoder_failure_closes_its_temporary_buffer(self):
-        from deepvids.evidence.asr_worker import transcribe_chunks
+        from broader_vids.evidence.asr_worker import transcribe_chunks
 
         buffers = []
 

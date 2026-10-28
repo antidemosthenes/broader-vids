@@ -4,17 +4,17 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from deepvids.learning.evaluation import evaluate, metrics, cluster_interval
-from deepvids.learning.calibration import finalize_ready_cohort
-from deepvids.learning.features import capture, quality_features, quality_prior
-from deepvids.learning.feedback import save_detail
-from deepvids.learning.inference import fit_logistic, fit_sparse
-from deepvids.learning.scoped import fit_scoped, quality_prediction
-from deepvids.learning.service import learning_status, train, change_epoch
-from deepvids.preferences import set_profile, user_action
-from deepvids.recommendations.engagement import parse_bilibili
-from deepvids.recommendations.originality import provenance
-from deepvids.storage import Store, utc_now
+from broader_vids.learning.evaluation import evaluate, metrics, cluster_interval
+from broader_vids.learning.calibration import finalize_ready_cohort
+from broader_vids.learning.features import capture, quality_features, quality_prior
+from broader_vids.learning.feedback import save_detail
+from broader_vids.learning.inference import fit_logistic, fit_sparse
+from broader_vids.learning.scoped import fit_scoped, quality_prediction
+from broader_vids.learning.service import learning_status, train, change_epoch
+from broader_vids.preferences import set_profile, user_action
+from broader_vids.recommendations.engagement import parse_bilibili
+from broader_vids.recommendations.originality import provenance
+from broader_vids.storage import Store, utc_now
 from test_learning import example
 from test_recommendations import candidate
 from test_metadata import payload, VIDEO
@@ -88,7 +88,7 @@ class LearningAuditTests(unittest.TestCase):
                             ),
                         ),
                     )
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i, key in enumerate(self.keys):
                 for dimension in ("interest", "quality"):
                     if i not in skipped.get(dimension, set()):
@@ -98,7 +98,7 @@ class LearningAuditTests(unittest.TestCase):
 
     def test_read_only_status_does_not_fit_a_missing_model(self):
         with patch(
-            "deepvids.learning.service.train",
+            "broader_vids.learning.service.train",
             side_effect=AssertionError("Read-only status fitted a model"),
         ):
             status = learning_status(self.store)
@@ -120,7 +120,7 @@ class LearningAuditTests(unittest.TestCase):
 
     def test_superseded_holdout_vote_is_not_evaluated_as_a_legacy_vote(self):
         self.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             save_detail(
                 self.store, self.keys[10], "topic_interest", "low", target="topology"
             )
@@ -132,7 +132,7 @@ class LearningAuditTests(unittest.TestCase):
 
     def test_all_active_interest_response_types_are_checked(self):
         self.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             save_detail(
                 self.store, self.keys[10], "topic_interest", "low", target="topology"
             )
@@ -152,7 +152,7 @@ class LearningAuditTests(unittest.TestCase):
     def test_new_response_type_cannot_inherit_a_frozen_binary_evaluation(self):
         self.cohort()
         self.assertTrue(finalize_ready_cohort(self.store))
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             save_detail(self.store, "youtube:0000000099A", "quality_level", "high")
         result = evaluate(self.store)
         self.assertFalse(result["phase_four_complete"])
@@ -163,7 +163,7 @@ class LearningAuditTests(unittest.TestCase):
     def test_topic_anchor_survives_clear_and_schema_nine_migration(self):
         self.cohort()
         key = self.keys[0]
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             save_detail(self.store, key, "topic_interest", "low", target="networks")
             save_detail(self.store, key, "topic_interest", "clear")
         expected = list(self.store.db.execute("SELECT * FROM feedback_scopes"))[0][1]
@@ -176,7 +176,7 @@ class LearningAuditTests(unittest.TestCase):
             "SELECT payload FROM feedback_scopes"
         ).fetchone()[0]
         self.assertEqual(json.loads(actual), json.loads(expected))
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             save_detail(self.store, key, "topic_interest", "high", target="networks")
         self.assertEqual(
             self.store.db.execute("SELECT payload FROM feedback_scopes").fetchone()[0],
@@ -215,7 +215,7 @@ class LearningAuditTests(unittest.TestCase):
 
     def test_unknown_level_depth_does_not_certify_known_level_predictions(self):
         self.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i, key in enumerate(self.keys):
                 save_detail(
                     self.store,
@@ -343,7 +343,7 @@ class LearningAuditTests(unittest.TestCase):
         self.assertNotEqual(change_epoch(self.store), initial)
 
     def test_programming_and_mathematical_topic_symbols_are_not_collapsed(self):
-        from deepvids.exploration.domains import normalized
+        from broader_vids.exploration.domains import normalized
 
         self.assertEqual(
             len({normalized(value) for value in ("C", "C++", "C#", "C*")}), 4

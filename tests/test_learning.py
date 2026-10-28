@@ -7,25 +7,30 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from deepvids.learning.features import capture, quality_features, quality_prior, logit
-from deepvids.learning.inference import fit_logistic, fit_sparse, predict, sigmoid
-from deepvids.learning.service import (
+from broader_vids.learning.features import (
+    capture,
+    quality_features,
+    quality_prior,
+    logit,
+)
+from broader_vids.learning.inference import fit_logistic, fit_sparse, predict, sigmoid
+from broader_vids.learning.service import (
     ensure_model,
     source_data,
     train,
     component_prediction,
     final_score,
 )
-from deepvids.learning.calibration import (
+from broader_vids.learning.calibration import (
     evaluate,
     finalize_ready_cohort,
     start_calibration,
 )
-from deepvids.policy import Policy
-from deepvids.preferences import set_profile, user_action, video_states
-from deepvids.storage import Store
-from deepvids.http import BudgetExhausted
-from deepvids.evidence.media import EvidencePending
+from broader_vids.policy import Policy
+from broader_vids.preferences import set_profile, user_action, video_states
+from broader_vids.storage import Store
+from broader_vids.http import BudgetExhausted
+from broader_vids.evidence.media import EvidencePending
 from test_recommendations import candidate
 
 
@@ -55,7 +60,7 @@ def example(index=1, creator=None):
 
 class InferenceTests(unittest.TestCase):
     def test_deadline_context_stops_learning_and_is_released_after_failure(self):
-        from deepvids.learning.inference import work_scope
+        from broader_vids.learning.inference import work_scope
 
         def stop():
             raise BudgetExhausted("Fixture deadline")
@@ -239,7 +244,7 @@ class InferenceTests(unittest.TestCase):
         self.assertEqual(snapshot["models"]["interest"]["observations"], 0)
 
     def test_learned_approval_cannot_override_quality_or_duration_exclusions(self):
-        from deepvids.recommendations.ranking import rank_slate
+        from broader_vids.recommendations.ranking import rank_slate
 
         items = [example(i) for i in range(1, 4)]
         observations = {
@@ -270,8 +275,8 @@ class InferenceTests(unittest.TestCase):
         )
 
     def test_slate_reuses_predictions_when_only_other_creators_are_selected(self):
-        from deepvids.recommendations.ranking import rank_slate
-        from deepvids.learning.service import score_components
+        from broader_vids.recommendations.ranking import rank_slate
+        from broader_vids.learning.service import score_components
 
         items = [example(i) for i in range(1, 31)]
         observations = {
@@ -289,7 +294,7 @@ class InferenceTests(unittest.TestCase):
             ),
         }
         with patch(
-            "deepvids.learning.service.score_components", wraps=score_components
+            "broader_vids.learning.service.score_components", wraps=score_components
         ) as computed:
             result = rank_slate(
                 items,
@@ -364,14 +369,14 @@ class LearningStorageTests(unittest.TestCase):
         )
 
     def test_model_epoch_survives_json_caching(self):
-        from deepvids.learning.service import change_epoch
+        from broader_vids.learning.service import change_epoch
 
         self.cohort()
         ensure_model(self.store)
         self.assertEqual(ensure_model(self.store)["epoch"], change_epoch(self.store))
 
     def publication_fixture(self):
-        from deepvids.recommendations.service import create_recommendation
+        from broader_vids.recommendations.service import create_recommendation
 
         key = create_recommendation(self.store, "youtube")
         run = self.store.get(key)
@@ -388,8 +393,8 @@ class LearningStorageTests(unittest.TestCase):
         return run, observation
 
     def test_posterior_scoring_runs_without_the_publication_write_lock(self):
-        from deepvids.recommendations.service import _publish
-        from deepvids.recommendations.ranking import rank_slate
+        from broader_vids.recommendations.service import _publish
+        from broader_vids.recommendations.ranking import rank_slate
 
         run, observation = self.publication_fixture()
 
@@ -405,17 +410,19 @@ class LearningStorageTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 return_value=observation,
             ),
-            patch("deepvids.recommendations.service.rank_slate", side_effect=outside),
+            patch(
+                "broader_vids.recommendations.service.rank_slate", side_effect=outside
+            ),
         ):
             _publish(self.store, run)
         self.assertEqual(len(run["state"]["selected"]), 10)
 
     def test_actions_during_scoring_abort_publication_without_losing_the_action(self):
-        from deepvids.recommendations.service import _publish
-        from deepvids.recommendations.ranking import rank_slate
+        from broader_vids.recommendations.service import _publish
+        from broader_vids.recommendations.ranking import rank_slate
 
         run, observation = self.publication_fixture()
 
@@ -429,10 +436,12 @@ class LearningStorageTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 return_value=observation,
             ),
-            patch("deepvids.recommendations.service.rank_slate", side_effect=changed),
+            patch(
+                "broader_vids.recommendations.service.rank_slate", side_effect=changed
+            ),
             self.assertRaises(EvidencePending),
         ):
             _publish(self.store, run)
@@ -449,7 +458,7 @@ class LearningStorageTests(unittest.TestCase):
         )
 
     def test_publication_checks_the_deadline_before_fitting(self):
-        from deepvids.recommendations.service import _publish
+        from broader_vids.recommendations.service import _publish
 
         run, _ = self.publication_fixture()
         with self.assertRaises(BudgetExhausted):
@@ -470,7 +479,7 @@ class LearningStorageTests(unittest.TestCase):
 
     def test_unfinished_holdout_reservations_expire_without_discarding_feedback(self):
         self.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i in range(32, 92):
                 user_action(
                     self.store, example(i)["canonical_id"], "up", kind="interest"
@@ -486,13 +495,13 @@ class LearningStorageTests(unittest.TestCase):
         )
 
     def test_feature_capture_does_not_hold_the_feedback_write_transaction(self):
-        from deepvids.learning.service import capture_rating
+        from broader_vids.learning.service import capture_rating
 
         def outside(local, key):
             self.assertFalse(local.db.in_transaction)
             return capture_rating(local, key)
 
-        with patch("deepvids.learning.service.capture_rating", side_effect=outside):
+        with patch("broader_vids.learning.service.capture_rating", side_effect=outside):
             user_action(self.store, example()["canonical_id"], "up", kind="quality")
 
     def test_invalid_evidence_does_not_discard_the_users_explicit_vote(self):
@@ -558,7 +567,7 @@ class LearningStorageTests(unittest.TestCase):
 
     def test_held_out_labels_and_their_creator_peers_never_train_before_release(self):
         self.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i in range(1, 31):
                 user_action(
                     self.store,
@@ -568,7 +577,7 @@ class LearningStorageTests(unittest.TestCase):
                 )
         initial = ensure_model(self.store)
         self.assertEqual(initial["models"]["interest"]["observations"], 20)
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(
                 self.store, example(25)["canonical_id"], "down", kind="interest"
             )
@@ -589,7 +598,7 @@ class LearningStorageTests(unittest.TestCase):
 
     def test_evaluation_is_frozen_before_release_and_revisions_invalidate_it(self):
         self.cohort()
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i in range(1, 31):
                 for channel in ("interest", "quality"):
                     user_action(
@@ -634,7 +643,7 @@ class LearningStorageTests(unittest.TestCase):
     def test_a_feedback_change_during_fitting_retries_without_publishing_stale_parameters(
         self,
     ):
-        with patch("deepvids.learning.service.refresh_after_feedback"):
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
             user_action(self.store, example(1)["canonical_id"], "up", kind="interest")
         original = train
         calls = []
@@ -644,7 +653,7 @@ class LearningStorageTests(unittest.TestCase):
                 calls.append(True)
                 other = Store(self.directory.name)
                 try:
-                    with patch("deepvids.learning.service.refresh_after_feedback"):
+                    with patch("broader_vids.learning.service.refresh_after_feedback"):
                         user_action(
                             other, example(2)["canonical_id"], "down", kind="interest"
                         )
@@ -652,7 +661,7 @@ class LearningStorageTests(unittest.TestCase):
                     other.close()
             return original(data)
 
-        with patch("deepvids.learning.service.train", side_effect=changed):
+        with patch("broader_vids.learning.service.train", side_effect=changed):
             model = ensure_model(self.store)
         self.assertEqual(model["models"]["interest"]["observations"], 2)
 
@@ -690,7 +699,7 @@ class CalibrationSelectionTests(unittest.TestCase):
 
     def test_cohort_is_balanced_persistent_and_has_no_creator_leakage(self):
         with patch(
-            "deepvids.learning.calibration.cached_quality",
+            "broader_vids.learning.calibration.cached_quality",
             side_effect=lambda store, key: self.observations[key],
         ):
             rows = start_calibration(self.store)
@@ -706,14 +715,16 @@ class CalibrationSelectionTests(unittest.TestCase):
         }
         self.assertFalse(groups["train"] & groups["holdout"])
         with patch(
-            "deepvids.learning.calibration.cached_quality",
+            "broader_vids.learning.calibration.cached_quality",
             side_effect=AssertionError("Saved cohort was regenerated"),
         ):
             self.assertEqual(start_calibration(self.store, seed=999), rows)
 
     def test_insufficient_evidence_does_not_create_a_partial_cohort(self):
         with (
-            patch("deepvids.learning.calibration.cached_quality", return_value=None),
+            patch(
+                "broader_vids.learning.calibration.cached_quality", return_value=None
+            ),
             self.assertRaises(ValueError),
         ):
             start_calibration(self.store)
@@ -737,7 +748,7 @@ class CalibrationSelectionTests(unittest.TestCase):
         self.store.db.commit()
         with (
             patch(
-                "deepvids.learning.calibration.cached_quality",
+                "broader_vids.learning.calibration.cached_quality",
                 side_effect=lambda store, key: self.observations[key],
             ),
             self.assertRaisesRegex(ValueError, "found 14"),

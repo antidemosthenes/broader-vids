@@ -1,0 +1,4 @@
+interface:
+  display_name: "Broader Vids recommendations"
+  short_description: "Find quality YouTube and Bilibili videos"
+  default_prompt: "Use $broader-vids to recommend videos from my interests."

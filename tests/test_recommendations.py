@@ -1,4 +1,3 @@
-from collections import Counter
 import json
 import re
 import tempfile
@@ -8,28 +7,28 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
-from deepvids.web.server import make_server
-from deepvids.recommendations.engagement import (
+from broader_vids.web.server import make_server
+from broader_vids.recommendations.engagement import (
     parse_bilibili,
     parse_youtube,
     rate_scores,
 )
-from deepvids.http import AccessPaused
-from deepvids.preferences import (
+from broader_vids.http import AccessPaused
+from broader_vids.preferences import (
     pending_videos,
     platform_lock,
     set_profile,
     user_action,
     video_states,
 )
-from deepvids.recommendations.service import (
+from broader_vids.recommendations.service import (
     create_recommendation,
     execute_recommendation,
     publish_recommendation,
 )
-from deepvids.recommendations.ranking import rank_slate, screen
-from deepvids.recommendations.reports import write_recommendation_report
-from deepvids.storage import Store, utc_now
+from broader_vids.recommendations.ranking import rank_slate, screen
+from broader_vids.recommendations.reports import write_recommendation_report
+from broader_vids.storage import Store, utc_now
 
 
 def candidate(n, platform="youtube"):
@@ -50,7 +49,12 @@ def candidate(n, platform="youtube"):
         "title": f"Example {n}",
         "duration_seconds": 300,
         "origins": [{"family_id": f"family{n % 10}", "domains": [domain]}],
-        "engagement": {"views": 10000, "likes": n * 10, "coins": n, "favorites": n * 2},
+        "engagement": {
+            "views": 10000,
+            "likes": 100 + n * 10,
+            "coins": 20 + n,
+            "favorites": 40 + n * 2,
+        },
     }
 
 
@@ -136,6 +140,51 @@ class EngagementTests(unittest.TestCase):
 
 
 class RecommendationTests(unittest.TestCase):
+    def test_paused_round_exposes_a_preview_without_publishing_history(self):
+        source = self.source()
+
+        def interrupted(store, run, save, *args, **kwargs):
+            for item in run["state"]["shortlist"][:4]:
+                rid = next(
+                    store.iter_runs(kind="evidence", identities=[item["canonical_id"]])
+                )["id"]
+                run["state"]["evidence"][item["canonical_id"]] = quality(rid)
+            save()
+            raise EvidencePending("A candidate needs retry.")
+
+        from broader_vids.evidence.media import EvidencePending
+
+        with (
+            patch(
+                "broader_vids.recommendations.service.collect_snapshot",
+                side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
+            ),
+            patch(
+                "broader_vids.recommendations.parallel.assess_parallel",
+                side_effect=interrupted,
+            ),
+            patch(
+                "broader_vids.recommendations.preview.cached_quality",
+                side_effect=lambda s, key: quality(key),
+            ),
+        ):
+            rid = create_recommendation(self.store, "youtube", source)
+            run = execute_recommendation(self.store, rid)
+        self.assertEqual(run["status"], "paused")
+        self.assertEqual(run["state"]["selected"], [])
+        self.assertEqual(len(run["state"]["preview"]), 4)
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM recommendation_exposures"
+            ).fetchone()[0],
+            0,
+        )
+        self.assertEqual(pending_videos(self.store, "youtube"), [])
+        self.assertIn(
+            "Provisional preview",
+            write_recommendation_report(self.store, rid).read_text(encoding="utf-8"),
+        )
+
     def test_malformed_feedback_kind_is_rejected_without_modifying_state(self):
         with self.assertRaises(ValueError):
             user_action(self.store, self.items[0]["canonical_id"], "up", kind=[])
@@ -151,11 +200,11 @@ class RecommendationTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 side_effect=observation,
             ),
         ):
@@ -209,25 +258,23 @@ class RecommendationTests(unittest.TestCase):
                     ),
                 )
 
-    def test_screen_balances_domains_respects_creator_cap_and_guarantees_pending(self):
+    def test_screen_selects_global_top50_without_reserved_pending_slots(self):
         shortlist, rejected = screen(self.items, [], {}, self.profile)
         self.assertEqual(len(shortlist), 50)
+        self.assertEqual(len(rejected), 50)
         self.assertEqual(
-            Counter(i["related"] for i in shortlist), {True: 25, False: 25}
-        )
-        self.assertLessEqual(
-            max(Counter(i["creator_id"] for i in shortlist).values()), 3
+            [i["screening_score"] for i in shortlist],
+            sorted((i["screening_score"] for i in shortlist), reverse=True),
         )
         pending = self.items[:50]
-        for item in pending:
-            item["creator_id"] = "same_creator"
         selected, _ = screen(self.items, pending, {}, self.profile)
         self.assertEqual(
-            {i["canonical_id"] for i in selected}, {i["canonical_id"] for i in pending}
+            [i["canonical_id"] for i in selected],
+            [i["canonical_id"] for i in shortlist],
         )
-        self.assertTrue(all(i["carryover"] for i in selected))
-        with self.assertRaises(ValueError):
-            screen(self.items, self.items[:51], {}, self.profile)
+        self.assertFalse(any(i["carryover"] for i in selected))
+        selected, _ = screen(self.items, self.items[:70], {}, self.profile)
+        self.assertEqual(len(selected), 50)
 
     def test_vote_watch_dismiss_and_revision_are_independent(self):
         self.insert_pending(self.items[:1])
@@ -250,7 +297,7 @@ class RecommendationTests(unittest.TestCase):
             self.store.db.execute("SELECT COUNT(*) FROM user_actions").fetchone()[0], 7
         )
 
-    def test_slate_quality_exclusion_and_discovery_minimum(self):
+    def test_slate_quality_exclusion_without_unrelated_quota(self):
         shortlist, _ = screen(self.items, [], {}, self.profile)
         observations = {i["canonical_id"]: quality("fixture") for i in shortlist}
         observations[shortlist[0]["canonical_id"]]["quality"] = 20
@@ -263,7 +310,7 @@ class RecommendationTests(unittest.TestCase):
         }
         selected = rank_slate(shortlist, observations, self.profile, weights)
         self.assertEqual(len(selected), 10)
-        self.assertGreaterEqual(sum(not i["related"] for i in selected), 2)
+        self.assertTrue(all(i["related"] for i in selected))
         self.assertNotIn(
             shortlist[0]["canonical_id"], {i["canonical_id"] for i in selected}
         )
@@ -272,11 +319,11 @@ class RecommendationTests(unittest.TestCase):
         source = self.source()
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
             ),
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 side_effect=lambda s, i: quality(i),
             ),
         ):
@@ -293,6 +340,8 @@ class RecommendationTests(unittest.TestCase):
             user_action(
                 self.store, run["state"]["selected"][0]["canonical_id"], "watched"
             )
+            self.items.append(candidate(101))
+            source = self.source()
             second = create_recommendation(self.store, "youtube", source)
             new = execute_recommendation(self.store, second)
             self.assertEqual(sum(i["carryover"] for i in new["state"]["shortlist"]), 9)
@@ -309,25 +358,25 @@ class RecommendationTests(unittest.TestCase):
                 20,
             )
 
-    def test_full_pending_capacity_makes_no_new_discovery_or_metadata_requests(self):
-        self.source()
+    def test_full_pending_queue_does_not_block_new_screening(self):
+        source = self.source()
         self.insert_pending(self.items[:50])
         with (
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 side_effect=lambda s, i: quality(i),
             ),
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
-                side_effect=AssertionError("No fresh slots"),
+                "broader_vids.recommendations.service.collect_snapshot",
+                return_value={"observed_at": utc_now()},
             ),
         ):
             run = execute_recommendation(
-                self.store, create_recommendation(self.store, "youtube")
+                self.store, create_recommendation(self.store, "youtube", source)
             )
-            self.assertEqual(len(run["state"]["buffer"]), 0)
-            self.assertEqual(len(pending_videos(self.store, "youtube")), 50)
-            self.assertEqual(len(run["state"]["selected"]), 10)
+        self.assertEqual(len(run["state"]["buffer"]), 100)
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(len(pending_videos(self.store, "youtube")), 60)
 
     def test_profile_changes_and_parallel_publication_are_guarded(self):
         source = self.source()
@@ -335,11 +384,11 @@ class RecommendationTests(unittest.TestCase):
         set_profile(self.store, ["physics"])
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 side_effect=lambda s, i: quality(i),
             ),
         ):
@@ -356,10 +405,12 @@ class RecommendationTests(unittest.TestCase):
         source = self.source()
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
-            patch("deepvids.recommendations.service.cached_quality", return_value=None),
+            patch(
+                "broader_vids.recommendations.service.cached_quality", return_value=None
+            ),
         ):
             run = execute_recommendation(
                 self.store,
@@ -382,10 +433,12 @@ class RecommendationTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
-            patch("deepvids.recommendations.service.cached_quality", return_value=None),
+            patch(
+                "broader_vids.recommendations.service.cached_quality", return_value=None
+            ),
         ):
             identifier = create_recommendation(
                 self.store, "youtube", source, max_seconds=30, max_mib=2
@@ -408,11 +461,11 @@ class RecommendationTests(unittest.TestCase):
         identifier = create_recommendation(self.store, "youtube", source)
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
             patch(
-                "deepvids.recommendations.service.cached_quality",
+                "broader_vids.recommendations.service.cached_quality",
                 side_effect=lambda s, i: quality(i),
             ),
         ):
@@ -445,11 +498,12 @@ class RecommendationTests(unittest.TestCase):
 
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
             patch(
-                "deepvids.recommendations.service.cached_quality", side_effect=observed
+                "broader_vids.recommendations.service.cached_quality",
+                side_effect=observed,
             ),
         ):
             run = execute_recommendation(self.store, identifier)
@@ -470,10 +524,12 @@ class RecommendationTests(unittest.TestCase):
         )
         with (
             patch(
-                "deepvids.recommendations.service.collect_snapshot",
+                "broader_vids.recommendations.service.collect_snapshot",
                 return_value={"observed_at": utc_now()},
             ),
-            patch("deepvids.recommendations.service.cached_quality", return_value=None),
+            patch(
+                "broader_vids.recommendations.service.cached_quality", return_value=None
+            ),
         ):
             execute_recommendation(self.store, identifier)
         run = self.store.get(identifier)
@@ -485,7 +541,7 @@ class RecommendationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             publish_recommendation(self.store, identifier)
         with patch(
-            "deepvids.recommendations.service.cached_quality",
+            "broader_vids.recommendations.service.cached_quality",
             side_effect=lambda s, i: quality(i),
         ):
             result = publish_recommendation(
@@ -505,7 +561,7 @@ class RecommendationTests(unittest.TestCase):
             with urllib.request.urlopen(base) as response:
                 page = response.read().decode()
             token = json.loads(
-                re.search(r'name="deepvids-token" content=("[^\"]+")', page)[1]
+                re.search(r'name="broader-vids-token" content=("[^\"]+")', page)[1]
             )
             data = json.dumps(
                 {"id": self.items[0]["canonical_id"], "action": "watched"}
@@ -514,7 +570,7 @@ class RecommendationTests(unittest.TestCase):
                 base + "/api/action",
                 data=data,
                 headers={
-                    "X-Deepvids-Token": token,
+                    "X-Broader-Vids-Token": token,
                     "Origin": "https://elsewhere.invalid",
                 },
             )
@@ -524,13 +580,22 @@ class RecommendationTests(unittest.TestCase):
             request = urllib.request.Request(
                 base + "/api/action",
                 data=data,
-                headers={"X-Deepvids-Token": token, "Origin": base},
+                headers={"X-Broader-Vids-Token": token, "Origin": base},
             )
             with urllib.request.urlopen(request) as response:
                 self.assertTrue(json.loads(response.read())["saved"])
             self.assertTrue(
                 video_states(self.store)[self.items[0]["canonical_id"]]["watched"]
             )
+            for action in ("comment", "review_comments", "apply_proposal"):
+                request = urllib.request.Request(
+                    base + "/api/action",
+                    data=json.dumps({"id": "all", "action": action}).encode(),
+                    headers={"X-Broader-Vids-Token": token, "Origin": base},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(request)
+                self.assertEqual(error.exception.code, 400)
         finally:
             server.shutdown()
             server.server_close()

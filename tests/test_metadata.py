@@ -6,12 +6,12 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from deepvids.cli.arguments import parser
-from deepvids.http import AccessPaused, PublicHttp
-from deepvids.recommendations.engagement import metadata_fresh
-from deepvids.recommendations.metadata import metadata_session, refresh_metadata
-from deepvids.recommendations.service import enrich_buffer
-from deepvids.storage import Store, utc_now
+from broader_vids.cli.arguments import parser
+from broader_vids.http import AccessPaused, PublicHttp
+from broader_vids.recommendations.engagement import metadata_fresh
+from broader_vids.recommendations.metadata import metadata_session, refresh_metadata
+from broader_vids.recommendations.service import enrich_buffer
+from broader_vids.storage import Store, utc_now
 from test_recommendations import candidate
 
 
@@ -80,7 +80,9 @@ class MetadataTests(unittest.TestCase):
             0
         ]
         with (
-            patch("deepvids.recommendations.metadata.bilibili_browser", self.browser),
+            patch(
+                "broader_vids.recommendations.metadata.bilibili_browser", self.browser
+            ),
             patch(
                 "urllib.request.OpenerDirector.open", return_value=Reply(payload())
             ) as request,
@@ -148,7 +150,9 @@ class MetadataTests(unittest.TestCase):
     def test_session_cookies_are_restored_after_failure(self):
         http = self.http()
         original = list(http.cookies)
-        with patch("deepvids.recommendations.metadata.bilibili_browser", self.browser):
+        with patch(
+            "broader_vids.recommendations.metadata.bilibili_browser", self.browser
+        ):
             with self.assertRaisesRegex(AccessPaused, "fixture"):
                 with metadata_session(self.store, http, True):
                     self.assertEqual(
@@ -168,7 +172,7 @@ class MetadataTests(unittest.TestCase):
             yield Browser()
 
         with (
-            patch("deepvids.recommendations.metadata.bilibili_browser", signed_out),
+            patch("broader_vids.recommendations.metadata.bilibili_browser", signed_out),
             patch("urllib.request.OpenerDirector.open") as request,
         ):
             result = refresh_metadata(self.store, URL, use_browser=True)
@@ -194,7 +198,7 @@ class MetadataTests(unittest.TestCase):
             self.store.save(run)
 
         with patch(
-            "deepvids.recommendations.service.collect_snapshot",
+            "broader_vids.recommendations.service.collect_snapshot",
             side_effect=AccessPaused("HTTP 412"),
         ):
             with self.assertRaises(AccessPaused):
@@ -203,7 +207,7 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(saved["state"]["enrichment_index"], 0)
         self.assertEqual(saved["state"]["phase"], "enrich")
         with patch(
-            "deepvids.recommendations.service.collect_snapshot",
+            "broader_vids.recommendations.service.collect_snapshot",
             return_value={"observed_at": utc_now(), "metadata_version": 2},
         ) as request:
             enrich_buffer(self.store, run, http, lambda: 60, save)
@@ -256,12 +260,13 @@ class MetadataTests(unittest.TestCase):
             self.store.save(run)
 
         snapshot = {
+            **pending["engagement"],
             "observed_at": utc_now(),
             "metadata_version": 2,
             "provenance_status": "complete",
         }
         with patch(
-            "deepvids.recommendations.service.collect_snapshot",
+            "broader_vids.recommendations.service.collect_snapshot",
             side_effect=[snapshot, AccessPaused("HTTP 412")],
         ):
             with self.assertRaises(AccessPaused):
@@ -270,7 +275,8 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(run["state"]["phase"], "enrich")
         self.assertEqual(run["state"]["issues"][-1]["stage"], "pending_metadata")
         with patch(
-            "deepvids.recommendations.service.collect_snapshot", return_value=snapshot
+            "broader_vids.recommendations.service.collect_snapshot",
+            return_value=snapshot,
         ) as request:
             enrich_buffer(self.store, run, http, lambda: 60, save)
         self.assertEqual(request.call_count, 1)

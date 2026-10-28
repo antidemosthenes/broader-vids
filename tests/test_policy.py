@@ -1,6 +1,6 @@
 import unittest
 
-from deepvids.policy import Policy
+from broader_vids.policy import Policy
 
 
 class PolicyTests(unittest.TestCase):

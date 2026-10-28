@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="broader-vids-token" content="__TOKEN__" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Broader Vids · Your video library</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
+    <script type="module" src="/static/dashboard.js"></script>
+  </head>
+  <body>
+    <aside class="navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">b.</span
+        ><strong>Broader Vids</strong
+        ><span class="brand-caption">A wider view</span>
+      </div>
+      <nav aria-label="Main navigation">
+        <button data-view="recommendations" aria-current="page">
+          <span aria-hidden="true">◉</span>Recommendations</button
+        ><button data-view="exclusions">
+          <span aria-hidden="true">⊘</span>Exclusions</button
+        ><button data-view="calibration">
+          <span aria-hidden="true">◇</span>Calibration
+        </button>
+      </nav>
+      <div class="navigation-tools">
+        <button id="preferences-open" class="button quiet">
+          Import/Export
+        </button>
+        <button id="help-open" class="button quiet">Help</button>
+      </div>
+    </aside>
+    <main>
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">YOUR LIBRARY</p>
+          <h1 id="page-title">Recommendations</h1>
+          <p id="page-subtitle" class="muted">Finding your saved videos…</p>
+        </div>
+        <div class="platform-switch" role="tablist" aria-label="Video platform">
+          <button role="tab" data-platform="youtube" aria-selected="true">
+            YouTube</button
+          ><button
+            role="tab"
+            data-platform="bilibili"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Bilibili
+          </button>
+        </div>
+      </header>
+      <p id="status" class="app-status" role="status" aria-live="polite"></p>
+      <div id="workspace" class="workspace">
+        <section id="list-pane" class="list-pane" aria-label="Video list">
+          <div class="list-toolbar">
+            <span id="list-label"></span
+            ><button id="pending-toggle" class="button quiet small" hidden>
+              Earlier unwatched
+            </button>
+          </div>
+          <ol id="video-list" class="video-list"></ol>
+          <div id="empty-list" class="empty-state" hidden></div>
+        </section>
+        <aside id="inspector" class="inspector" aria-label="Video review">
+          <div class="inspector-toolbar">
+            <span id="review-position">Video review</span>
+            <div>
+              <button
+                id="review-previous"
+                class="button quiet small"
+                aria-label="Previous video"
+              >
+                ←</button
+              ><button
+                id="review-next"
+                class="button quiet small"
+                aria-label="Next video"
+              >
+                →
+              </button>
+            </div>
+          </div>
+          <div id="inspector-body" class="inspector-body">
+            <div class="review-placeholder">
+              <span aria-hidden="true">◇</span>
+              <h2>A closer look</h2>
+              <p>Select Rate beside a video to review it here.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <section
+        id="management"
+        class="management"
+        aria-label="Exclusion management"
+        hidden
+      ></section>
+    </main>
+    <dialog
+      id="review-dialog"
+      class="review-dialog"
+      aria-labelledby="mobile-review-title"
+    >
+      <header class="dialog-toolbar">
+        <button id="review-back" class="button quiet">← Back</button>
+        <h2 id="mobile-review-title">Video review</h2>
+        <div>
+          <button
+            id="mobile-previous"
+            class="button quiet small"
+            aria-label="Previous video"
+          >
+            ←</button
+          ><button
+            id="mobile-next"
+            class="button quiet small"
+            aria-label="Next video"
+          >
+            →
+          </button>
+        </div>
+      </header>
+      <div id="mobile-review-body" class="dialog-body"></div>
+    </dialog>
+    <dialog
+      id="details-dialog"
+      class="details-dialog"
+      aria-labelledby="details-title"
+    >
+      <header class="dialog-toolbar">
+        <h2 id="details-title">Score details</h2>
+        <button id="details-close" class="button quiet">Close</button>
+      </header>
+      <div id="details-body" class="dialog-body technical"></div>
+    </dialog>
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
+      <header class="dialog-toolbar">
+        <h2 id="help-title">Make it yours</h2>
+        <button id="help-close" class="button quiet">Close</button>
+      </header>
+      <div class="dialog-body help-copy">
+        <h3>Four separate judgments</h3>
+        <p>
+          Rate the specific topic, depth, video quality, and broader subject
+          independently. You can leave any field empty. Medium interest means
+          indifference. Medium quality means acceptable quality.
+        </p>
+        <p>
+          Check the AI topic label. Correct it when needed. Video level
+          describes the material; depth describes how it fits you. A video can
+          be good and too basic.
+        </p>
+        <h3>Watch at your pace</h3>
+        <p>
+          Opening a video does not mark it watched. Unwatched videos compete
+          with new candidates in the next inspection pool. Dismiss removes a
+          video from that pool without creating a preference rating. Restore
+          reverses dismissal.
+        </p>
+        <h3>Choose your sources</h3>
+        <p>
+          Creator exclusions apply to the next new round. Current cards stay
+          visible. Imported Bilibili exclusions are managed on Bilibili.
+        </p>
+        <h3>Optional calibration</h3>
+        <p>
+          Start with recommendations and add feedback as you watch. Calibration
+          holds extra examples when you request them. It starts empty for a new
+          profile.
+        </p>
+        <p>
+          Drafts stay in this tab while you navigate. Use Save to keep a rating
+          after closing the page.
+        </p>
+      </div>
+    </dialog>
+    <dialog
+      id="preferences-dialog"
+      class="help-dialog transfer-dialog"
+      aria-labelledby="preferences-title"
+    >
+      <header class="dialog-toolbar">
+        <h2 id="preferences-title">Import/Export</h2>
+        <button id="preferences-close" class="button quiet">Close</button>
+      </header>
+      <div class="dialog-body preference-copy">
+        <p class="transfer-intro">
+          Transfer learned weights and interests. Video history and exclusion
+          rules stay on this device.
+        </p>
+        <section aria-labelledby="export-heading">
+          <div>
+            <h3 id="export-heading">Export</h3>
+            <p>Download your current learned preferences as a JSON file.</p>
+          </div>
+          <button id="preferences-export" class="button">
+            Export preferences
+          </button>
+        </section>
+        <section aria-labelledby="import-heading">
+          <h3 id="import-heading">Import</h3>
+          <p>
+            Choose a saved Broader Vids JSON file. Its preview appears below.
+          </p>
+          <div class="preference-file">
+            <input
+              id="preferences-file"
+              type="file"
+              accept=".json,application/json"
+              aria-label="Preference file"
+              hidden
+            />
+            <button id="preferences-choose" class="button">Choose file</button>
+            <span id="preferences-filename" class="muted"
+              >No file selected</span
+            >
+          </div>
+          <div id="preferences-preview" hidden>
+            <dl id="preferences-summary" class="preference-summary"></dl>
+            <p>
+              Import replaces learned preferences. Broader Vids saves a recovery
+              file first.
+            </p>
+            <p>
+              Your lists and ratings stay visible. New or edited ratings
+              continue learning from the imported parameters.
+            </p>
+            <div class="transfer-actions">
+              <button id="preferences-import" class="button primary">
+                Import preferences
+              </button>
+            </div>
+          </div>
+        </section>
+        <p
+          id="preferences-status"
+          class="preference-status"
+          role="status"
+          aria-live="polite"
+        ></p>
+      </div>
+    </dialog>
+  </body>
+</html>

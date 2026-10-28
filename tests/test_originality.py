@@ -1,9 +1,9 @@
 import unittest
 
-from deepvids.recommendations.engagement import parse_bilibili
-from deepvids.recommendations.originality import provenance, assessment_context
-from deepvids.recommendations.ranking import screen, rank_slate
-from deepvids.policy import Policy
+from broader_vids.recommendations.engagement import parse_bilibili
+from broader_vids.recommendations.originality import provenance, assessment_context
+from broader_vids.recommendations.ranking import screen, rank_slate
+from broader_vids.policy import Policy
 from test_recommendations import candidate, quality
 
 
@@ -43,8 +43,10 @@ class OriginalityTests(unittest.TestCase):
         self.assertEqual(rejected[items[0]["canonical_id"]], "excluded_translation_tag")
         self.assertFalse(provenance(items[1])["excluded"])
         shortlist, _ = screen(items, [items[0]], {}, profile)
-        self.assertTrue(shortlist[0]["carryover"])
-        self.assertTrue(shortlist[0]["originality_evidence"]["excluded"])
+        self.assertNotIn(
+            items[0]["canonical_id"], {i["canonical_id"] for i in shortlist}
+        )
+        self.assertFalse(any(i["carryover"] for i in shortlist))
         observations = {
             i["canonical_id"]: quality(i["canonical_id"]) for i in shortlist
         }
