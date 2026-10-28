@@ -69,7 +69,12 @@ class RunFailureTests(unittest.TestCase):
         self.assertTrue(path.with_suffix(".diagnostic.json").is_file())
 
     def test_metadata_access_cause_survives_cancellation_of_an_earlier_candidate(self):
-        rid = create_recommendation(self.store, "youtube")
+        rid = create_recommendation(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         http = PublicHttp(self.store, self.store.get(rid), anonymous_session=True)
         barrier = threading.Barrier(2)
 
@@ -88,7 +93,13 @@ class RunFailureTests(unittest.TestCase):
     def test_metadata_pool_overlaps_responses_with_pacing_and_shared_request_bounds(
         self,
     ):
-        rid = create_recommendation(self.store, "youtube", max_requests=2)
+        rid = create_recommendation(
+            self.store,
+            "youtube",
+            max_requests=2,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         http = PublicHttp(self.store, self.store.get(rid), anonymous_session=True)
         starts = []
         active = [0, 0]
@@ -151,7 +162,12 @@ class RunFailureTests(unittest.TestCase):
         set_profile(self.store, ["mathematics"])
 
     def run_fixture(self, count):
-        rid = create_recommendation(self.store, "youtube")
+        rid = create_recommendation(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(rid)
         run["state"].update(
             phase="assess", shortlist=[candidate(i) for i in range(1, count + 1)]
@@ -248,7 +264,12 @@ class RunFailureTests(unittest.TestCase):
 
     def test_exhausted_candidate_is_resolved_without_more_worker_calls(self):
         run = self.run_fixture(1)
-        rid = create_evidence(self.store, run["state"]["shortlist"][0]["url"])
+        rid = create_evidence(
+            self.store,
+            run["state"]["shortlist"][0]["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         child = self.store.get(rid)
         child["state"].update(phase="prepared", model_calls=2, submitted_images=8)
         self.store.save(child)
@@ -266,7 +287,12 @@ class RunFailureTests(unittest.TestCase):
         )
 
     def test_preparation_queue_wait_does_not_consume_its_stage_allowance(self):
-        rid = create_evidence(self.store, candidate(1)["url"])
+        rid = create_evidence(
+            self.store,
+            candidate(1)["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         runtime = Runtime(preparations=1)
         runtime.preparations.acquire()
         release = threading.Timer(0.15, runtime.preparations.release)
@@ -313,7 +339,12 @@ class RunFailureTests(unittest.TestCase):
         )
 
     def test_killed_preparation_has_a_child_failure_and_bounded_byte_receipt(self):
-        rid = create_evidence(self.store, candidate(1)["url"])
+        rid = create_evidence(
+            self.store,
+            candidate(1)["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
 
         def timeout(*args, **kwargs):
             with closing(Store(self.store.root)) as store:

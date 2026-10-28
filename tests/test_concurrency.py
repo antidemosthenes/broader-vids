@@ -26,7 +26,13 @@ from broader_vids.storage import Store
 class ConcurrencyTests(unittest.TestCase):
     def test_resume_does_not_repeatedly_subtract_shutdown_headroom(self):
         set_profile(self.store, ["math"])
-        identifier = create_recommendation(self.store, "youtube", max_seconds=100)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            max_seconds=100,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(identifier)
         run["state"]["phase"] = "assess"
         self.store.save(run)
@@ -171,7 +177,12 @@ class ConcurrencyTests(unittest.TestCase):
 
     def test_interrupt_during_submission_cancels_already_started_children(self):
         set_profile(self.store, ["math"])
-        identifier = create_batch(self.store, max_seconds=100)
+        identifier = create_batch(
+            self.store,
+            max_seconds=100,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         original_submit = ThreadPoolExecutor.submit
         submissions, observed = [], []
         started = threading.Event()
@@ -205,7 +216,12 @@ class ConcurrencyTests(unittest.TestCase):
 
     def test_completed_children_can_be_recovered_after_the_deadline(self):
         set_profile(self.store, ["math"])
-        identifier = create_batch(self.store, max_seconds=100)
+        identifier = create_batch(
+            self.store,
+            max_seconds=100,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(identifier)
         for child in run["state"]["children"].values():
             saved = self.store.get(child)

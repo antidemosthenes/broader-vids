@@ -35,6 +35,7 @@ class RetentionTests(unittest.TestCase):
             self.store,
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             reasoning_effort="low",
+            assessment_model="fixture-model",
         )
         run = self.store.get(self.identifier)
         root = self.store.root / "evidence" / self.identifier
@@ -103,7 +104,12 @@ class RetentionTests(unittest.TestCase):
         self.assertIsNotNone(cached_quality(self.store, self.identifier))
         self.assertEqual(list(self.store.iter_runs(kind="evidence")), [])
         fresh = self.store.get(
-            create_evidence(self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y")
+            create_evidence(
+                self.store,
+                "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
         )
         self.assertNotEqual(fresh["id"], self.identifier)
         self.assertNotIn("inherited_from", fresh["state"])
@@ -121,6 +127,8 @@ class RetentionTests(unittest.TestCase):
             self.store,
             identity["url"],
             originality_context={"signals": [{"id": "M1", "kind": "source"}]},
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         run = self.store.get(review)
         self.assertEqual(run["state"]["inherited_from"], self.identifier)
@@ -137,7 +145,11 @@ class RetentionTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 create_evidence(
-                    self.store, identity["url"], originality_context=context
+                    self.store,
+                    identity["url"],
+                    originality_context=context,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
                 )
         children = [
             run["id"]
@@ -146,7 +158,11 @@ class RetentionTests(unittest.TestCase):
         ]
         self.assertEqual(len(children), 1)
         repaired = create_evidence(
-            self.store, identity["url"], originality_context=context
+            self.store,
+            identity["url"],
+            originality_context=context,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         self.assertEqual(repaired, children[0])
         self.assertEqual(self.store.get(repaired)["state"]["phase"], "prepared")
@@ -198,6 +214,8 @@ class RetentionTests(unittest.TestCase):
             self.store,
             identity["url"],
             originality_context=assessment_context({"engagement": metadata}),
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         value = card()
         value["content_quality"] = 65
@@ -319,6 +337,7 @@ class RetentionTests(unittest.TestCase):
             self.store,
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             reasoning_effort="medium",
+            assessment_model="fixture-model",
         )
         copied = self.store.get(review)
         verify_bundle(self.store, copied)
@@ -335,6 +354,7 @@ class RetentionTests(unittest.TestCase):
                 self.store,
                 "https://www.youtube.com/watch?v=imYQJOgUx7Y",
                 reasoning_effort="medium",
+                assessment_model="fixture-model",
             )
         self.assertEqual([run["id"] for run in self.store.list_runs()], before)
 
@@ -385,7 +405,10 @@ class RetentionTests(unittest.TestCase):
                 closed.append(True)
 
         identifier = create_evidence(
-            self.store, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            self.store,
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         prepare_evidence(self.store, identifier, fetcher_type=Fetcher)
         self.assertEqual(closed, [True])

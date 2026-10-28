@@ -378,7 +378,12 @@ class LearningStorageTests(unittest.TestCase):
     def publication_fixture(self):
         from broader_vids.recommendations.service import create_recommendation
 
-        key = create_recommendation(self.store, "youtube")
+        key = create_recommendation(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(key)
         items = [example(i) for i in range(1, 21)]
         for item in items:

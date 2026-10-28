@@ -161,7 +161,12 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_both_platforms_complete_only_with_live_source_receipts(self):
         for platform in ("youtube", "bilibili"):
-            identifier = create_discovery(self.store, platform)
+            identifier = create_discovery(
+                self.store,
+                platform,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
             run = execute_discovery(self.store, identifier, FixtureHttp)
             self.assertEqual(run["status"], "completed")
             report = discovery_report(self.store, identifier)
@@ -179,7 +184,14 @@ class DiscoveryTests(unittest.TestCase):
         for platform in ("youtube", "bilibili"):
             for _ in range(2):
                 execute_discovery(
-                    self.store, create_discovery(self.store, platform), FixtureHttp
+                    self.store,
+                    create_discovery(
+                        self.store,
+                        platform,
+                        assessment_model="fixture-model",
+                        reasoning_effort="low",
+                    ),
+                    FixtureHttp,
                 )
         gate = release_gate(self.store)
         self.assertTrue(gate["phase_one_complete"])
@@ -193,7 +205,12 @@ class DiscoveryTests(unittest.TestCase):
         )
 
     def test_forged_receipts_cannot_pass_discovery(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = execute_discovery(self.store, identifier, FixtureHttp)
         for item in run["state"]["candidates"].values():
             for origin in item["origins"]:
@@ -203,14 +220,25 @@ class DiscoveryTests(unittest.TestCase):
         )
 
     def test_interrupt_resume_preserves_query_and_avoids_duplicates(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         FixtureHttp.fail_once = True
         partial = execute_discovery(self.store, identifier, FixtureHttp)
         self.assertEqual(partial["status"], "paused")
         self.assertEqual(partial["state"]["index"], 2)
         completed = execute_discovery(self.store, identifier, FixtureHttp)
         self.assertEqual(completed["status"], "completed")
-        baseline_id = create_discovery(self.store, "youtube", round_number=0)
+        baseline_id = create_discovery(
+            self.store,
+            "youtube",
+            round_number=0,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         baseline = execute_discovery(self.store, baseline_id, FixtureHttp)
         self.assertEqual(
             set(completed["state"]["candidates"]), set(baseline["state"]["candidates"])
@@ -224,7 +252,13 @@ class DiscoveryTests(unittest.TestCase):
         )
 
     def test_exhausted_budget_does_not_reset_on_continue(self):
-        identifier = create_discovery(self.store, "bilibili", max_requests=2)
+        identifier = create_discovery(
+            self.store,
+            "bilibili",
+            max_requests=2,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         self.assertEqual(
             execute_discovery(self.store, identifier, FixtureHttp)["status"],
             "budget_exhausted",
@@ -236,7 +270,12 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.store.request_count(identifier), 2)
 
     def test_niche_result_is_not_buried_by_broad_rank_or_duplicates(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(identifier)
         broad, _ = youtube_page({"contents": [video(i) for i in range(120)]})
         merge_page(run, broad, "search", {"family_id": "broad", "intent": "deep"}, {})
@@ -253,14 +292,24 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(len(run["state"]["candidates"]), 41)
 
     def test_known_long_youtube_is_excluded_but_bilibili_parts_remain_unknown(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(identifier)
         raw = video(1)
         raw["videoRenderer"]["lengthText"]["simpleText"] = "1:30:01"
         items, _ = youtube_page({"contents": [raw]})
         merge_page(run, items, "search", {}, {})
         self.assertEqual(make_shortlist(run), [])
-        identifier = create_discovery(self.store, "bilibili")
+        identifier = create_discovery(
+            self.store,
+            "bilibili",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(identifier)
         merge_page(run, bilibili_cards(card(1, duration="2:00:00")), "home", {}, {})
         self.assertEqual(len(make_shortlist(run)), 1)
@@ -332,7 +381,12 @@ class DiscoveryTests(unittest.TestCase):
         )
 
     def test_gzip_limit_is_applied_after_decompression(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         http = PublicHttp(
             self.store, self.store.get(identifier), anonymous_session=True
         )

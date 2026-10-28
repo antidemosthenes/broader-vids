@@ -84,6 +84,10 @@ class CliTests(unittest.TestCase):
                             directory,
                             "recommend",
                             platform,
+                            "--model",
+                            "fixture-model",
+                            "--effort",
+                            "low",
                             "--max-assessments",
                             "0",
                         ]

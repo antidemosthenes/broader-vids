@@ -511,8 +511,18 @@ npm run check:web
 Tests use temporary data and controlled responses.
 Optional media tests need their dependencies.
 Unit tests do not require platform sign-in or subscription model calls.
+Run fixtures supply explicit model settings instead of reading your current Codex chat.
+Model-inheritance tests create temporary session files with controlled settings.
 Dashboard browser tests require Playwright and a supported local browser.
-They check drafts, failed writes, duplicate feedback, dialogs, platform navigation, and responsive themes.
+The current Windows tests use installed Edge.
+Linux tests use Playwright Chromium. Install its browser and system dependencies before running tests:
+
+```bash
+uv run --no-sync playwright install --with-deps chromium
+```
+
+The Ubuntu GitHub Actions workflow performs this installation before the test step.
+Dashboard tests check drafts, failed writes, duplicate feedback, dialogs, platform navigation, and responsive themes.
 Keep screenshots and other visual checks under the ignored `.cache/` directory.
 `gate` reports development readiness from saved local records.
 It does not replace a clean installed-plugin test.

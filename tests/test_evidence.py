@@ -118,7 +118,15 @@ class CaptionTests(unittest.TestCase):
                 ),
             ):
                 with self.assertRaises(EvidencePending):
-                    run_codex("prompt", Path(directory) / "schema.json", output, [], 10)
+                    run_codex(
+                        "prompt",
+                        Path(directory) / "schema.json",
+                        output,
+                        [],
+                        10,
+                        model="fixture-model",
+                        effort="low",
+                    )
             self.assertFalse(output.exists())
 
     def test_inline_bilibili_ai_captions_do_not_require_a_caption_url(self):
@@ -333,7 +341,11 @@ class EvidencePipelineTests(unittest.TestCase):
         from broader_vids.recommendations.quality import cached_quality
 
         identifier = create_evidence(
-            self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y", self.media
+            self.store,
+            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+            self.media,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         run = prepare_evidence(self.store, identifier)
         self.assertEqual(run["status"], "prepared")
@@ -379,6 +391,8 @@ class EvidencePipelineTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             self.media,
             self.captions,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         prepare_bounded(
             self.store.root,
@@ -426,6 +440,8 @@ class EvidencePipelineTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             max_mib=100,
             max_seconds=600,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         start = time.monotonic()
         run = prepare_evidence(
@@ -465,6 +481,8 @@ class EvidencePipelineTests(unittest.TestCase):
             self.store,
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             originality_context=context,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         reused = self.store.get(review)
         verify_bundle(self.store, reused)
@@ -538,6 +556,8 @@ class EvidencePipelineTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             self.media,
             self.captions,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         run = prepare_evidence(self.store, identifier)
         self.assertEqual(run["status"], "prepared")
@@ -627,6 +647,8 @@ class EvidencePipelineTests(unittest.TestCase):
                 "https://www.youtube.com/watch?v=imYQJOgUx7Y",
                 self.media,
                 self.captions,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
             ),
             identifier,
         )
@@ -652,7 +674,11 @@ class EvidencePipelineTests(unittest.TestCase):
 
     def test_unavailable_speech_is_explicit_and_visual_bundle_is_prepared(self):
         identifier = create_evidence(
-            self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y", self.media
+            self.store,
+            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+            self.media,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         result = prepare_evidence(self.store, identifier)
         self.assertEqual(result["status"], "prepared")
@@ -662,7 +688,11 @@ class EvidencePipelineTests(unittest.TestCase):
 
     def test_transcription_failure_retains_choice_and_allows_visual_fallback(self):
         identifier = create_evidence(
-            self.store, "https://www.youtube.com/watch?v=imYQJOgUx7Y", self.media
+            self.store,
+            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+            self.media,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         calls = []
 
@@ -703,6 +733,8 @@ class EvidencePipelineTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=imYQJOgUx7Y",
             self.media,
             self.captions,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         from broader_vids.evidence.service import extract_frame
 

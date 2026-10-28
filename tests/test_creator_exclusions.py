@@ -181,7 +181,14 @@ class CreatorExclusionTests(unittest.TestCase):
         set_exclusion(self.store, "youtube", CHANNEL, True)
         self.assertEqual(len(pending_videos(self.store, "youtube")), 1)
         self.assertEqual(video_creator(self.store, key)["creator_id"], CHANNEL)
-        run = self.store.get(create_recommendation(self.store, "youtube"))
+        run = self.store.get(
+            create_recommendation(
+                self.store,
+                "youtube",
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+        )
         initialize_round(self.store, run, lambda: 60)
         self.assertEqual(pending_videos(self.store, "youtube"), [])
         self.assertEqual(
@@ -206,7 +213,14 @@ class CreatorExclusionTests(unittest.TestCase):
 
     def test_legacy_round_does_not_adopt_new_rules(self):
         set_exclusion(self.store, "youtube", CHANNEL, True)
-        run = self.store.get(create_recommendation(self.store, "youtube"))
+        run = self.store.get(
+            create_recommendation(
+                self.store,
+                "youtube",
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+        )
         run["settings"].pop("creator_policy_version")
         initialize_round(self.store, run, lambda: 60)
         self.assertEqual(run["state"]["creator_rules"], {})
@@ -251,7 +265,14 @@ class CreatorExclusionTests(unittest.TestCase):
         self.assertEqual(item["creator_name"], "")
 
     def test_bilibili_sync_runs_once_and_a_resumed_round_keeps_its_snapshot(self):
-        run = self.store.get(create_recommendation(self.store, "bilibili"))
+        run = self.store.get(
+            create_recommendation(
+                self.store,
+                "bilibili",
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+        )
         with patch(
             "broader_vids.blacklist.sync_blacklist",
             return_value={"status": "failed", "error": "Fixture access failure"},
@@ -267,7 +288,14 @@ class CreatorExclusionTests(unittest.TestCase):
         item = candidate(1)
         item["creator_id"] = CHANNEL
         set_exclusion(self.store, "youtube", CHANNEL, True)
-        run = self.store.get(create_recommendation(self.store, "youtube"))
+        run = self.store.get(
+            create_recommendation(
+                self.store,
+                "youtube",
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+        )
         initialize_round(self.store, run, lambda: 60)
         run["state"].update(phase="assess", shortlist=[item])
         worker = Mock(side_effect=AssertionError("Excluded creator reached a worker"))

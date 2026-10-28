@@ -17,10 +17,16 @@ jobs:
         with:
           node-version: "24"
       - run: uv sync --locked --extra evidence
+      - name: Install Chromium and Linux dependencies for dashboard tests
+        run: uv run --no-sync playwright install --with-deps chromium
       - run: npm ci --ignore-scripts
       - run: uv run --no-sync ruff check src tests scripts
       - run: uv run --no-sync ruff format --check src tests scripts
-      - run: uv run --no-sync python -m unittest discover -s tests
+      - name: Run tests without a live Codex chat
+        run: uv run --no-sync python -m unittest discover -s tests
+        env:
+          CODEX_THREAD_ID: ""
+          CODEX_SESSION_ID: ""
       - run: npm test
       - run: npm run check:web
       - run: uv build --wheel --out-dir python

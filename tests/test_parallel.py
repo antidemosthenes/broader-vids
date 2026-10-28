@@ -65,7 +65,12 @@ class ParallelTests(unittest.TestCase):
 
     def test_saved_unknown_result_does_not_require_a_new_model_call(self):
         run, save = self.run_fixture(count=1, calls=0)
-        identifier = create_evidence(self.store, run["state"]["shortlist"][0]["url"])
+        identifier = create_evidence(
+            self.store,
+            run["state"]["shortlist"][0]["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         child = self.store.get(identifier)
         child["state"].update(
             phase="prepared", assessments={"augmented": {"overall_quality": None}}
@@ -125,11 +130,15 @@ class ParallelTests(unittest.TestCase):
             patch.object(self.store, "create", side_effect=interrupted),
             self.assertRaises(OSError),
         ):
-            create_batch(self.store)
+            create_batch(
+                self.store, assessment_model="fixture-model", reasoning_effort="low"
+            )
         self.assertEqual(self.store.list_runs(), [])
 
     def test_batch_child_cannot_run_outside_its_shared_coordinator(self):
-        identifier = create_batch(self.store)
+        identifier = create_batch(
+            self.store, assessment_model="fixture-model", reasoning_effort="low"
+        )
         child = self.store.get(identifier)["state"]["children"]["youtube"]
         from broader_vids.recommendations.service import execute_recommendation
 
@@ -141,7 +150,12 @@ class ParallelTests(unittest.TestCase):
 
     def test_warm_review_does_not_need_another_download_reservation(self):
         run, save = self.run_fixture(count=1)
-        child_id = create_evidence(self.store, run["state"]["shortlist"][0]["url"])
+        child_id = create_evidence(
+            self.store,
+            run["state"]["shortlist"][0]["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         child = self.store.get(child_id)
         child["state"]["phase"] = "prepared"
         self.store.save(child)
@@ -167,7 +181,12 @@ class ParallelTests(unittest.TestCase):
     def test_only_owned_model_attempts_are_charged_on_recovery(self):
         run, save = self.run_fixture(count=1)
         item = run["state"]["shortlist"][0]
-        identifier = create_evidence(self.store, item["url"])
+        identifier = create_evidence(
+            self.store,
+            item["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         child = self.store.get(identifier)
         child["state"].update(
             model_calls=2,
@@ -194,7 +213,12 @@ class ParallelTests(unittest.TestCase):
 
     def test_an_evidence_lease_spans_preparation_and_assessment(self):
         item = candidate(1)
-        identifier = create_evidence(self.store, item["url"])
+        identifier = create_evidence(
+            self.store,
+            item["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         child = self.store.get(identifier)
         child["state"]["phase"] = "prepared"
         self.store.save(child)
@@ -271,7 +295,12 @@ class ParallelTests(unittest.TestCase):
     def test_interrupted_reservations_are_reconciled_once_on_resume(self):
         run, save = self.run_fixture(count=1)
         item = run["state"]["shortlist"][0]
-        identifier = create_evidence(self.store, item["url"])
+        identifier = create_evidence(
+            self.store,
+            item["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         child = self.store.get(identifier)
         child["state"]["model_calls"] = 1
         child["state"]["resources"]["media_download_bytes"] = 123
@@ -305,7 +334,13 @@ class ParallelTests(unittest.TestCase):
         self.directory.cleanup()
 
     def run_fixture(self, count=6, calls=50):
-        identifier = create_recommendation(self.store, "youtube", max_assessments=calls)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            max_assessments=calls,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = self.store.get(identifier)
         run["state"].update(
             phase="assess", shortlist=[candidate(i) for i in range(1, count + 1)]
@@ -399,7 +434,12 @@ class ParallelTests(unittest.TestCase):
         self.assertEqual(run["state"]["assessment_index"], 1)
 
     def test_both_platforms_run_concurrently_under_one_deadline(self):
-        identifier = create_batch(self.store, max_seconds=100)
+        identifier = create_batch(
+            self.store,
+            max_seconds=100,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         barrier = threading.Barrier(2)
         bounds, runtimes = [], []
 

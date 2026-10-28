@@ -168,7 +168,13 @@ class RecommendationTests(unittest.TestCase):
                 side_effect=lambda s, key: quality(key),
             ),
         ):
-            rid = create_recommendation(self.store, "youtube", source)
+            rid = create_recommendation(
+                self.store,
+                "youtube",
+                source,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
             run = execute_recommendation(self.store, rid)
         self.assertEqual(run["status"], "paused")
         self.assertEqual(run["state"]["selected"], [])
@@ -209,7 +215,14 @@ class RecommendationTests(unittest.TestCase):
             ),
         ):
             result = execute_recommendation(
-                self.store, create_recommendation(self.store, "youtube", source)
+                self.store,
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    source,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
             )
         self.assertEqual(result["status"], "completed")
         self.assertTrue(checked)
@@ -327,7 +340,13 @@ class RecommendationTests(unittest.TestCase):
                 side_effect=lambda s, i: quality(i),
             ),
         ):
-            first = create_recommendation(self.store, "youtube", source)
+            first = create_recommendation(
+                self.store,
+                "youtube",
+                source,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
             run = execute_recommendation(self.store, first)
             self.assertEqual(run["status"], "completed")
             self.assertEqual(run["state"]["model_calls"], 0)
@@ -342,7 +361,13 @@ class RecommendationTests(unittest.TestCase):
             )
             self.items.append(candidate(101))
             source = self.source()
-            second = create_recommendation(self.store, "youtube", source)
+            second = create_recommendation(
+                self.store,
+                "youtube",
+                source,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
             new = execute_recommendation(self.store, second)
             self.assertEqual(sum(i["carryover"] for i in new["state"]["shortlist"]), 9)
             self.assertFalse(
@@ -372,7 +397,14 @@ class RecommendationTests(unittest.TestCase):
             ),
         ):
             run = execute_recommendation(
-                self.store, create_recommendation(self.store, "youtube", source)
+                self.store,
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    source,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
             )
         self.assertEqual(len(run["state"]["buffer"]), 100)
         self.assertEqual(run["status"], "completed")
@@ -380,7 +412,13 @@ class RecommendationTests(unittest.TestCase):
 
     def test_profile_changes_and_parallel_publication_are_guarded(self):
         source = self.source()
-        identifier = create_recommendation(self.store, "youtube", source)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            source,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         set_profile(self.store, ["physics"])
         with (
             patch(
@@ -414,7 +452,14 @@ class RecommendationTests(unittest.TestCase):
         ):
             run = execute_recommendation(
                 self.store,
-                create_recommendation(self.store, "youtube", source, max_assessments=0),
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    source,
+                    max_assessments=0,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
             )
         self.assertEqual(run["status"], "paused")
         self.assertIsNone(run["state"]["published_at"])
@@ -441,7 +486,13 @@ class RecommendationTests(unittest.TestCase):
             ),
         ):
             identifier = create_recommendation(
-                self.store, "youtube", source, max_seconds=30, max_mib=2
+                self.store,
+                "youtube",
+                source,
+                max_seconds=30,
+                max_mib=2,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
             )
             run = execute_recommendation(self.store, identifier, prepare=interrupted)
         self.assertEqual(run["status"], "paused")
@@ -458,7 +509,13 @@ class RecommendationTests(unittest.TestCase):
             "CREATE TRIGGER fail_exposure BEFORE INSERT ON recommendation_exposures BEGIN SELECT RAISE(ABORT,'fixture failure'); END"
         )
         self.store.db.commit()
-        identifier = create_recommendation(self.store, "youtube", source)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            source,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         with (
             patch(
                 "broader_vids.recommendations.service.collect_snapshot",
@@ -484,7 +541,13 @@ class RecommendationTests(unittest.TestCase):
 
     def test_watch_action_during_assessment_is_honored_at_publication(self):
         source = self.source()
-        identifier = create_recommendation(self.store, "youtube", source)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            source,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         called = []
 
         def observed(store, evidence_id):
@@ -520,7 +583,12 @@ class RecommendationTests(unittest.TestCase):
     def test_partial_publication_requires_explicit_choice_and_stays_partial(self):
         source = self.source()
         identifier = create_recommendation(
-            self.store, "youtube", source, max_assessments=0
+            self.store,
+            "youtube",
+            source,
+            max_assessments=0,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
         )
         with (
             patch(

@@ -71,7 +71,13 @@ class ExplorationTests(unittest.TestCase):
 
     def test_cold_start_search_activation_and_preferences_are_independent(self):
         original = get_profile(self.store)
-        identifier = create_discovery(self.store, "youtube", seed=42)
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            seed=42,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = execute_discovery(
             self.store, identifier, FixtureHttp, model_runner=self.model
         )
@@ -100,7 +106,13 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_continuation_keeps_selected_topics_plan_and_attempt_allowance(self):
-        identifier = create_discovery(self.store, "youtube", seed=4)
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            seed=4,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         FixtureHttp.fail_once = True
         try:
             first = execute_discovery(
@@ -147,7 +159,13 @@ class ExplorationTests(unittest.TestCase):
         self.assertIn(math["id"], added[0]["ancestors"])
 
     def test_failed_generation_is_bounded_and_does_not_request_the_platform(self):
-        identifier = create_discovery(self.store, "youtube", max_planning_calls=1)
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            max_planning_calls=1,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
 
         def failed(*args):
             raise EvidencePending("Fixture model unavailable")
@@ -175,7 +193,12 @@ class ExplorationTests(unittest.TestCase):
             )
             return response, usage
 
-        identifier = create_discovery(self.store, "bilibili")
+        identifier = create_discovery(
+            self.store,
+            "bilibili",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = execute_discovery(
             self.store, identifier, FixtureHttp, model_runner=refinement
         )
@@ -192,7 +215,12 @@ class ExplorationTests(unittest.TestCase):
                 node["anchors"] = ["absent-specialized-term"]
             return response, usage
 
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         execute_discovery(self.store, identifier, FixtureHttp, model_runner=no_match)
         self.assertEqual(
             sum(n["status"] == "active" for n in nodes(self.store).values()), 3
@@ -234,7 +262,12 @@ class ExplorationTests(unittest.TestCase):
         )
 
     def test_profile_change_cannot_silently_rewrite_a_checkpoint(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         selected = self.store.get(identifier)["state"]["exploration"]["selected"]
         set_profile(self.store, ["travel"])
         result = execute_discovery(
@@ -245,7 +278,13 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(result["state"]["exploration"]["selected"], selected)
 
     def test_curated_mode_remains_explicit_and_does_not_invoke_the_model(self):
-        identifier = create_discovery(self.store, "youtube", curated=True)
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            curated=True,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         execute_discovery(
             self.store,
             identifier,
@@ -262,7 +301,12 @@ class ExplorationTests(unittest.TestCase):
                 response["existing_queries"] = []
             return response, usage
 
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         run = execute_discovery(
             self.store, identifier, FixtureHttp, model_runner=incomplete
         )
@@ -271,13 +315,23 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(len(run["state"]["exploration"]["new_nodes"]), 5)
 
     def test_reusing_a_finished_buffer_does_not_charge_historical_planning(self):
-        identifier = create_discovery(self.store, "youtube")
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
         execute_discovery(self.store, identifier, FixtureHttp, model_runner=self.model)
         with patch("broader_vids.recommendations.service.enrich_buffer"):
             run = execute_recommendation(
                 self.store,
                 create_recommendation(
-                    self.store, "youtube", identifier, max_assessments=0
+                    self.store,
+                    "youtube",
+                    identifier,
+                    max_assessments=0,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
                 ),
             )
         self.assertEqual(run["state"]["planning_model_calls"], 0)
@@ -298,7 +352,13 @@ class ExplorationTests(unittest.TestCase):
         ):
             run = execute_recommendation(
                 self.store,
-                create_recommendation(self.store, "youtube", max_assessments=0),
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    max_assessments=0,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
             )
         self.assertEqual(self.calls, [])
         self.assertEqual(run["status"], "paused")
@@ -326,7 +386,13 @@ class ExplorationTests(unittest.TestCase):
         ):
             run = execute_recommendation(
                 self.store,
-                create_recommendation(self.store, "youtube", max_assessments=1),
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    max_assessments=1,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
             )
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(run["state"]["planning_model_calls"], 1)
