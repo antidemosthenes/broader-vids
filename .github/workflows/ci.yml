@@ -10,6 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Check runtime dependency files are tracked
+        run: |
+          git ls-files --error-unmatch \
+            python/core-requirements.txt \
+            python/evidence-requirements.txt \
+            python/asr-requirements.txt
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
           python-version: "3.13"

@@ -33,7 +33,11 @@ def main(archive_path):
             "Private file in package"
         )
         for group in ("core", "evidence", "asr"):
-            assert f"package/python/{group}-requirements.txt" in names, group
+            required = f"package/python/{group}-requirements.txt"
+            assert required in names, (
+                f"Missing runtime dependency file: {required}. "
+                "Include it in the source checkout and npm package."
+            )
         wheel_names = [name for name in names if name.endswith(".whl")]
         assert (
             len(wheel_names) == 1
