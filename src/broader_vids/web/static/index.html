@@ -26,9 +26,15 @@
         </button>
       </nav>
       <div class="navigation-tools">
-        <button id="preferences-open" class="button quiet">
-          Import/Export
+        <button
+          id="preferences-open"
+          class="button quiet"
+          data-view="preferences"
+          disabled
+        >
+          Preferences
         </button>
+        <button id="token-usage-open" class="button quiet">Token usage</button>
         <button id="help-open" class="button quiet">Help</button>
       </div>
     </aside>
@@ -51,6 +57,7 @@
             Bilibili
           </button>
         </div>
+        <button id="preferences-back" class="button quiet" hidden>Back</button>
       </header>
       <p id="status" class="app-status" role="status" aria-live="polite"></p>
       <div id="workspace" class="workspace">
@@ -61,6 +68,7 @@
               Earlier unwatched
             </button>
           </div>
+          <p id="round-notice" class="note" role="status" hidden></p>
           <ol id="video-list" class="video-list"></ol>
           <div id="empty-list" class="empty-state" hidden></div>
         </section>
@@ -98,6 +106,134 @@
         aria-label="Exclusion management"
         hidden
       ></section>
+      <section
+        id="preferences-page"
+        class="preferences-page"
+        aria-label="Preferences"
+        hidden
+      >
+        <div class="preferences-layout">
+          <section class="preference-panel" aria-labelledby="interests-title">
+            <h2 id="interests-title">Broader interests</h2>
+            <p id="interests-description" class="muted">
+              Edit the interests shared by YouTube and Bilibili.
+            </p>
+            <form id="interests-form" class="interests-copy">
+              <label for="interests-input">Your interests</label>
+              <textarea
+                id="interests-input"
+                rows="8"
+                maxlength="6440"
+                required
+                spellcheck="false"
+                aria-describedby="interests-format interests-description"
+              ></textarea>
+              <p id="interests-format" class="note small-text">
+                Enter one interest per line. Use 1–40 interests, with at most 80
+                characters each.
+              </p>
+              <p class="note small-text">
+                Saving keeps your ratings, calibration, and history. Start a new
+                recommendation round after changing this list.
+              </p>
+              <div class="interests-actions">
+                <button
+                  id="interests-reload"
+                  class="button quiet"
+                  type="button"
+                >
+                  Reload saved interests
+                </button>
+                <button
+                  id="interests-save"
+                  class="button primary"
+                  type="submit"
+                >
+                  Save
+                </button>
+              </div>
+              <p
+                id="interests-status"
+                class="preference-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </form>
+          </section>
+          <div class="preferences-transfer">
+            <section class="preference-panel" aria-labelledby="import-heading">
+              <h2 id="import-heading">Import preferences</h2>
+              <p class="muted">
+                Restore interests and learned weights from a saved file. Video
+                history and exclusion rules stay on this device.
+              </p>
+              <div class="preference-file">
+                <input
+                  id="preferences-file"
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label="Preference file"
+                  hidden
+                />
+                <button id="preferences-choose" class="button">
+                  Choose file
+                </button>
+                <span id="preferences-filename" class="muted"
+                  >No file selected</span
+                >
+              </div>
+              <div id="preferences-preview" hidden>
+                <dl id="preferences-summary" class="preference-summary"></dl>
+                <p class="note small-text">
+                  Import replaces saved preferences. A recovery file is saved
+                  first.
+                </p>
+                <p
+                  id="preferences-draft-warning"
+                  class="preferences-warning"
+                  hidden
+                >
+                  Import will replace your unsaved interest edits.
+                </p>
+                <div class="transfer-actions">
+                  <button
+                    id="preferences-import"
+                    class="button primary"
+                    disabled
+                  >
+                    Import preferences
+                  </button>
+                </div>
+              </div>
+              <p
+                id="preferences-status"
+                class="preference-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </section>
+            <section class="preference-panel" aria-labelledby="export-heading">
+              <h2 id="export-heading">Export preferences</h2>
+              <p class="muted">
+                Download your saved interests and learned weights as a JSON
+                file.
+              </p>
+              <p id="preferences-export-warning" class="note small-text" hidden>
+                Save your interest edits before exporting.
+              </p>
+              <button id="preferences-export" class="button">
+                Export preferences
+              </button>
+              <p
+                id="preferences-export-status"
+                class="preference-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </section>
+          </div>
+        </div>
+      </section>
     </main>
     <dialog
       id="review-dialog"
@@ -135,6 +271,31 @@
         <button id="details-close" class="button quiet">Close</button>
       </header>
       <div id="details-body" class="dialog-body technical"></div>
+    </dialog>
+    <dialog
+      id="token-usage-dialog"
+      class="token-usage-dialog"
+      aria-labelledby="token-usage-title"
+    >
+      <header class="dialog-toolbar">
+        <h2 id="token-usage-title">Token usage</h2>
+        <button id="token-usage-close" class="button quiet">Close</button>
+      </header>
+      <div class="dialog-body">
+        <label class="field-label"
+          >Recommendation round<select
+            id="token-usage-run"
+            class="select-input"
+          ></select
+        ></label>
+        <p
+          id="token-usage-status"
+          class="field-status"
+          role="status"
+          aria-live="polite"
+        ></p>
+        <div id="token-usage-content"></div>
+      </div>
     </dialog>
     <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
       <header class="dialog-toolbar">
@@ -175,72 +336,6 @@
           Drafts stay in this tab while you navigate. Use Save to keep a rating
           after closing the page.
         </p>
-      </div>
-    </dialog>
-    <dialog
-      id="preferences-dialog"
-      class="help-dialog transfer-dialog"
-      aria-labelledby="preferences-title"
-    >
-      <header class="dialog-toolbar">
-        <h2 id="preferences-title">Import/Export</h2>
-        <button id="preferences-close" class="button quiet">Close</button>
-      </header>
-      <div class="dialog-body preference-copy">
-        <p class="transfer-intro">
-          Transfer learned weights and interests. Video history and exclusion
-          rules stay on this device.
-        </p>
-        <section aria-labelledby="export-heading">
-          <div>
-            <h3 id="export-heading">Export</h3>
-            <p>Download your current learned preferences as a JSON file.</p>
-          </div>
-          <button id="preferences-export" class="button">
-            Export preferences
-          </button>
-        </section>
-        <section aria-labelledby="import-heading">
-          <h3 id="import-heading">Import</h3>
-          <p>
-            Choose a saved Broader Vids JSON file. Its preview appears below.
-          </p>
-          <div class="preference-file">
-            <input
-              id="preferences-file"
-              type="file"
-              accept=".json,application/json"
-              aria-label="Preference file"
-              hidden
-            />
-            <button id="preferences-choose" class="button">Choose file</button>
-            <span id="preferences-filename" class="muted"
-              >No file selected</span
-            >
-          </div>
-          <div id="preferences-preview" hidden>
-            <dl id="preferences-summary" class="preference-summary"></dl>
-            <p>
-              Import replaces learned preferences. Broader Vids saves a recovery
-              file first.
-            </p>
-            <p>
-              Your lists and ratings stay visible. New or edited ratings
-              continue learning from the imported parameters.
-            </p>
-            <div class="transfer-actions">
-              <button id="preferences-import" class="button primary">
-                Import preferences
-              </button>
-            </div>
-          </div>
-        </section>
-        <p
-          id="preferences-status"
-          class="preference-status"
-          role="status"
-          aria-live="polite"
-        ></p>
       </div>
     </dialog>
   </body>

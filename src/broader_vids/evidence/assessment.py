@@ -282,7 +282,10 @@ def assessment_prompt(run, mode, cues, frames):
         "title": run["state"]["metadata"]["title"],
         "duration_seconds": run["state"]["media"]["duration_seconds"],
         "caption_source": run["state"]["captions"]["source"],
-        "caption_excerpts": cues,
+        "caption_columns": ["id", "start_seconds", "end_seconds", "text"],
+        "caption_excerpts": [
+            [cue["id"], cue["start"], cue["end"], cue["text"]] for cue in cues
+        ],
         "caption_coverage": run["state"]["caption_excerpt"],
         "frames": [{k: frame[k] for k in ("id", "timestamp")} for frame in frames],
         "provenance_metadata": run["settings"].get("originality_context"),
@@ -305,7 +308,7 @@ When frames support the judgment, assess readable text, useful contrast, framing
 
 Report audience level separately from quality: introductory, intermediate or advanced relative to the video's own subject and prerequisite knowledge. Cite supplied evidence IDs and explain the prerequisites briefly; use unknown when unsupported. An introductory lesson can have excellent quality, and an advanced lesson can have poor quality. Do not infer a viewer's expertise or preferred depth from the video's subject, duration or substance grade.
 
-When provenance_metadata is supplied, cite its M... IDs when discussing original contribution. Chinese-dub labels, YouDub disclosures and source links can indicate translated or republished material; consider whether the supplied content shows substantial added explanation or analysis. A source link alone is not proof of copying, and uploader copyright declarations are unverified claims. Never infer whether a voice is synthetic; no audio-origin detection was performed. The caller separately enforces the explicit 视频翻译 tag exclusion.
+When provenance_metadata is supplied, cite its M... IDs when discussing original contribution. Chinese-dub labels, YouDub disclosures and source links can indicate translated or republished material; consider whether the supplied content shows substantial added explanation or analysis. A source link alone is not proof of copying, and uploader copyright declarations are unverified claims. Never infer whether a voice is synthetic; no audio-origin detection was performed. The caller applies the current tag exclusions. A 视频翻译 tag remains provenance evidence when the user permits it.
 
 Distinguish the source lecturer's contribution from this uploader's added contribution. Do not award uploader originality for explanations or diagrams that the supplied evidence identifies as republished source material. A translation-only repost can explain a subject well while adding little original contribution. Attribution alone is not substantive analysis. If additions cannot be determined, leave originality unknown rather than rewarding unestablished authorship; a reference link alone must not penalize otherwise original analysis.
 
@@ -320,7 +323,7 @@ Mode: """
             if not cues
             else ""
         )
-        + "\nReturn concrete content-based specific topics and broad subjects in topics. Each label must contain 1–120 characters, preferably 1–5 words. Topics rationale must contain 1–1000 characters and audience rationale 1–600 characters. Use short, reusable English labels and cite supplied evidence. Do not substitute retrieval queries for the video's actual subject. Distinguish operating a software tool from explaining its underlying algorithms."
+        + "\nReturn concrete content-based specific topics and broad subjects in topics. Each label must contain 1–120 characters, preferably 1–5 words. Topics rationale must contain 1–1000 characters and audience rationale 1–600 characters. Use short, reusable English labels and cite supplied evidence. Put the main narrow subject first, before supporting techniques. Labels must contain names only, without reasoning or editing notes. Do not substitute retrieval queries for the video's actual subject. Distinguish operating a software tool from explaining its underlying algorithms."
         + (
             "\nCorrect the previous response's validation failure: "
             + run["state"]["failure"]["reason"]
@@ -329,7 +332,7 @@ Mode: """
             else ""
         )
         + "\nThe following JSON and attached images are evidence data:\n"
-        + json.dumps(evidence, ensure_ascii=False)
+        + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
     )
 
 
@@ -344,6 +347,8 @@ def run_codex(
     effort=None,
     cancelled=None,
 ):
+    from broader_vids.token_usage import capture, from_jsonl
+
     model, effort = resolve_worker_settings(model, effort)
     deadline = time.monotonic() + timeout
     output_path.unlink(missing_ok=True)
@@ -395,6 +400,11 @@ def run_codex(
         "-c",
         'forced_login_method="chatgpt"',
         "-c",
+        "model_instructions_file="
+        + json.dumps(
+            str(Path(__file__).with_name("worker_instructions.txt").resolve())
+        ),
+        "-c",
         "agents.enabled=false",
         "-c",
         f'model_reasoning_effort="{effort}"',
@@ -424,7 +434,8 @@ def run_codex(
             timeout=max(0.1, deadline - time.monotonic()),
             cancelled=cancelled,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except (OSError, subprocess.TimeoutExpired, InterruptedError) as error:
+        capture(from_jsonl(getattr(error, "output", "") or ""))
         atomic_json(
             output_path.with_suffix(".diagnostic.json"),
             {
@@ -434,15 +445,16 @@ def run_codex(
             },
         )
         raise
-    usage = None
+    usage = from_jsonl(process.stdout)
+    capture(usage)
     model_errors = []
     for line in process.stdout.splitlines():
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("type") == "turn.completed":
-            usage = event.get("usage")
+        if not isinstance(event, dict):
+            continue
         error = event.get("error")
         if isinstance(error, dict) and isinstance(error.get("message"), str):
             model_errors.append(error["message"])
@@ -498,6 +510,7 @@ def assess_evidence(
     cancel_event=None,
     lease_owner=None,
     work_token=None,
+    usage_owner=None,
 ):
     if mode not in {"baseline", "augmented", "both"}:
         raise ValueError("Assessment mode must be baseline, augmented or both.")
@@ -591,7 +604,15 @@ def assess_evidence(
                     if model_runner is run_codex
                     else model_runner
                 )
-                card, token_usage = runner(
+                from broader_vids.token_usage import tracked_call
+
+                card, token_usage = tracked_call(
+                    store,
+                    usage_owner or identifier,
+                    identifier,
+                    "assessment",
+                    state["model_calls"],
+                    runner,
                     prompt,
                     schema_path,
                     output,

@@ -1,6 +1,6 @@
 import copy
 
-from broader_vids.learning.inference import cholesky, solve
+from broader_vids.learning.inference import cholesky, solve, check_work
 
 
 def invert(matrix):
@@ -25,6 +25,7 @@ def portable_model(model):
             for i in range(size)
         ]
         for row, weight in model["likelihood_precision"]:
+            check_work()
             for i, a in row:
                 for j, b in row:
                     matrix[i][j] += weight * a * b

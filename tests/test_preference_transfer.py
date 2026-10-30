@@ -149,6 +149,172 @@ class PosteriorTransferTests(unittest.TestCase):
 
 
 class PreferenceTransferTests(unittest.TestCase):
+    def test_repeated_import_prunes_only_unreferenced_model_caches(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            bundle = export_preferences(store)
+            first = import_preferences(store, bundle)["snapshot_id"]
+            with store.db:
+                store.db.execute(
+                    "INSERT INTO learning_evaluations VALUES(?,?,?)",
+                    ("pinned", "fixture", json.dumps({"snapshot_id": first})),
+                )
+                store.db.execute(
+                    "INSERT INTO learning_evaluations VALUES(?,?,?)",
+                    ("without_snapshot", "fixture", "{}"),
+                )
+            second = import_preferences(store, bundle)["snapshot_id"]
+            third = import_preferences(store, bundle)["snapshot_id"]
+            cached = {
+                row[0] for row in store.db.execute("SELECT id FROM learning_models")
+            }
+            self.assertIn(first, cached)
+            self.assertIn(third, cached)
+            self.assertNotIn(second, cached)
+
+    def test_cached_export_does_not_refit_and_matches_parameters(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            original = export_preferences(store)
+            with patch(
+                "broader_vids.learning.service.train",
+                side_effect=AssertionError("Unnecessary refit"),
+            ):
+                cached = export_preferences(store)
+            self.assertEqual(cached["parameters"], original["parameters"])
+
+    def test_validation_deadline_leaves_existing_parameters_and_backups_intact(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            bundle = export_preferences(store)
+            before = preserved(store)
+            with patch(
+                "broader_vids.learning.transfer.time.monotonic", side_effect=[0, 21]
+            ):
+                with self.assertRaisesRegex(ValueError, "time allowance"):
+                    import_preferences(store, bundle)
+            self.assertEqual(preserved(store), before)
+            self.assertEqual(
+                list((store.root / "backups").glob("preferences-*.json")), []
+            )
+
+    def test_restore_is_prepared_outside_write_transaction_and_has_exact_cache_id(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            bundle = export_preferences(store)
+
+            def prepare(data):
+                self.assertFalse(store.db.in_transaction)
+                return train(data)
+
+            with patch("broader_vids.learning.service.train", side_effect=prepare):
+                result = import_preferences(store, bundle)
+            with patch(
+                "broader_vids.learning.service.train",
+                side_effect=AssertionError("The restored cache was not reused"),
+            ):
+                restored = ensure_model(store)
+            self.assertEqual(restored["id"], result["snapshot_id"])
+
+    def test_feedback_can_save_during_restore_and_prevents_stale_commit(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            bundle = export_preferences(store)
+
+            def prepare(data):
+                with closing(Store(directory)) as other:
+                    save_detail(
+                        other,
+                        example(1)["canonical_id"],
+                        "topic_interest",
+                        "low",
+                        target="topology",
+                    )
+                return train(data)
+
+            with patch("broader_vids.learning.service.train", side_effect=prepare):
+                with self.assertRaisesRegex(ValueError, "Feedback changed"):
+                    import_preferences(store, bundle)
+            self.assertNotIn("baseline", source_data(store))
+            self.assertEqual(
+                details(store)[example(1)["canonical_id"]]["topic_interest"]["value"],
+                "low",
+            )
+            self.assertEqual(
+                list((store.root / "backups").glob("preferences-*.json")), []
+            )
+
+    def test_failed_commit_removes_unused_backup_and_rolls_back_profile(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            bundle = export_preferences(store)
+            before = preserved(store)
+            profile = get_profile(store)
+            original = store.create
+
+            def interrupted(*args, **kwargs):
+                original(*args, **kwargs)
+                raise ValueError("Interrupted commit")
+
+            with patch.object(store, "create", side_effect=interrupted):
+                with self.assertRaisesRegex(ValueError, "Interrupted commit"):
+                    import_preferences(store, bundle)
+            self.assertEqual(preserved(store), before)
+            self.assertEqual(get_profile(store), profile)
+            self.assertNotIn("baseline", source_data(store))
+            self.assertEqual(
+                list((store.root / "backups").glob("preferences-*.json")), []
+            )
+
+    def test_export_publishes_only_complete_data_and_cleans_failed_temporary_files(
+        self,
+    ):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            bundle = export_preferences(store)
+            destination = Path(directory) / "preferences.json"
+
+            def fail_sync(descriptor):
+                self.assertFalse(destination.exists())
+                raise OSError("Failed to flush")
+
+            with patch(
+                "broader_vids.learning.transfer.os.fsync", side_effect=fail_sync
+            ):
+                with self.assertRaises(OSError):
+                    write_export(destination, bundle)
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(Path(directory).glob("*.tmp")), [])
+            destination.write_text("old export", encoding="utf-8")
+            with patch(
+                "broader_vids.learning.transfer.os.fsync",
+                side_effect=OSError("Failed to flush"),
+            ):
+                with self.assertRaises(OSError):
+                    write_export(destination, bundle, overwrite=True)
+            self.assertEqual(destination.read_text(), "old export")
+            self.assertEqual(list(Path(directory).glob("*.tmp")), [])
+
     def test_roundtrip_contains_parameters_only_and_retains_local_history(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             with closing(Store(a)) as source, closing(Store(b)) as target:
@@ -319,7 +485,7 @@ class PreferenceTransferTests(unittest.TestCase):
             before = preserved(store)
             with patch(
                 "broader_vids.learning.service.train",
-                side_effect=[train(source_data(store)), ValueError("fixture rollback")],
+                side_effect=ValueError("fixture rollback"),
             ):
                 with self.assertRaisesRegex(ValueError, "fixture rollback"):
                     import_preferences(store, bundle)

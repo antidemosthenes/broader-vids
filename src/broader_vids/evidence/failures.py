@@ -41,6 +41,10 @@ def failure_details(error, stage):
         "reason": reason,
         "retryable": getattr(error, "retryable", True),
     }
+    if getattr(error, "recovery", None):
+        result["recovery"] = error.recovery
+    if getattr(error, "metadata_diagnostic", None):
+        result["metadata"] = error.metadata_diagnostic
     if getattr(error, "stderr", None):
         result["diagnostic"] = public_error(error.stderr)
     return result

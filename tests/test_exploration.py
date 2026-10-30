@@ -69,6 +69,47 @@ class ExplorationTests(unittest.TestCase):
             ],
         }, {"input_tokens": 100, "output_tokens": 50}
 
+    def test_language_repair_keeps_the_original_topics_and_call_allowance(self):
+        for allowance in (1, 2):
+            with self.subTest(allowance=allowance):
+                calls = []
+
+                def model(*args):
+                    response, usage = self.model(*args)
+                    calls.append(response)
+                    if len(calls) == 1:
+                        response["existing_queries"][0]["queries"]["youtube"] = (
+                            "数学 教学"
+                        )
+                    return response, usage
+
+                identifier = create_discovery(
+                    self.store,
+                    "youtube",
+                    seed=42,
+                    max_planning_calls=allowance,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                )
+                run = execute_discovery(
+                    self.store, identifier, FixtureHttp, model_runner=model
+                )
+                state = run["state"]["exploration"]
+                self.assertEqual(len(calls), allowance)
+                self.assertEqual(len(state["selected"]), 3)
+                self.assertTrue(state["attempts"][0]["language_error"])
+                if allowance == 1:
+                    self.assertEqual(run["status"], "paused")
+                    self.assertEqual(self.store.request_count(identifier), 0)
+                else:
+                    self.assertTrue(state["ready"])
+                    self.assertEqual(len(state["new_nodes"]), 5)
+                    self.assertTrue(self.calls[-1]["query_language_errors"])
+                    self.assertFalse(self.calls[-1]["allow_refinements"])
+                    self.assertTrue(
+                        all(task["query"].isascii() for task in run["state"]["plan"])
+                    )
+
     def test_cold_start_search_activation_and_preferences_are_independent(self):
         original = get_profile(self.store)
         identifier = create_discovery(

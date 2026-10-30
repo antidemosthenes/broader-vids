@@ -57,8 +57,20 @@ export function updateRating(id, dimension, payload) {
   updateRecord(id, { details });
 }
 
+export function applyTagRules({ tags, tag_revision = 0 }) {
+  if (tag_revision < (state.exclusions.tag_revision || 0)) return;
+  state.exclusions.tags = tags;
+  state.exclusions.tag_revision = tag_revision;
+}
+
 export function applyExclusions(exclusions) {
+  const previous = state.exclusions;
   state.exclusions = exclusions;
+  if ((previous.tag_revision || 0) > (exclusions.tag_revision || 0))
+    Object.assign(state.exclusions, {
+      tags: previous.tags,
+      tag_revision: previous.tag_revision,
+    });
   const update = (entry) => {
     const creator = entry.creator;
     if (!creator) return;

@@ -12,6 +12,8 @@ from broader_vids.evidence.media import EvidencePending
 class EnvironmentCheckTests(unittest.TestCase):
     def check(self, version, ffmpeg_error=None, missing_tool=None):
         def executable_version(executable, argument):
+            if executable == "/tools/uv":
+                return "uv 0.9.0"
             if argument == "--version":
                 return version
             if ffmpeg_error:
@@ -29,7 +31,7 @@ class EnvironmentCheckTests(unittest.TestCase):
             patch(
                 "broader_vids.cli.environment.importlib.util.find_spec",
                 side_effect=lambda name: object()
-                if name in {"yt_dlp", "PIL"}
+                if name in {"yt_dlp", "PIL", "opencc"}
                 else None,
             ),
             patch(
@@ -98,3 +100,29 @@ class EnvironmentCheckTests(unittest.TestCase):
             report = environment_report("unused-profile")
         self.assertIn("ffmpeg", report["missing_required"])
         self.assertEqual(report["required"]["ffmpeg"]["status"], "missing")
+
+    def test_installed_but_broken_uv_is_not_reported_as_ready(self):
+        from broader_vids.cli.environment import environment_report
+
+        def version(executable, argument):
+            if executable == "uv":
+                raise OSError("Broken executable")
+            return "v22.0.0" if executable == "node" else "ffmpeg version fixture"
+
+        with (
+            patch(
+                "broader_vids.cli.environment.shutil.which",
+                side_effect=lambda name: name,
+            ),
+            patch(
+                "broader_vids.cli.environment.executable_version", side_effect=version
+            ),
+            patch(
+                "broader_vids.cli.environment.ffmpeg_executable", return_value="ffmpeg"
+            ),
+        ):
+            report = environment_report("unused")
+        self.assertEqual(report["required"]["uv"]["status"], "unusable")
+        self.assertEqual(report["required"]["node"]["status"], "available")
+        self.assertIn("uv", report["missing_required"])
+        self.assertFalse(report["local_requirements_met"])

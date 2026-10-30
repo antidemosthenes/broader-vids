@@ -1,6 +1,5 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
-import copy
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import threading
 import time
@@ -8,6 +7,7 @@ import time
 from broader_vids.evidence.browser import bilibili_browser, browser_cookie_jar
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp, RequestGate
+from broader_vids.creators import enrich
 from broader_vids.storage import Store
 from broader_vids.preferences import canonical_identity, platform_lock
 from broader_vids.recommendations.engagement import collect_snapshot
@@ -23,7 +23,9 @@ class SnapshotPool:
             collector,
         )
         self.enabled = (
-            isinstance(http, PublicHttp) and collector is collect_snapshot
+            isinstance(http, PublicHttp)
+            and collector is collect_snapshot
+            and http.cookies is not None
             if enabled is None
             else enabled
         )
@@ -38,7 +40,15 @@ class SnapshotPool:
         self.cancelled = threading.Event()
         self.first_error = None
         self.error_lock = threading.Lock()
-        self.gate = RequestGate()
+        self.gate = getattr(http, "request_gate", None)
+        if self.gate is None:
+            self.gate = RequestGate()
+            self.gate.last_request = getattr(http, "last_request", None)
+        self.session_lock = (
+            threading.Lock()
+            if self.enabled and http.run["platform"] == "youtube"
+            else nullcontext()
+        )
         if self.enabled:
             http.request_gate = self.gate
 
@@ -49,8 +59,16 @@ class SnapshotPool:
         self.cancelled.set()
         if self.executor:
             self.executor.shutdown(wait=True, cancel_futures=True)
+        self.futures.clear()
 
     def _fetch(self, item):
+        with self.session_lock:
+            event = getattr(self.http, "cancelled", None)
+            if self.cancelled.is_set() or (event is not None and event.is_set()):
+                raise BudgetExhausted("The parent cancelled metadata retrieval.")
+            return self._fetch_snapshot(item)
+
+    def _fetch_snapshot(self, item):
         store = Store(self.root)
         parent = self
 
@@ -75,9 +93,14 @@ class SnapshotPool:
                     "max_seconds": seconds,
                 },
             }
-            client = PublicHttp(store, run, anonymous_session=True)
-            for cookie in self.http.cookies:
-                client.cookies.set_cookie(copy.copy(cookie))
+            client = PublicHttp(
+                store,
+                run,
+                anonymous_session=True,
+                cookie_jar=self.http.cookies,
+                clock=self.http.clock,
+                sleeper=self.http.sleeper,
+            )
             client.transport = self.http.transport
             client.request_gate = self.gate
             client.cancelled = Cancellation()
@@ -166,7 +189,7 @@ def refresh_metadata(store, identifier, *, use_browser=False, http_factory=Publi
                 "identity": item,
                 "use_browser": use_browser,
                 "max_seconds": 60,
-                "max_requests": 1,
+                "max_requests": 2 if item["platform"] == "youtube" else 1,
             },
             {"phase": "fetch"},
         )
@@ -207,3 +230,26 @@ def refresh_metadata(store, identifier, *, use_browser=False, http_factory=Publi
             if run["status"] == "completed"
             else None,
         }
+
+
+def apply_snapshot(item, snapshot):
+    item["engagement"] = {**item.get("engagement", {}), **snapshot}
+    enrich(item, item["engagement"])
+    if item["platform"] == "youtube" and snapshot.get("duration_seconds") is not None:
+        item["duration_seconds"] = snapshot["duration_seconds"]
+    elif item["platform"] == "bilibili":
+        part = next(
+            (
+                part
+                for part in snapshot.get("pages", [])
+                if part["page"] == item.get("part_index", 1)
+            ),
+            None,
+        )
+        if part:
+            item.update(
+                duration_seconds=part["duration"],
+                duration_scope="resolved_part",
+                cid=part["cid"],
+            )
+    return item

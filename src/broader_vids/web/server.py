@@ -1,3 +1,4 @@
+from broader_vids.recommendations.screening import inspection_limit
 from importlib.resources import files
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -6,13 +7,22 @@ import sqlite3
 import threading
 import socket
 import logging
+from urllib.parse import urlsplit, parse_qs
 
 from broader_vids import __version__
 
 from broader_vids.evidence.assessment import current_card
 from broader_vids.evidence.media import EvidencePending
-from broader_vids.preferences import get_profile, user_action, video_states
+from broader_vids.preferences import (
+    get_profile,
+    set_profile,
+    ProfileConflict,
+    user_action,
+    video_states,
+    current_recommendation_id,
+)
 from broader_vids.storage import Store
+from broader_vids.tag_rules import tag_rules
 from broader_vids.recommendations.originality import provenance
 from broader_vids.creators import (
     status as exclusion_status,
@@ -74,22 +84,16 @@ def dashboard_state(store):
         )
     }
     for platform in ("youtube", "bilibili"):
-        query = "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='recommendation' AND platform=?"
-        row = store.db.execute(
-            query
-            + " AND status IN ('completed','partial') ORDER BY created_at DESC LIMIT 1",
-            (platform,),
-        ).fetchone()
-        row = (
-            row
-            or store.db.execute(
-                query + " ORDER BY created_at DESC LIMIT 1", (platform,)
-            ).fetchone()
-        )
-        if row:
-            run = store.get(row[0])
+        identifier = current_recommendation_id(store, platform)
+        if identifier:
+            run = store.get(identifier)
             current.append(run)
-            visible.update(i["canonical_id"] for i in run["state"]["selected"])
+            visible.update(
+                i["canonical_id"]
+                for i in (
+                    run["state"].get("selected") or run["state"].get("preview", [])
+                )
+            )
     snapshots = {
         r["canonical_id"]: json.loads(r["payload"])
         for r in store.db.execute(
@@ -105,6 +109,7 @@ def dashboard_state(store):
             entry = {
                 "id": run["id"],
                 "status": run["status"],
+                "provisional": not bool(state.get("published_at")),
                 "selected": [
                     {
                         **score_details(store, item),
@@ -118,7 +123,7 @@ def dashboard_state(store):
                             profile,
                         ),
                     }
-                    for item in state["selected"]
+                    for item in (state.get("selected") or state.get("preview", []))
                 ],
                 "weights": run["settings"].get("weights", {}),
                 "assessed": sum(
@@ -128,25 +133,31 @@ def dashboard_state(store):
                     v.get("quality") is not None or v.get("status") == "unavailable"
                     for v in state["evidence"].values()
                 ),
-                "inspection": len(state.get("shortlist", [])) or 50,
+                "inspection": len(state.get("shortlist", []))
+                or inspection_limit(run["settings"]),
                 "unavailable": sum(
                     v.get("status") == "unavailable" for v in state["evidence"].values()
                 ),
                 "issues": len(state["issues"]),
             }
-            if state.get("published_at"):
-                runs[run["platform"]] = entry
-            else:
-                if run["platform"] not in runs or not runs[run["platform"]]["selected"]:
-                    runs[run["platform"]] = entry
+            runs[run["platform"]] = entry
     states = video_states(store, identifiers=list(visible))
     structured = details(store, list(visible))
+    items = {key: value["payload"] for key, value in states.items()}
+    items.update(
+        {
+            item["canonical_id"]: item
+            for run in current
+            for item in (
+                run["state"].get("selected") or run["state"].get("preview", [])
+            )
+        }
+    )
     contexts = {
         item["canonical_id"]: context_from_features(
             apply_annotation(capture(item), annotations.get(item["canonical_id"]))
         )
-        for run in current
-        for item in run["state"].get("selected", [])
+        for item in items.values()
     }
     pending = {
         p: [
@@ -172,7 +183,10 @@ def dashboard_state(store):
                     )
                 },
             }
-            for k, v in states.items()
+            for k in visible
+            for v in [
+                states.get(k, {"watched": False, "dismissed": False, "pending": False})
+            ]
         },
         "pending": {p: len(items) for p, items in pending.items()},
     }
@@ -185,6 +199,11 @@ class LocalServer(ThreadingHTTPServer):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
+
+    def server_close(self):
+        if hasattr(self, "account_switch"):
+            self.account_switch.close()
+        super().server_close()
 
     def handle_error(self, request, client_address):
         import sys
@@ -199,6 +218,9 @@ class LocalServer(ThreadingHTTPServer):
 
 def make_server(root, port=8765, *, control=None):
     token = secrets.token_urlsafe(32)
+    from broader_vids.evidence.account_switch import AccountSwitch
+
+    account_switch = AccountSwitch(root)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -240,6 +262,41 @@ def make_server(root, port=8765, *, control=None):
                 )
             if self.path == "/":
                 return self.send(200, PAGE.replace("__TOKEN__", token), "text/html")
+            if self.path == "/api/bilibili/account":
+                return self.send(
+                    200, json.dumps(account_switch.status(), ensure_ascii=False)
+                )
+            if urlsplit(self.path).path == "/api/token-usage":
+                store = None
+                try:
+                    from broader_vids.token_usage import report
+
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    if set(query) - {"run_id"} or (
+                        "run_id" in query and len(query["run_id"]) != 1
+                    ):
+                        raise ValueError("Select one recommendation round.")
+                    store = Store(root)
+                    return self.send(
+                        200, json.dumps(report(store, query.get("run_id", [None])[0]))
+                    )
+                except (ValueError, OSError, sqlite3.Error) as error:
+                    return self.send(400, json.dumps({"error": str(error)}))
+                finally:
+                    if store is not None:
+                        store.close()
+            if self.path == "/api/interests":
+                store = Store(root)
+                try:
+                    return self.send(
+                        200,
+                        json.dumps(
+                            get_profile(store) or {"revision": 0, "interests": []},
+                            ensure_ascii=False,
+                        ),
+                    )
+                finally:
+                    store.close()
             if self.path == "/api/exclusions":
                 store = Store(root)
                 try:
@@ -278,7 +335,12 @@ def make_server(root, port=8765, *, control=None):
                 "/static/review.js": ("review.js", "text/javascript"),
                 "/static/views.js": ("views.js", "text/javascript"),
                 "/static/score.js": ("score.js", "text/javascript"),
-                "/static/transfer.js": ("transfer.js", "text/javascript"),
+                "/static/preferences.js": ("preferences.js", "text/javascript"),
+                "/static/token-usage.js": ("token-usage.js", "text/javascript"),
+                "/static/bilibili-account.js": (
+                    "bilibili-account.js",
+                    "text/javascript",
+                ),
             }
             if self.path in assets:
                 name, mime = assets[self.path]
@@ -329,22 +391,67 @@ def make_server(root, port=8765, *, control=None):
                 )
             if self.path not in {
                 "/api/action",
+                "/api/interests",
                 "/api/preferences/export",
                 "/api/preferences/preview",
                 "/api/preferences/import",
+                "/api/bilibili/account",
             }:
                 return self.send(404, '{"error":"Not found"}')
             store = None
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 transfer = self.path.startswith("/api/preferences/")
-                if not 0 < length <= (16 * 1024 * 1024 if transfer else 8192):
+                if (
+                    not 0
+                    < length
+                    <= (
+                        16 * 1024 * 1024
+                        if transfer
+                        else 32768
+                        if self.path == "/api/interests"
+                        else 8192
+                    )
+                ):
                     raise ValueError(
                         "Preference request must be 1–16 MiB."
                         if transfer
+                        else "Interest request must be 1–32,768 bytes."
+                        if self.path == "/api/interests"
                         else "Action body must be 1–8,192 bytes."
                     )
                 value = json.loads(self.rfile.read(length))
+                if self.path == "/api/interests":
+                    if (
+                        not isinstance(value, dict)
+                        or set(value) != {"interests", "revision"}
+                        or type(value["revision"]) is not int
+                        or value["revision"] < 0
+                    ):
+                        raise ValueError(
+                            "Load the saved interests before saving changes."
+                        )
+                    store = Store(root)
+                    result = set_profile(
+                        store, value["interests"], expected_revision=value["revision"]
+                    )
+                    return self.send(200, json.dumps(result, ensure_ascii=False))
+                if self.path == "/api/bilibili/account":
+                    if (
+                        not isinstance(value, dict)
+                        or not isinstance(value.get("operation"), str)
+                        or value["operation"]
+                        not in {
+                            "start",
+                            "confirm",
+                            "cancel",
+                        }
+                    ):
+                        raise ValueError(
+                            "Use start, confirm, or cancel for Bilibili account switching."
+                        )
+                    operation = getattr(account_switch, value["operation"])
+                    return self.send(200, json.dumps(operation(), ensure_ascii=False))
                 if transfer:
                     from broader_vids.learning.transfer import (
                         export_preferences,
@@ -374,11 +481,16 @@ def make_server(root, port=8765, *, control=None):
                             )
                         result = (
                             import_preferences(
-                                store, bundle, expected_revision=value.get("revision")
+                                store,
+                                bundle,
+                                expected_revision=value.get("revision"),
+                                _validated=True,
                             )
                             if self.path == "/api/preferences/import"
-                            else preview_import(store, bundle)
+                            else preview_import(store, bundle, _validated=True)
                         )
+                    if self.path == "/api/preferences/import":
+                        result["profile"] = get_profile(store)
                     return self.send(200, json.dumps(result, ensure_ascii=False))
                 if not isinstance(value, dict) or not all(
                     isinstance(value.get(k), str) for k in ("id", "action")
@@ -422,19 +534,27 @@ def make_server(root, port=8765, *, control=None):
                     return self.send(200, json.dumps(sync_blacklist(store)))
                 if value["action"] in {"add_tag", "remove_tag"}:
                     from broader_vids.preferences import update_tag_rule
-                    from broader_vids.learning.service import ensure_model
 
-                    rules = update_tag_rule(
+                    update_tag_rule(
                         store,
                         value.get("platform"),
                         value.get("tag"),
                         remove=value["action"] == "remove_tag",
                     )
-                    ensure_model(store)
-
+                    profile = get_profile(store)
                     return self.send(
                         200,
-                        json.dumps(rules),
+                        json.dumps(
+                            {
+                                **profile.get("excluded_tags", {}),
+                                "tag_revision": profile["revision"],
+                                "tags": {
+                                    platform: tag_rules(profile, platform)
+                                    for platform in ("youtube", "bilibili")
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
                     )
                 if value["action"] == "rate":
                     from broader_vids.learning.feedback import save_detail
@@ -466,10 +586,14 @@ def make_server(root, port=8765, *, control=None):
                         value["action"],
                     )
                 self.send(200, '{"saved":true}')
+            except ProfileConflict as error:
+                self.send(409, json.dumps({"error": str(error)}))
             except (ValueError, OSError, sqlite3.Error, EvidencePending) as error:
                 self.send(400, json.dumps({"error": str(error)}))
             finally:
                 if store:
                     store.close()
 
-    return LocalServer(("127.0.0.1", port), Handler)
+    server = LocalServer(("127.0.0.1", port), Handler)
+    server.account_switch = account_switch
+    return server

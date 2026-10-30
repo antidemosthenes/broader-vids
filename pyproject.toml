@@ -9,7 +9,9 @@ description = "Curated live discovery for independent video recommendations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "opencc-python-reimplemented==0.1.7",
+]
 
 [dependency-groups]
 dev = [

@@ -4,6 +4,18 @@ from broader_vids.creators import excluded
 from broader_vids.recommendations.originality import provenance
 
 
+DEFAULT_INSPECTION_LIMIT = 35
+
+
+def inspection_limit(settings):
+    limit = settings.get("inspection_limit", 50)
+    if settings.get("screening_policy_version", 2) < 3:
+        return 50
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("The saved inspection limit must be an integer from 1 to 100.")
+    return limit
+
+
 MIN_VIEWS = 100
 MIN_LIKES = 3
 MIN_LIKE_RATE = 0.01

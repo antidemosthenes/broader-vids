@@ -68,10 +68,12 @@ class RunFailureTests(unittest.TestCase):
         self.assertNotIn("secret", str(caught.exception))
         self.assertTrue(path.with_suffix(".diagnostic.json").is_file())
 
-    def test_metadata_access_cause_survives_cancellation_of_an_earlier_candidate(self):
+    def test_bilibili_metadata_access_cause_survives_cancellation_of_an_earlier_candidate(
+        self,
+    ):
         rid = create_recommendation(
             self.store,
-            "youtube",
+            "bilibili",
             assessment_model="fixture-model",
             reasoning_effort="low",
         )
@@ -80,27 +82,37 @@ class RunFailureTests(unittest.TestCase):
 
         def collect(client, item):
             barrier.wait(2)
-            if item["canonical_id"] == candidate(2)["canonical_id"]:
+            if item["canonical_id"] == candidate(2, "bilibili")["canonical_id"]:
                 raise AccessPaused("HTTP 429 metadata access failed")
             self.assertTrue(pool.cancelled.wait(2))
             raise BudgetExhausted("Sibling retrieval cancelled")
 
         with SnapshotPool(self.store, http, lambda: 10, collect, enabled=True) as pool:
-            pool.prefetch([candidate(1), candidate(2)], lambda i: True)
+            pool.prefetch(
+                [candidate(1, "bilibili"), candidate(2, "bilibili")], lambda i: True
+            )
             with self.assertRaisesRegex(AccessPaused, "429"):
-                pool.get(candidate(1), lambda: None)
+                pool.get(candidate(1, "bilibili"), lambda: None)
 
-    def test_metadata_pool_overlaps_responses_with_pacing_and_shared_request_bounds(
+    def test_bilibili_metadata_pool_overlaps_responses_and_shares_request_bounds(
         self,
     ):
         rid = create_recommendation(
             self.store,
-            "youtube",
+            "bilibili",
             max_requests=2,
             assessment_model="fixture-model",
             reasoning_effort="low",
         )
-        http = PublicHttp(self.store, self.store.get(rid), anonymous_session=True)
+        now = [0.0]
+        http = PublicHttp(
+            self.store,
+            self.store.get(rid),
+            anonymous_session=True,
+            clock=lambda: now[0],
+            sleeper=lambda delay: now.__setitem__(0, now[0] + delay),
+        )
+        responses = threading.Barrier(2)
         starts = []
         active = [0, 0]
         lock = threading.Lock()
@@ -113,22 +125,26 @@ class RunFailureTests(unittest.TestCase):
                 pass
 
             def geturl(self):
-                return "https://www.youtube.com/watch?v=fixture"
+                return "https://api.bilibili.com/x/web-interface/view"
 
             def read(self, size):
                 with lock:
-                    starts.append(time.monotonic())
+                    starts.append(now[0])
                     active[0] += 1
                     active[1] = max(active[1], active[0])
-                time.sleep(1.1)
+                responses.wait(timeout=3)
                 with lock:
                     active[0] -= 1
                 return b"{}"
 
         def collect(client, item):
-            return client.get_json("https://www.youtube.com/watch?v=fixture")
+            return client.get_json("https://api.bilibili.com/x/web-interface/view")
 
-        items = [candidate(1), candidate(2), candidate(3)]
+        items = [
+            candidate(1, "bilibili"),
+            candidate(2, "bilibili"),
+            candidate(3, "bilibili"),
+        ]
         with patch("urllib.request.OpenerDirector.open", return_value=Response()):
             with SnapshotPool(
                 self.store, http, lambda: 10, collect, enabled=True
@@ -140,7 +156,7 @@ class RunFailureTests(unittest.TestCase):
                 with self.assertRaises(BudgetExhausted):
                     pool.get(items[2], lambda: None)
         self.assertEqual(len(starts), 2)
-        self.assertGreaterEqual(starts[1] - starts[0], 0.9)
+        self.assertEqual(now[0], 1.0)
         self.assertEqual(active[1], 2)
         self.assertEqual(self.store.request_count(rid), 2)
 

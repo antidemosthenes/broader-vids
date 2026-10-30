@@ -16,16 +16,19 @@ def browser_channel():
 
 
 @contextmanager
-def bilibili_browser(root, visible=False):
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
+def browser_lease(root, *, token=None, owner=None, recovery=False):
+    directory = Path(root) / "access/bilibili"
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = directory / "browser.lock"
+    if owner is None and not recovery and (directory / "switch-commit.json").exists():
         raise ValueError(
-            "Install the evidence extra with UV before using browser sign-in."
-        ) from None
-    profile = Path(root) / "access" / "bilibili" / "profile"
-    profile.mkdir(parents=True, exist_ok=True)
-    lock = profile.parent / "browser.lock"
+            "An account change needs recovery. Select Finish recovery in the dashboard before using Bilibili."
+        )
+    if owner is not None:
+        if not lock.is_file() or lock.read_text(encoding="utf-8") != owner:
+            raise ValueError("The Bilibili browser lease is not owned by this worker.")
+        yield
+        return
     try:
         handle = lock.open("x", encoding="utf-8")
     except FileExistsError:
@@ -33,7 +36,41 @@ def bilibili_browser(root, visible=False):
             "The isolated Bilibili browser is already in use; close its active run first."
         ) from None
     try:
-        with handle, sync_playwright() as playwright:
+        if token is not None:
+            handle.write(token)
+            handle.flush()
+        yield
+    finally:
+        handle.close()
+        if lock.exists() and (
+            token is None or lock.read_text(encoding="utf-8") == token
+        ):
+            lock.unlink(missing_ok=True)
+
+
+@contextmanager
+def bilibili_browser(
+    root, visible=False, *, lock_token=None, profile_path=None, lease_owner=None
+):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise ValueError(
+            "Install the evidence extra with UV before using browser sign-in."
+        ) from None
+    base = Path(root) / "access/bilibili"
+    profile = base / "profile" if profile_path is None else Path(profile_path)
+    if (
+        not profile.resolve().is_relative_to(base.resolve())
+        or profile.is_symlink()
+        or profile.is_junction()
+    ):
+        raise ValueError(
+            "The Bilibili browser profile must stay inside its access directory."
+        )
+    with browser_lease(root, token=lock_token, owner=lease_owner):
+        profile.mkdir(parents=True, exist_ok=True)
+        with sync_playwright() as playwright:
             options = {
                 "headless": not visible,
                 "accept_downloads": False,
@@ -54,8 +91,6 @@ def bilibili_browser(root, visible=False):
                 yield context
             finally:
                 context.close()
-    finally:
-        lock.unlink(missing_ok=True)
 
 
 def confirm_bilibili_login(root):
@@ -66,6 +101,7 @@ def confirm_bilibili_login(root):
     return {
         "confirmation_requested": True,
         "authenticated": "pending verification in the open browser",
+        "message": "Keep the Bilibili window open until sign-in checks finish.",
     }
 
 
@@ -82,7 +118,7 @@ def login_bilibili(root, timeout=600):
             "https://www.bilibili.com/", wait_until="domcontentloaded", timeout=30000
         )
         print(
-            "Bilibili is open in its isolated window. Use the site's sign-in button, then run login bilibili --confirm. No credentials are printed.",
+            "Sign in in the Bilibili window. Keep it open and return to chat to report completion. For terminal use, run login bilibili --confirm. Broader Vids closes the window when sign-in checks finish. No credentials are printed.",
             flush=True,
         )
         started = time.monotonic()
@@ -131,14 +167,14 @@ def login_bilibili(root, timeout=600):
                 )
             if not context.pages:
                 raise ValueError(
-                    "The sign-in browser was closed before authentication completed."
+                    "The sign-in window closed before verification. Start sign-in again and keep the window open until the checks finish."
                 )
             page = next((p for p in context.pages if not p.is_closed()), page)
             try:
                 page.wait_for_timeout(1000)
             except Exception:
                 raise ValueError(
-                    "The sign-in browser closed before authentication was verified; access remains pending."
+                    "The sign-in window closed before verification. Start sign-in again and keep the window open until the checks finish."
                 ) from None
     raise ValueError(
         "Bilibili sign-in timed out; no authenticated access was established."

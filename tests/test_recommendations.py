@@ -233,6 +233,10 @@ class RecommendationTests(unittest.TestCase):
         self.store = Store(self.directory.name)
         self.profile = set_profile(self.store, ["math"])
         self.items = [candidate(i + 1) for i in range(100)]
+        for index, value in enumerate(self.items):
+            value["origins"][0]["domains"] = [
+                "mathematics" if index % 10 < 7 or index == 97 else "conservation"
+            ]
 
     def tearDown(self):
         self.store.close()
@@ -271,10 +275,10 @@ class RecommendationTests(unittest.TestCase):
                     ),
                 )
 
-    def test_screen_selects_global_top50_without_reserved_pending_slots(self):
+    def test_screen_selects_global_top35_without_reserved_pending_slots(self):
         shortlist, rejected = screen(self.items, [], {}, self.profile)
-        self.assertEqual(len(shortlist), 50)
-        self.assertEqual(len(rejected), 50)
+        self.assertEqual(len(shortlist), 35)
+        self.assertEqual(len(rejected), 65)
         self.assertEqual(
             [i["screening_score"] for i in shortlist],
             sorted((i["screening_score"] for i in shortlist), reverse=True),
@@ -287,7 +291,64 @@ class RecommendationTests(unittest.TestCase):
         )
         self.assertFalse(any(i["carryover"] for i in selected))
         selected, _ = screen(self.items, self.items[:70], {}, self.profile)
-        self.assertEqual(len(selected), 50)
+        self.assertEqual(len(selected), 35)
+
+    def test_inspection_limit_is_saved_and_historical_rounds_keep_fifty(self):
+        from broader_vids.recommendations.reports import recommendation_readiness
+        from broader_vids.recommendations.screening import inspection_limit
+
+        source = self.source()
+        for historical, expected in ((False, 35), (True, 50)):
+            with self.subTest(historical=historical):
+                identifier = create_recommendation(
+                    self.store,
+                    "youtube",
+                    source,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                )
+                run = self.store.get(identifier)
+                self.assertEqual(run["settings"]["inspection_limit"], 35)
+                if historical:
+                    run["settings"].pop("inspection_limit")
+                    with self.store.db:
+                        self.store.db.execute(
+                            "UPDATE runs SET settings=? WHERE id=?",
+                            (json.dumps(run["settings"]), identifier),
+                        )
+                self.assertEqual(inspection_limit(run["settings"]), expected)
+                with (
+                    patch(
+                        "broader_vids.recommendations.service.collect_snapshot",
+                        return_value={"observed_at": utc_now()},
+                    ),
+                    patch(
+                        "broader_vids.recommendations.service.cached_quality",
+                        side_effect=lambda s, i: quality(i),
+                    ),
+                ):
+                    completed = execute_recommendation(self.store, identifier)
+                self.assertEqual(completed["status"], "completed", completed["reason"])
+                self.assertEqual(len(completed["state"]["shortlist"]), expected)
+                self.assertEqual(len(completed["state"]["selected"]), 10)
+                self.assertEqual(completed["state"]["model_calls"], 0)
+
+                def observation(store, evidence_id):
+                    canonical = store.get(evidence_id)["settings"]["identity"][
+                        "canonical_id"
+                    ]
+                    return {**quality(evidence_id), "canonical_id": canonical}
+
+                with patch(
+                    "broader_vids.recommendations.reports.cached_quality",
+                    side_effect=observation,
+                ):
+                    self.assertIn(
+                        identifier,
+                        recommendation_readiness(self.store)["verified_runs"][
+                            "youtube"
+                        ],
+                    )
 
     def test_vote_watch_dismiss_and_revision_are_independent(self):
         self.insert_pending(self.items[:1])
@@ -622,7 +683,9 @@ class RecommendationTests(unittest.TestCase):
 
     def test_dashboard_rejects_cross_origin_and_persists_valid_action(self):
         server = make_server(self.directory.name, 0)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=lambda: server.serve_forever(poll_interval=0.02), daemon=True
+        )
         thread.start()
         base = f"http://127.0.0.1:{server.server_port}"
         try:

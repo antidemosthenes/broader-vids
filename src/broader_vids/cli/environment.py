@@ -66,10 +66,23 @@ def environment_report(root):
         "yt_dlp": dependency(
             "yt_dlp", "Retrieve video metadata, captions, and media.", evidence_remedy
         ),
+        "opencc": dependency(
+            "opencc",
+            "Normalize Bilibili search keywords to Simplified Chinese.",
+            "Use setup in the Node launcher, or uv sync --locked in the source folder.",
+        ),
         "PIL": dependency(
             "PIL", "Prepare frames for video assessment.", evidence_remedy
         ),
     }
+    if required["uv"]["path"]:
+        try:
+            version = executable_version(required["uv"]["path"], "--version")
+            if not version.startswith("uv "):
+                raise ValueError("The executable did not report a UV version.")
+            required["uv"]["version"] = version
+        except (OSError, ValueError, subprocess.SubprocessError):
+            required["uv"]["status"] = "unusable"
     if required["node"]["path"]:
         try:
             version = executable_version(required["node"]["path"], "--version")

@@ -23,7 +23,7 @@ from broader_vids.creators import excluded as excluded_creator
 
 
 class Runtime:
-    def __init__(self, preparations=2, models=4):
+    def __init__(self, preparations=4, models=4):
         if (
             type(preparations) is not int
             or type(models) is not int
@@ -33,7 +33,20 @@ class Runtime:
             raise ValueError("Shared worker limits must be positive integers.")
         self.preparations = threading.BoundedSemaphore(preparations)
         self.models = threading.BoundedSemaphore(models)
+        self.platform_preparations = {
+            platform: threading.BoundedSemaphore(min(2, preparations))
+            for platform in ("youtube", "bilibili")
+        }
+        self.preparation_stops = {
+            platform: threading.Event() for platform in ("youtube", "bilibili")
+        }
         self.cancelled = threading.Event()
+
+    @contextmanager
+    def preparation_slot(self, platform, remaining, cancelled):
+        with self.slot(self.platform_preparations[platform], remaining, cancelled):
+            with self.slot(self.preparations, remaining, cancelled):
+                yield
 
     @contextmanager
     def slot(self, semaphore, remaining, cancelled):
@@ -128,18 +141,31 @@ def _process_owned(
         record_preparation_receipt(
             store, identifier, work["preparation_token"], current_bytes
         )
-        queued = time.monotonic()
-        stage("queued_preparation")
-        with runtime.slot(runtime.preparations, remaining, cancelled):
-            timing("preparation_queue_seconds", queued)
-            if store.get(identifier)["state"]["phase"] in {"prepared", "completed"}:
-                prepared = prepare_evidence(
-                    store,
-                    identifier,
-                    max_seconds=max(0.01, remaining()),
-                    lease_owner=owner,
-                )
-            else:
+        saved = store.get(identifier)
+        if saved["state"]["phase"] in {"prepared", "completed"}:
+            prepared = prepare_evidence(
+                store,
+                identifier,
+                max_seconds=max(0.01, remaining()),
+                lease_owner=owner,
+            )
+        else:
+            platform = saved["platform"]
+
+            class PreparationCancellation:
+                def is_set(self):
+                    return (
+                        cancellation.is_set()
+                        or runtime.preparation_stops[platform].is_set()
+                    )
+
+            preparation_cancellation = PreparationCancellation()
+            queued = time.monotonic()
+            stage("queued_preparation")
+            with runtime.preparation_slot(
+                platform, remaining, preparation_cancellation
+            ):
+                timing("preparation_queue_seconds", queued)
                 path = "$.preparation_usage." + json.dumps(work["preparation_token"])
                 with store.db:
                     store.db.execute(
@@ -153,7 +179,7 @@ def _process_owned(
                     max(0.01, min(work["seconds"], remaining())),
                     work["bytes"],
                     cookie_jar,
-                    cancellation,
+                    preparation_cancellation,
                     attempt_token=work["preparation_token"],
                     lease_owner=owner,
                 )
@@ -174,11 +200,26 @@ def _process_owned(
                     cancel_event=cancellation,
                     lease_owner=owner,
                     work_token=work["preparation_token"],
+                    usage_owner=work.get("recommendation_run"),
                 )
         observation = cached_quality(store, identifier)
         if observation:
             return observation
         failed = store.get(identifier)
+        if "augmented" in failed["state"]["assessments"]:
+            reason = "The supplied evidence does not support a numeric quality score."
+            return {
+                "status": "unavailable",
+                "evidence_run": identifier,
+                "reason": reason,
+                "failure": {
+                    "stage": "assessment",
+                    "scope": "candidate",
+                    "category": "insufficient_evidence",
+                    "reason": reason,
+                    "retryable": False,
+                },
+            }
         failure = failed["state"].get("failure") or failure_details(
             EvidencePending(
                 failed["reason"],
@@ -326,11 +367,12 @@ def assess_parallel(
                 "reason": "excluded_creator",
             }
             continue
-        if provenance(item)["excluded"]:
+        original = provenance(item, settings["profile"])
+        if original["excluded"]:
             state["evidence"][key] = {
                 "status": "unavailable",
-                "reason": "excluded_translation_tag",
-                "originality_evidence": provenance(item),
+                "reason": original["reason"],
+                "originality_evidence": original,
             }
             continue
         if state["evidence"].get(key, {}).get("status") == "unavailable":
@@ -480,6 +522,7 @@ def assess_parallel(
                     queue.pop(0)
                     work = {
                         "accounting_version": 2,
+                        "recommendation_run": run["id"],
                         "model_reservation": model_reservation,
                         "canonical_id": key,
                         "evidence_run": identifier,
@@ -540,12 +583,22 @@ def assess_parallel(
                             **failure,
                         }
                         state.setdefault("issues", []).append(issue)
-                        if failure["category"] != "cancelled":
+                        if failure["category"] not in {
+                            "cancelled",
+                            "insufficient_evidence",
+                        }:
                             state.setdefault("first_failure", issue)
                         if observation.get("status") == "pending":
                             if failure["scope"] != "candidate":
                                 stop_reason = stop_reason or failure["reason"]
-                                cancelled.set()
+                                if (
+                                    failure["stage"] == "captions"
+                                    and failure["category"] == "access"
+                                    and failure["scope"] == "platform"
+                                ):
+                                    runtime.preparation_stops[run["platform"]].set()
+                                else:
+                                    cancelled.set()
                                 if failure["scope"] == "run":
                                     runtime.cancelled.set()
                             elif (

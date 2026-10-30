@@ -37,6 +37,14 @@ export function scoreDetails(item, weights) {
     '<p class="note">Scores belong to this recommendation round. New feedback affects later rounds.</p><h4 class="score-heading">Final score / 100</h4><table><thead><tr><th>Component</th><th>Score / 100</th><th>Weight</th><th>Points</th></tr></thead><tbody>' +
     rows +
     "</tbody></table>";
+  if (item.selection_diversity) {
+    html +=
+      '<p class="note">Topic diversity: ' +
+      (item.selection_diversity.relaxed
+        ? "A repeat was needed to fill this list from the available assessed videos."
+        : "No detected overlap with earlier picks in this list.") +
+      "</p>";
+  }
   if (item.learning) {
     const learning = item.learning;
     html +=

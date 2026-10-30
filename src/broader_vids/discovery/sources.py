@@ -8,6 +8,7 @@ from broader_vids.http import AccessPaused
 from broader_vids.identity import BVID, YOUTUBE_ID
 from broader_vids.parsing import embedded_json, walk
 from broader_vids.discovery.state import pinia_state
+from broader_vids.discovery.languages import search_query
 
 
 CHANNEL_ID = re.compile(r"UC[A-Za-z0-9_-]{22}\Z")
@@ -149,6 +150,7 @@ class YouTubeDiscovery:
         return match.group(1)
 
     def search(self, query, version, continuation=None):
+        query = search_query("youtube", query)
         payload = {
             "context": {
                 "client": {"clientName": "WEB", "clientVersion": version, "hl": "en"}
@@ -384,6 +386,9 @@ class BilibiliDiscovery:
         return bilibili_cards(self.http.get("https://www.bilibili.com/zh-Hans")), None
 
     def search(self, query, page=1, order="totalrank"):
+        return self._search(search_query("bilibili", query), page, order)
+
+    def _search(self, query, page, order):
         url = "https://search.bilibili.com/zh-Hans/all?" + urlencode(
             {"keyword": query, "page": page, "order": order}
         )
@@ -394,5 +399,5 @@ class BilibiliDiscovery:
             raise ValueError(
                 "Creator-filtered Bilibili search requires an observed public creator ID and name."
             )
-        items, next_page = self.search(name, page, "click")
+        items, next_page = self._search(name, page, "click")
         return [i for i in items if i["creator_id"] == str(identifier)], next_page

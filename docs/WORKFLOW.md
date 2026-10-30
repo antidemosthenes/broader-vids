@@ -4,7 +4,41 @@ Broader Vids finds videos, checks their content, and learns from explicit feedba
 This document explains the user workflow.
 See the [terminal reference](REFERENCE.md) for commands.
 
-## 1. Set your interests
+## 1. Complete setup and check readiness
+
+First-time setup introduces chat recommendations and the local dashboard.
+Choose YouTube, Bilibili, or both as your default.
+Import saved preferences or enter your interests.
+Required tools and selected platform access must pass before setup completes.
+Transcription and ffprobe remain optional.
+Each later round checks readiness without repeating setup.
+Bilibili rounds check the saved browser session.
+Required failures block new work and provide repair instructions.
+Blacklist-sync failures retain the existing saved-copy policy.
+
+After the final self-check, setup shows requests and skill commands for Recommendations, Dashboard, Reset, and Clean.
+The Preferences page combines broader interests with import and export for learned preferences.
+Open Preferences to edit the current broader interests shared by YouTube and Bilibili.
+The editor shows saved interests before you choose any import file.
+Interest changes preserve calibration and history.
+Finish active recommendation work before saving, then start a new round.
+Reset keeps tools and Bilibili sign-in while removing learned data and histories.
+Clean removes the complete managed data directory while keeping the plugin installed.
+Both destructive actions start with a preview and require an explicit request before application.
+
+Before a new round, the engine counts incomplete feedback across earlier recommendations for the requested platforms.
+It counts each canonical video once and excludes dismissed videos and calibration-only examples.
+Any blank topic, subject, depth, or quality rating makes a video incomplete.
+Watched status does not change this count.
+The report separates unrated videos from partially rated videos.
+Choose **Open dashboard and stop** or **Continue this round**.
+The dashboard choice ends the request until you invoke recommendations again.
+Continuing leaves blank ratings unchanged and permits only this new round.
+Resumed rounds check readiness without repeating the feedback prompt.
+Automated preflight time consumes the same thirty-minute run allowance.
+Manual setup, user decisions, and repairs occur outside that allowance.
+
+### Set your interests
 
 Choose broad subjects that you enjoy.
 Examples include mathematics, physics, travel, food, games, and music.
@@ -28,7 +62,14 @@ The hierarchy describes search coverage.
 It does not prove that you like every child topic.
 
 Each new discovery round targets twelve existing topics and five proposed topics.
+The AI provides paired search keywords for each selected concept: English for YouTube and Simplified Chinese for Bilibili.
+The language rule changes the search text, not the interest labels, hierarchy levels, or topic-selection process.
+The engine converts Traditional Chinese keywords to Simplified Chinese and rejects incompatible scripts before a keyword search.
+Creator lookups keep the observed creator name. They do not translate it.
 Weighted random selection favors familiar topics and topics with less search history.
+Removed onboarding interests and their unrelated child branches leave automatic selection.
+Their map records remain available if you add the interest again.
+Query planning favors different concrete subtopics from recent searches and includes content beyond theory and tutorials.
 The model proposes new subjects or narrower branches when useful.
 The engine checks search results before it activates a proposed topic.
 A small initial hierarchy can produce fewer than twelve existing topics.
@@ -63,25 +104,41 @@ Continuing an older round retains its saved screening policy, including any rese
 
 ```mermaid
 flowchart TD
-  A["Save round rules and model settings"] --> B["Discover videos and include pending candidates"]
-  B --> C{"Candidate available within collection limits?"}
-  C -- No --> P["Pause and preserve progress"]
-  C -- Yes --> D{"Known exclusion or invalid listing duration?"}
-  D -- "Yes: discard candidate" --> C
+  S["Recommendation request"] --> T{"Onboarding complete?"}
+  T -- No --> U["Introduce features; choose platforms; import preferences or enter interests"]
+  U --> V["Install required tools and check selected platform access"]
+  V -- "Failure: repair and retry" --> V
+  V --> W["Record setup completion"]
+  T -- Yes --> X["Bounded readiness check for requested platforms"]
+  W --> X
+  X -- "Required failure" --> Z["Report repair steps; start no recommendation work"]
+  X -- Passed --> Y{"Prior recommendations have any blank rating fields?"}
+  Y -- "Yes: offer a choice" --> AA{"User choice"}
+  AA -- "Open dashboard and stop" --> AB["Open feedback dashboard; await a new recommendation request"]
+  AA -- "Continue this round" --> A["Save round rules and model settings; charge automated preflight time"]
+  Y -- No --> A
+  A --> B["Discover videos and include pending candidates"]
+  B --> C["Start or resume a batch of up to 100 unseen candidates; allocate by remaining group deficits"]
+  C --> Q["Use saved candidates; fetch same-group search continuations when needed"]
+  Q -- "No candidates or exhausted allowance" --> P["Pause and preserve progress"]
+  Q --> D{"Known exclusion or invalid listing duration?"}
+  D -- "Yes: discard candidate" --> R{"Batch scan finished?"}
   D -- No --> E["Read fresh cached metadata or retrieve metadata"]
-  E -- "Access or schema failure" --> P
+  E -- "Access, schema, or allowance failure" --> P
   E --> F{"Resolved duration and raw counts pass admission bounds?"}
-  F -- "No: discard candidate" --> C
-  F -- Yes --> G["Add unique video to eligible buffer"]
-  G --> H{"100 eligible videos collected?"}
-  H -- No --> C
-  H -- Yes --> I["Order by 70% community response and 30% query-anchor support"]
-  I --> J["Keep the top 50 for inspection without a content quality check"]
+  F -- "No: discard candidate" --> R
+  F -- Yes --> G["Keep unique eligible batch survivor"]
+  G --> R
+  R -- No --> D
+  R -- Yes --> H["Order batch survivors by 70% community response and 30% query-anchor support; fill each group's missing slots"]
+  H --> I{"Eligible pool contains 71 familiar and 29 exploratory videos?"}
+  I -- No --> C
+  I -- Yes --> J["Order eligible videos by screening score; select 35 with the fewest prior slots per search query; no content quality AI"]
   J --> K["Reuse valid quality evidence or prepare captions and frames for AI assessment"]
   K -- "Access challenge or exhausted run allowance" --> P
   K -- "Candidate failure: continue other inspections" --> K
   K --> L["Recheck duration and exclusions and require assessed quality of at least 60"]
-  L --> M["Rank by the full score using calibrated preferences and creator diversity"]
+  L --> M["Prefer distinct narrow topics and search queries; rank eligible choices by the calibrated full score"]
   M --> N["Publish up to 10 recommendations for this platform"]
   P --> O["Show a provisional preview when eligible assessments exist"]
 ```
@@ -92,18 +149,56 @@ It rejects a known short video before a detailed metadata request.
 Bilibili listings with ambiguous duration require resolution of the selected part first.
 Duplicate videos do not increase the eligible count.
 When the candidate pool ends, collection tries saved search continuations within the remaining limits.
-Metadata retrieval allows two concurrent requests with separate database connections.
-Request starts remain at least one second apart and share the platform's request allowance.
+Metadata workers retain server-issued cookies across requests within a collection attempt.
+YouTube search refills reuse that visitor session and its request gate.
+Bilibili discovery refills use a separate anonymous session. They do not receive authenticated metadata cookies.
+YouTube metadata uses one active watch-page request and spaces starts by at least one second.
+Bilibili permits two concurrent metadata requests and spaces starts by at least one second.
+Workers use separate database connections and a shared request gate.
+Pacing waits consume the existing time allowance and cannot extend its deadline.
+Worker cookies do not appear in reports or model inputs.
+An incomplete YouTube player response can receive one retry through the same request path.
+Both attempts consume the existing time and request allowances.
+Identity mismatches and explicit sign-in or access denials pause the route without an automatic retry.
+A YouTube sign-in pause includes the video link and manual access-review instructions.
+Normal browser sign-in is not imported automatically.
+A larger request cap does not resolve a verification challenge.
+A failed validation records the requested video ID, returned video ID, and available player status with its request receipt.
 
-The engine selects the global top fifty from those 100 using community response and query relevance.
+The collector scans batches of up to 100 unique candidates.
+It targets 71 familiar and 29 exploratory eligible videos, which rounds the 12:5 split to 100 slots.
+A familiar retrieval origin names a saved broader interest and does not mark the topic as new.
+New topics, anonymous Home results without a familiar origin, and unclassified sources count as exploratory.
+A video with a qualifying familiar origin counts once in the familiar group.
+These source labels do not establish a preference or prove the video's topic.
+Each completed batch contributes its highest screening scores only to missing slots in the corresponding group.
+Later batches allocate more raw candidates to the group with the larger deficit.
+Rejected exploratory candidates cannot create extra familiar slots.
+Use existing discovered candidates before requesting more pages.
+When a group lacks candidates, continue its saved search queries.
+Repeated pages or continuation cursors stop that query instead of repeating its videos.
+A source-exhausted batch can contain fewer than 100 raw candidates.
+An unfinished batch keeps its index and eligible survivors for continuation.
+The collector keeps a bounded summary for completed batches.
+It releases their active batch data.
+Older checkpoints without this collection policy keep their saved sequential collection behavior.
+
+Screening policy 4 selects thirty-five videos from the eligible pool while balancing search-query coverage.
+At each slot, the engine favors queries with fewer selected videos, then the higher metadata screening score.
+All retrieval origins count when a video appears under several queries.
+When only a few queries supply candidates, repeat queries fill the remaining inspection slots.
 The engine calls no content quality model during this screening.
 Topic planning can use AI earlier, during discovery.
 Equal screening scores use canonical video IDs as the tie-breaker.
-Pending recommendations compete using the same rules without guaranteed slots or topic quotas.
+Pending recommendations compete using the same screening rules without guaranteed slots.
 Collection continues through saved search continuations within request and time allowances and a 4,000-candidate safety limit.
-If fewer than 100 pass before a limit or source exhaustion, the run remains incomplete and quality assessment does not start.
+If either eligible group remains short at a limit or source exhaustion, the run remains incomplete and quality assessment does not start.
+The default metadata allowance is 320 requests per platform, including blacklist sync and search refills.
+This is a request cap, not a candidate count or a guarantee of 100 accepted videos.
+An explicit continuation can increase the saved request cap up to 1,000.
+It preserves prior request use, elapsed time, rules, model settings, completed results, and collection progress.
 
-The exact Bilibili tag `视频翻译` excludes a video during admission and final selection.
+By default, the exact Bilibili tag `视频翻译` excludes a video during admission and final selection.
 Other translation disclosures inform the later originality assessment.
 A missing or inaccessible response does not count as a poor-quality video.
 
@@ -112,9 +207,17 @@ A candidate failure does not cancel unrelated inspections.
 Validation failures can receive one repair attempt within the saved call and image allowances.
 Access challenges pause the affected platform.
 Missing model authentication or provider limits stop shared model work.
+Final selection first favors candidates that avoid overlap with earlier picks in the same platform list.
+Overlap uses shared search queries, matching primary content topics, and secondary-school course markers.
+Broad subjects alone do not create overlap.
+If no remaining candidate avoids overlap, the engine chooses the least overlapping candidate, then the highest score.
+Score details identify these relaxed selections.
+This rule adds no model calls and changes no learned score weights.
+Older rounds retain their saved screening and selection policy.
 Normal publication follows the assessment stage and can contain fewer than ten eligible videos.
 Publishing an assessed subset before that stage finishes requires an explicit request for provisional publication.
-Paused rounds show a provisional preview when verified assessments exist.
+Paused rounds show a provisional preview in chat and the dashboard when verified assessments exist.
+The dashboard labels this list and accepts feedback with its saved assessment context.
 The preview adds no recommendation history or pending entries.
 
 ## 4. Check content quality
@@ -124,11 +227,16 @@ It excludes durations of sixty seconds or less and above ninety minutes, includi
 Longer videos receive a small initial benefit up to one hour.
 The benefit does not increase after one hour.
 
-The engine prefers native captions.
+The engine prefers original caption tracks.
+For YouTube, it requests original English or Chinese tracks before other original languages.
+It skips automatic translation endpoints, which can return HTTP 429 even when original captions work.
+The AI can assess original captions in other languages.
 Optional local transcription supplies text when captions are unavailable.
 If no usable transcript exists, the video still receives a visual assessment using frames and readable burned-in text, with a separate ten-point quality deduction.
 Unsupported speech, sound and continuity properties remain unknown.
-Caption access challenges pause the affected platform instead of triggering visual fallback.
+Caption access challenges pause acquisition for the affected platform instead of triggering visual fallback.
+Prepared assessments finish before the engine saves this pause.
+A continuation retains completed assessments and remaining allowances.
 The initial assessment uses available captions and up to four distinct selected frames.
 The model assesses substance, directness, original contribution, and useful visuals using captions together with frames.
 The model does not assess audio quality.
@@ -206,6 +314,8 @@ The exclusion panel lists creators and tags separately for each platform.
 Use its Add tag form to exclude an exact metadata tag on that platform.
 It identifies manual rules, imported Bilibili bans, and built-in rules.
 Remove manual rules there when needed.
+The built-in 视频翻译 tag has a Remove button. Add the tag again to restore that exclusion.
+Tag removals remain saved after a restart or preference import.
 Unblock imported creators on Bilibili, then sync the blacklist.
 
 Bilibili sign-in and each new Bilibili round attempt a complete blacklist sync.
@@ -244,7 +354,10 @@ The local computer and desktop app must run for that schedule to execute.
 
 ## 9. Transfer learned preferences
 
-Open **Import/Export** in the dashboard.
+Open **Preferences** in the dashboard.
+Broader interests and import/export share one page.
+After import, edit the imported interests in place and select Save if needed.
+Save interest edits before exporting.
 Export saves your interests, learned weights, and parameter uncertainty.
 Import previews a compatible file before replacing those parameters.
 Broader Vids saves the earlier parameters in a local recovery file first.
@@ -255,3 +368,14 @@ Imported parameters supply the starting distribution for future learning.
 New and edited ratings update that distribution.
 Pre-import local ratings remain visible but do not train the model again.
 See the [terminal reference](REFERENCE.md#export-or-import-learned-preferences) for commands and recovery steps.
+
+## Inspect token usage
+
+Open Token usage in the dashboard and select a recommendation round.
+The report is available during a run and after completion, pause, or failure.
+It separates topic exploration, search and screening, evidence preparation, quality assessment, and final scoring.
+Stage percentages use reported input plus output tokens.
+Cached input is part of input and is not added again.
+Local steps show no model tokens.
+Failed or interrupted attempts without measurements remain unreported.
+The report does not include the host chat or estimate subscription quota.

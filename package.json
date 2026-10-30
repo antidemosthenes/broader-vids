@@ -12,6 +12,7 @@
   "files": [
     "bin/",
     "python/broader_vids-0.1.0a17-*.whl",
+    "python/core-requirements.txt",
     "python/evidence-requirements.txt",
     "python/asr-requirements.txt",
     "skills/",
@@ -24,7 +25,7 @@
     "docs/REFERENCE.md"
   ],
   "scripts": {
-    "test": "node --test tests/launcher.test.cjs",
+    "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs",
     "check:web": "prettier --check src/broader_vids/web/static"
   },
   "devDependencies": {

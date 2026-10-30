@@ -3,6 +3,11 @@
 Broader Vids has one Python engine.
 The terminal, Codex skill, and local dashboard use that engine.
 The Node launcher installs and starts the engine.
+A per-profile gate coordinates launcher commands and installation.
+Ordinary commands can run together, but setup requires exclusive runtime access.
+Active engine operations and dashboard servers also block installation.
+Normal completion and command failures release their runtime leases.
+An uncertain lock remains available for explicit recovery.
 It does not implement recommendation logic.
 
 ## Project files
@@ -16,19 +21,27 @@ broader-vids/
     marketplace.json           Local Codex marketplace for the clean build
   bin/
     broader-vids.cjs            Node setup and process launcher
+    runtime-lock.cjs            Shared runtime use and exclusive installation
+    profile-data.cjs            Preview, reset, and complete data removal
   skills/
     broader-vids/               Recommendations and feedback instructions
     broader-vids-setup/         Guided installation and profile selection
     broader-vids-dashboard/     Local dashboard access and shutdown
+    broader-vids-reset/         Fresh profile with tools and sign-in retained
+    broader-vids-clean/         Complete local data removal
   src/broader_vids/
     cli/                       Command arguments and dispatch
     discovery/                 Public searches and creator expansion
     exploration/               Topic hierarchy and query planning
     evidence/                  Captions, frames, transcription, and assessment
+      account_switch.py        Staged sign-in, verified replacement, and recovery
     recommendations/           Screening, ranking, batches, and reports
     learning/                  Feedback models and calibration
     web/                       Local server and browser assets
     data/queries.json          Curated search terms
+    onboarding.py              Atomic platform choice and setup completion
+    preflight.py               Shared readiness and incomplete-feedback checks
+    preflight_checks.py        Bounded tool and authenticated-access probes
     preferences.py             Profile and video actions
     creators.py                Creator rules and immutable round snapshots
     blacklist.py               Authenticated Bilibili blacklist import
@@ -42,11 +55,14 @@ broader-vids/
     storage.py                Database, migrations, and exclusive locks
     readiness.py               Development readiness checks
     maintenance.py            Evidence cleanup
+    token_usage.py             Durable model-attempt receipts and stage reports
   python/
+    core-requirements.txt       Locked keyword-conversion dependency
     evidence-requirements.txt   Locked media and browser dependencies
     asr-requirements.txt        Locked transcription dependencies
     *.whl                      Generated engine package, excluded from Git
   scripts/
+    test.py                    Isolated parallel regression runner
     verify_package.py          Distribution checks
     build_plugin.py            Clean marketplace payload and plugin ZIP
   tests/                       Automated tests
@@ -69,10 +85,15 @@ Public documents do not link to it.
 
 ```mermaid
 flowchart LR
-  A[Codex skill or terminal] --> B[Topic planning and discovery]
+  A[Codex skill or terminal] --> S[Guided setup when incomplete]
+  S --> T[Shared readiness and feedback checks]
+  T -- Required failure --> U[Repair instructions without recommendation work]
+  T -- Feedback needed --> V[Dashboard and stop or explicit continuation]
+  T -- Ready --> B[Topic planning and discovery]
+  V -- Continue this round --> B
   B --> C[Collect 100 videos passing hard metadata floors]
   P[Pending recommendations] --> C
-  C --> D[50 inspection candidates per platform]
+  C --> D[35 inspection candidates per platform]
   D --> E[Captions and selected frames]
   E --> F[Quality and full ranking]
   F --> G[10 recommendations per platform]
@@ -89,13 +110,23 @@ The skill directs the host to call the engine.
 `worker_context.py` resolves the invoking thread's model and reasoning effort from local turn metadata.
 New runs save that pair and pass it to planning and assessment CLI workers.
 `recommendations/collection.py` continues candidate collection until 100 pass `screening.py` duration and raw engagement floors, or a saved limit stops collection.
-The global top fifty metadata scores receive content assessment.
-The final ten use the full ranking score.
+Screening policy 4 balances search-query coverage across thirty-five content-assessment slots.
+Final selection favors distinct narrow topics and queries before it compares full scores.
+`recommendations/diversity.py` implements these deterministic selection rules.
+An insufficient range of assessed topics permits repeats and records the relaxation in each affected selection.
+Older rounds retain their saved policy, including policy 3 global metadata ranking.
 Refill records retain query origins and anchors even when the discovery cache reaches its separate limit.
 `recommendations/legacy.py` preserves screening rules for rounds created before screening policy 3.
 Those rounds retain guaranteed pending slots, creator caps, and topic quotas.
 Their discovery and final ranking also use the saved policy version.
 It does not replace engine checks with model instructions.
+
+The recommendation collector uses `collection_policy.py` for retrieval groups and saved targets.
+`collection_batches.py` scans bounded batches, fills group deficits, and preserves unfinished batch progress.
+`collection.py` supplies targeted search continuations and retains the older sequential collector for saved checkpoints.
+`budgets.py` defines request defaults and applies explicit request-cap increases under run and platform locks.
+Request-cap changes update settings and add an audit event in one transaction.
+They do not rewrite saved recommendation state or reset resource use.
 
 ## Dashboard files and state
 
@@ -109,6 +140,8 @@ The dashboard uses native form controls and dialogs.
 | `dashboard.js` | Navigation, refresh coordination, and user actions |
 | `state.js` | Server records, selections, scroll positions, and local drafts |
 | `api.js` | Local requests, action tokens, and response errors |
+| `token-usage.js` | Saved-round token reports and scoped dialog refresh |
+| `bilibili-account.js` | Account-switch controls, scoped status polling, and cancellation |
 | `views.js` | Compact video rows and exclusion management |
 | `review.js` | Four independent rating groups and the creator checkbox |
 | `score.js`, `ui.js` | Technical score presentation and shared controls |
@@ -118,28 +151,54 @@ The desktop list and review panel scroll independently.
 Narrow windows use a review dialog with Back navigation.
 Score details use a separate desktop dialog or a secondary mobile view.
 
+The dashboard uses one system font and shared text-size variables.
+Page titles, section titles, headings, body text, controls, captions, and small metadata each have a defined size.
+Buttons, action links, navigation, and form controls share the control size.
+Compact buttons reduce padding without reducing their text size.
+The Bilibili panel places its external management link in the header and groups local actions below the account fields.
+An idle account switch has no explanatory status text.
+Local GET requests have a thirty-second limit, and writes have a ninety-second limit.
+Account polling permits one status read at a time and skips unchanged interface updates.
+A failed account-switch state remains readable so its controls can recover.
+HTTP failures and failed writes still display errors.
+
 Saved records remain separate from drafts.
 Video identity joins feedback across recommendations and calibration.
 Each successful action updates its affected records.
 Refresh requests carry a read version and a mutation generation.
+Only one refresh group runs at a time.
+A refresh requested during an active read waits until that read finishes.
+Old video records stay in browser memory only while the server returns them, an earlier list uses them, or they have an unsaved rating draft.
 The interface rejects responses from before a newer mutation.
 It pauses background refresh while the tab is hidden or a write is active.
 Refresh preserves active controls and pane positions.
 Drafts survive navigation within the tab, but they require Save before the page closes.
 
+The engine stores token usage as versioned `token_usage` events in the existing database.
+Each attempt has one call ID. Later events update that attempt's known status and usage.
+The report reads the last event for each call ID.
+Parallel workers record the owning recommendation ID and the source evidence ID.
+New rounds use exact owner receipts. Historical rounds use saved checkpoint usage where available.
+A derived database index supports report queries without a schema-version change.
+The ledger stores counters and identifiers, without copying prompts, frames, transcripts, or credentials.
+Reports do not depend on recommendation publication or media files.
+A missing measurement remains unknown after interruption.
+Reset and Clean remove usage with recommendation history.
+Preference import and export do not transfer usage history.
+
 ## Module responsibilities
 
 | Area | Main files | Responsibility |
 | --- | --- | --- |
-| Discovery | `queries.py`, `sources.py`, `state.py`, `service.py` | Build searches, parse results, and retain discovery progress |
+| Discovery | `queries.py`, `languages.py`, `sources.py`, `state.py`, `service.py` | Build searches, check keyword scripts, parse results, and retain discovery progress |
 | Exploration | `domains.py`, `proposals.py`, `planning.py` | Select existing topics and assess proposed topics |
-| Evidence | `service.py`, `media.py`, `browser.py` | Resolve playable videos and collect bounded evidence |
+| Evidence | `service.py`, `media.py`, `captions.py`, `browser.py` | Resolve playable videos and collect bounded evidence |
 | Evidence workers | `preparation_worker.py`, `asr_worker.py` | Separate media preparation and optional transcription processes |
-| Assessment | `assessment.py`, `reports.py`, `retention.py` | Check model output, report evidence limits, and remove completed media |
+| Assessment | `assessment.py`, `worker_instructions.txt`, `reports.py`, `retention.py` | Check model output, report evidence limits, and remove completed media |
 | Recommendations | `service.py`, `batch.py`, `parallel.py`, `timing.py` | Coordinate platform jobs, worker limits, and recovery |
-| Ranking | `engagement.py`, `metadata.py`, `originality.py`, `quality.py`, `ranking.py` | Screen candidates and select the final list |
+| Ranking | `engagement.py`, `metadata.py`, `originality.py`, `quality.py`, `ranking.py`, `diversity.py` | Screen candidates and select the final list |
 | Learning | `features.py`, `inference.py`, `scoped.py`, `depth.py`, `service.py` | Capture predictors, fit models, and calculate predictions |
-| Preference transfer | `learning/transfer.py`, `learning/posterior.py`, `learning/baseline.py`, `web/static/transfer.js` | Transfer learned parameters without video records |
+| Preference transfer | `learning/transfer.py`, `learning/posterior.py`, `learning/baseline.py`, `web/static/preferences.js` | Transfer learned parameters without video records |
 | Feedback | `feedback.py`, `calibration.py`, `evaluation.py`, `evidence.py`, `annotations.py`, `migration.py` | Store judgments, reserve test videos, and record evidence corrections |
 
 File names in this table are relative to their area under `src/broader_vids/`.
@@ -152,6 +211,8 @@ See [data directory selection](REFERENCE.md#choose-a-data-directory).
 
 | Stored data | Purpose |
 | --- | --- |
+| `.broader-vids-profile.json` | Profile ownership marker for safe lifecycle operations |
+| `onboarding.json` | Versioned default platform and setup completion, separate from learned parameters |
 | `broader-vids.sqlite3` | Jobs, request records, profile, video state, feedback, models, and calibration |
 | `evidence/` | Captions, frames, scorecards, retained hashes, and unfinished media |
 | `recommendations/` | Local Markdown digests and JSON reports |
@@ -159,6 +220,22 @@ See [data directory selection](REFERENCE.md#choose-a-data-directory).
 | `runs/` | Discovery reports and request traces |
 | `access/bilibili/profile/` | Separate browser profile for Bilibili sign-in |
 | `runtimes/`, `wheels/` | External engine environments and cached wheels for the Node launcher |
+
+Onboarding uses an atomic versioned file protected by a separate configuration lease.
+It does not change SQLite schema 12 or the learning revision.
+Preference transfer excludes this file.
+Preflight counts unique recommendation exposures against current structured ratings.
+Cleared fields count as incomplete again.
+Its isolated subprocess checks have a deadline and owned process cleanup.
+Bilibili checks use the existing browser profile without reading cookies into model inputs.
+Account switching stages a fresh profile under `access/bilibili/switches/`.
+A bounded worker owns the browser, blacklist, and Bilibili recommendation leases.
+The dashboard polls its status without blocking navigation or rating drafts.
+After verification, a file journal and database receipt coordinate session activation.
+Recovery restores the previous files before a database commit or removes the old session after a commit.
+Completed and cancelled workers remove their temporary profiles and staged blacklist database.
+Failed cleanup retains the journal and blocks browser use until recovery succeeds.
+New and resumed recommendation commands charge automated checks to their existing time allowance.
 
 SQLite schema 12 stores current structured ratings and action records.
 Migration replaces retired binary records with mapped ratings.
@@ -181,7 +258,14 @@ A completed `preference_import` job stores the imported parameter baseline and l
 Fitting combines that baseline with active ratings saved after the cutoff.
 Historical ratings remain available to the dashboard.
 Import holds both platform locks and the learning lock.
+Import prepares the restored model before the write transaction.
 A short transaction checks the preview revision and commits the replacement atomically.
+Concurrent feedback remains available and prevents a stale import from committing.
+Export reuses an exact cached model when available.
+Input validation runs once per terminal or HTTP request.
+Failed imports remove unused recovery files.
+Import also removes obsolete model caches while preserving models referenced by recommendations or frozen evaluations.
+An uncertain commit retains its recovery file.
 Parameter-only recovery files reside in `backups/`.
 The dashboard uses authenticated local POST operations for export, preview, and import.
 The transfer dialog preserves rating drafts and blocks stale polling responses during an operation.
@@ -190,31 +274,57 @@ Database upgrades create a backup before they change an older schema.
 Evidence corrections add derived records.
 They do not overwrite original scorecards or user ratings.
 
+The Preferences page uses `preferences.js` to coordinate `/api/interests` and the preference-transfer endpoints.
+One controller serializes interest saves and file operations.
+A successful import returns the saved profile and updates the editor without another page.
+`tag_rules.py` combines manual tag exclusions with removable built-in defaults.
+The profile stores disabled built-in tags separately from manual tags.
+Preference imports preserve these local exclusion choices.
+Tag saves update rules without fitting a learning model.
+The dashboard serializes tag writes per platform and rejects older tag snapshots.
+An interest save preserves a draft when only exclusion metadata changed.
+Profile revisions prevent one window from replacing a newer interest edit.
+Interest writes hold both platform locks and preserve learned parameters and historical video data.
+
 ## Concurrency and recovery
 
 One batch coordinates both platforms.
 The batch shares its time limit and worker limits.
-It allows two preparation workers and up to four model workers.
+It allows four preparation workers in total, with at most two per platform.
+It allows up to four model workers.
+Prepared evidence bypasses the preparation queue.
 Preparation allows up to five minutes after its worker slot becomes available.
 Assessment allows up to three minutes after its model slot becomes available.
 Queue waits remain inside the parent time allowance.
 They do not consume those separate stage allowances.
-Metadata workers use separate database connections and a shared request gate.
+Metadata workers use separate database connections, a shared cookie jar, and a shared request gate.
+YouTube serializes metadata retrieval so each response can update the visitor session before the next request.
+Bilibili retains two concurrent metadata workers.
+Metadata request starts use a one-second interval.
+Pacing waits remain inside the saved deadline.
+Access failures cancel queued retrieval before another YouTube collector starts.
 The gate preserves request pacing and prevents concurrent reservation of the last request slot.
 Platform locks prevent conflicting recommendation jobs.
 Short database transactions protect user actions and final result writes.
+Dashboard lookup checks recommendation rounds from newest to oldest and stops at the first usable list.
+Feedback resolves the displayed video evidence before it acquires its database write transaction.
+Earlier pending videos retain their saved topic and depth context.
 
 The engine checks profile, feedback, and queue changes before it saves a final recommendation list.
 A conflicting change requires another ranking calculation.
 An interrupted job retains its candidate position and remaining allowances.
 Continuation does not reset those allowances.
+New rounds save an inspection limit of 35 videos per platform.
+Older rounds retain their saved limit, or 50 when no limit field exists.
 
 Each worker belongs to an owned process group.
 Windows uses a Job Object to stop the worker's child processes.
 Cancellation checks prevent new work after the deadline.
 The engine retains unfinished work when access or assessment fails.
 Candidate failures remain local to that candidate.
-Platform access challenges and shared model failures stop the applicable workers.
+Caption access challenges stop acquisition for the affected platform.
+Already prepared assessments finish within the shared deadline.
+Other platform access challenges and shared model failures stop the applicable workers.
 Reports preserve the first failure separately from later cancellation messages.
 Preparation checkpoints record transfer progress for interrupted-byte accounting.
 Unknown usage retains an explicit upper bound.
@@ -253,3 +363,20 @@ The intended plugin runs on the user's computer.
 A future desktop schedule will invoke the same engine.
 Package installation will not create a schedule automatically.
 The current project does not provide a hosted dashboard or remote MCP service.
+
+## Profile lifecycle
+
+Reset and Clean use the external Node launcher rather than a Python process inside the removable runtime.
+Both actions preview their scope and require the exact absolute path before application.
+A marker identifies managed profiles. Existing completed profiles also have a metadata-based recognition path.
+The launcher rejects protected roots and root directory links.
+Unknown files block complete removal and survive Reset.
+The exclusive runtime lease blocks concurrent launcher operations.
+Active engine locks, browser sign-in, and dashboard processes block destructive changes.
+Reset stages its managed files before deletion and restores them if staging fails.
+An unfinished reset blocks new database access until recovery completes.
+Clean removes the runtime only after engine processes finish.
+It releases its control lease before removing the empty control directory and profile directory.
+Those final removals are nonrecursive and preserve any concurrently recreated directory.
+Reset retains tools, transcription models, and Bilibili sign-in.
+Neither operation removes a user export outside the selected data directory or changes a remote blacklist.

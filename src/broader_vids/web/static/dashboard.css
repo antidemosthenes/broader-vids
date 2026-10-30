@@ -1,5 +1,12 @@
 :root {
   color-scheme: light dark;
+  --text-title: 1.9rem;
+  --text-section: 1.15rem;
+  --text-heading: 1rem;
+  --text-body: 0.9rem;
+  --text-control: 0.875rem;
+  --text-caption: 0.8rem;
+  --text-micro: 0.7rem;
   --bg: #f3f2ed;
   --nav: #e9eae4dd;
   --surface: #fcfbf7;
@@ -93,28 +100,28 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 1.9rem;
+  font-size: var(--text-title);
   letter-spacing: -0.045em;
   font-weight: 650;
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
 h2 {
-  font-size: 1.15rem;
+  font-size: var(--text-section);
   letter-spacing: -0.02em;
 }
 h3 {
-  font-size: 1rem;
+  font-size: var(--text-heading);
 }
 .muted,
 .note {
   color: var(--muted);
 }
 .small-text {
-  font-size: 0.78rem;
+  font-size: var(--text-caption);
 }
 .compact {
-  font-size: 0.8rem;
+  font-size: var(--text-caption);
   margin-top: 6px;
 }
 .navigation {
@@ -151,7 +158,7 @@ h3 {
   font-size: 1.1rem;
 }
 .brand-caption {
-  font-size: 0.7rem;
+  font-size: var(--text-micro);
   color: var(--muted);
   letter-spacing: 0.035em;
 }
@@ -166,7 +173,7 @@ h3 {
   border-radius: 9px;
   text-align: left;
   padding: 12px 10px;
-  font-size: 0.84rem;
+  font-size: var(--text-control);
   display: flex;
   gap: 10px;
   align-items: center;
@@ -174,11 +181,12 @@ h3 {
   font-weight: 550;
 }
 .navigation nav button span {
-  font-size: 1.15rem;
+  font-size: var(--text-section);
   width: 18px;
   text-align: center;
 }
-.navigation nav button[aria-current] {
+.navigation nav button[aria-current],
+.navigation-tools button[aria-current] {
   background: var(--selected);
   color: var(--accent);
 }
@@ -208,14 +216,14 @@ main {
   max-width: 100%;
 }
 .eyebrow {
-  font-size: 0.65rem;
+  font-size: var(--text-micro);
   letter-spacing: 0.18em;
   font-weight: 650;
   color: var(--muted);
   margin-bottom: 6px;
 }
 #page-subtitle {
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   margin-top: 8px;
 }
 .platform-switch {
@@ -233,7 +241,7 @@ main {
   background: none;
   border-radius: 7px;
   padding: 8px 18px;
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   font-weight: 600;
   color: var(--muted);
 }
@@ -246,7 +254,7 @@ main {
   display: none;
 }
 .app-status {
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   color: var(--error);
   flex-shrink: 0;
 }
@@ -273,7 +281,7 @@ main {
   padding: 16px 20px;
   gap: 10px;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: var(--text-caption);
   min-height: 58px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -303,7 +311,7 @@ main {
 .row-rank {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: var(--text-micro);
   padding-top: 4px;
 }
 .row-content {
@@ -311,7 +319,7 @@ main {
 }
 .video-title {
   color: var(--text);
-  font-size: 0.94rem;
+  font-size: var(--text-body);
   line-height: 1.45;
   font-weight: 580;
   display: -webkit-box;
@@ -324,7 +332,7 @@ main {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
-  font-size: 0.73rem;
+  font-size: var(--text-caption);
   color: var(--muted);
   margin-top: 6px;
 }
@@ -352,7 +360,7 @@ main {
 }
 .row-score {
   font-variant-numeric: tabular-nums;
-  font-size: 0.8rem;
+  font-size: var(--text-caption);
   color: var(--accent);
   font-weight: 650;
   min-width: 24px;
@@ -367,7 +375,8 @@ main {
   padding: 8px 13px;
   line-height: 1.4;
   font-weight: 550;
-  font-size: 0.87rem;
+  font-size: var(--text-control);
+  font-family: inherit;
   transition:
     background-color 120ms ease,
     box-shadow 120ms ease;
@@ -405,7 +414,6 @@ main {
 }
 .button.small {
   padding: 6px 9px;
-  font-size: 0.75rem;
 }
 .rate-button {
   border-color: var(--line);
@@ -431,7 +439,7 @@ main {
   background: var(--nav);
 }
 .inspector-toolbar {
-  font-size: 0.78rem;
+  font-size: var(--text-caption);
   color: var(--muted);
   min-height: 58px;
 }
@@ -454,11 +462,11 @@ main {
   overflow-wrap: anywhere;
 }
 .review-content > .muted {
-  font-size: 0.8rem;
+  font-size: var(--text-caption);
   margin-top: 6px;
 }
 .review-reason {
-  font-size: 0.82rem;
+  font-size: var(--text-caption);
   color: var(--muted);
   margin: 12px 0 22px;
 }
@@ -476,7 +484,7 @@ main {
   margin: 12px 0 8px;
 }
 .review-placeholder p {
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   max-width: 200px;
   margin: auto;
 }
@@ -491,13 +499,13 @@ main {
 }
 .rating-group legend {
   font-weight: 650;
-  font-size: 0.86rem;
+  font-size: var(--text-control);
   margin-bottom: 10px;
   width: 100%;
 }
 .field-label {
   display: block;
-  font-size: 0.75rem;
+  font-size: var(--text-caption);
   color: var(--muted);
   margin-bottom: 10px;
 }
@@ -509,7 +517,7 @@ main {
   border-radius: 7px;
   padding: 8px 10px;
   background: var(--surface);
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   margin-top: 5px;
   min-width: 0;
 }
@@ -545,7 +553,7 @@ main {
   text-align: center;
   border: 1px solid var(--line);
   border-radius: 7px;
-  font-size: 0.75rem;
+  font-size: var(--text-control);
   transition: background-color 100ms ease;
   background: var(--surface);
 }
@@ -569,7 +577,7 @@ main {
   margin-top: 9px;
 }
 .field-status {
-  font-size: 0.72rem;
+  font-size: var(--text-micro);
   color: var(--muted);
   margin-right: auto;
   overflow-wrap: anywhere;
@@ -588,7 +596,7 @@ main {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  font-size: 0.82rem;
+  font-size: var(--text-caption);
   cursor: pointer;
 }
 .toggle-label input {
@@ -616,7 +624,7 @@ main {
 .empty-state p {
   max-width: 350px;
   margin: auto;
-  font-size: 0.9rem;
+  font-size: var(--text-body);
 }
 .management {
   overflow: auto;
@@ -645,13 +653,13 @@ main {
   margin: 0;
 }
 .connection-fields dt {
-  font-size: 0.75rem;
+  font-size: var(--text-caption);
   color: var(--muted);
   margin-bottom: 5px;
 }
 .connection-fields dd {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: var(--text-body);
 }
 .sync-state {
   font-weight: 600;
@@ -659,17 +667,37 @@ main {
 .sync-state.success {
   color: var(--accent);
 }
+.connection-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 20px;
+}
+.connection-heading .section-title {
+  margin: 0;
+}
+.connection-link {
+  font-size: var(--text-control);
+  font-weight: 550;
+  line-height: 1.4;
+}
 .connection-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 20px;
 }
-.subtle-link {
-  font-size: 0.8rem;
+.connection-actions .button {
+  padding: 8px 12px;
+}
+.connection-panel [role="status"]:empty {
+  display: none;
 }
 .inline-error {
-  font-size: 0.8rem;
+  font-size: var(--text-caption);
   overflow-wrap: anywhere;
 }
 .connection-panel .inline-error:not(:empty) {
@@ -688,7 +716,7 @@ main {
   background: transparent;
   padding: 10px 2px;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--text-control);
 }
 .subtab[aria-selected="true"] {
   color: var(--accent);
@@ -700,7 +728,7 @@ main {
   justify-content: space-between;
   gap: 16px;
   margin: 16px 0;
-  font-size: 0.8rem;
+  font-size: var(--text-caption);
 }
 .search-input {
   max-width: 350px;
@@ -725,11 +753,11 @@ main {
 .tag-form .add-tag-button {
   flex: 0 0 auto;
   padding: 6px 11px;
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   min-height: 32px;
 }
 .tag-help {
-  font-size: 0.8rem;
+  font-size: var(--text-caption);
   margin-bottom: 12px;
 }
 .tag-form .field-status {
@@ -768,7 +796,7 @@ main {
 }
 .creator-name {
   font-weight: 550;
-  font-size: 0.9rem;
+  font-size: var(--text-body);
   color: var(--text);
 }
 .rule-sources {
@@ -795,7 +823,7 @@ main {
   display: none;
 }
 .source-badge {
-  font-size: 0.65rem;
+  font-size: var(--text-micro);
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -804,7 +832,7 @@ main {
 .empty-message {
   padding: 25px;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--text-body);
 }
 dialog {
   color: var(--text);
@@ -827,7 +855,7 @@ dialog::backdrop {
   backdrop-filter: blur(5px);
 }
 .dialog-toolbar h2 {
-  font-size: 1rem;
+  font-size: var(--text-heading);
 }
 .dialog-body {
   padding: 24px;
@@ -838,52 +866,18 @@ dialog::backdrop {
 .help-dialog {
   max-width: 560px;
 }
-.transfer-dialog {
-  width: 600px;
-  max-width: calc(100% - 24px);
-}
-.preference-copy section:first-of-type {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px 24px;
-}
-.preference-copy section {
-  border-top: 1px solid var(--line);
-  margin-top: 20px;
-  padding-top: 20px;
-}
-.preference-copy p {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin: 6px 0 14px;
-}
-.preference-copy .transfer-intro {
-  margin: 0;
-}
-.preference-copy section:first-of-type > div {
-  flex: 1 1 180px;
-}
-.preference-copy section:first-of-type p {
-  margin-bottom: 0;
-}
 .preference-file {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 14px;
   margin: 18px 0;
-  font-size: 0.9rem;
+  font-size: var(--text-body);
 }
 .preference-file span {
   min-width: 0;
   overflow-wrap: anywhere;
   flex: 1 1 160px;
-}
-.preference-copy .button {
-  flex: 0 0 auto;
-  align-self: center;
 }
 .transfer-actions {
   display: flex;
@@ -902,7 +896,7 @@ dialog::backdrop {
   gap: 10px 16px;
   padding: 0 0 14px;
   margin: 0;
-  font-size: 0.9rem;
+  font-size: var(--text-body);
 }
 .preference-summary dt {
   color: var(--muted);
@@ -918,7 +912,7 @@ dialog::backdrop {
   display: none;
 }
 .help-copy p {
-  font-size: 0.9rem;
+  font-size: var(--text-body);
   color: var(--muted);
   margin: 8px 0 22px;
 }
@@ -926,11 +920,11 @@ dialog::backdrop {
   margin-bottom: 0;
 }
 .technical {
-  font-size: 0.85rem;
+  font-size: var(--text-control);
   overflow-wrap: anywhere;
 }
 .technical h4 {
-  font-size: 0.95rem;
+  font-size: var(--text-body);
   margin: 22px 0 10px;
 }
 .technical p {
@@ -940,7 +934,7 @@ dialog::backdrop {
   border-collapse: collapse;
   width: 100%;
   margin: 12px 0;
-  font-size: 0.76rem;
+  font-size: var(--text-caption);
 }
 .technical td,
 .technical th {
@@ -955,7 +949,7 @@ dialog::backdrop {
 .technical pre {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.75rem;
+  font-size: var(--text-caption);
 }
 .diagnostics {
   margin-top: 24px;
@@ -1043,7 +1037,7 @@ dialog::backdrop {
     padding: 24px;
   }
 }
-@media (max-width: 700px) {
+:root[data-mobile] {
   body {
     display: flex;
     flex-direction: column;
@@ -1072,7 +1066,7 @@ dialog::backdrop {
     display: none;
   }
   .brand strong {
-    font-size: 1rem;
+    font-size: var(--text-heading);
   }
   .navigation-tools {
     margin: 0 0 0 auto;
@@ -1090,7 +1084,7 @@ dialog::backdrop {
     justify-content: center;
     padding: 9px 6px;
     flex: 1;
-    font-size: 0.75rem;
+    font-size: var(--text-control);
   }
   .navigation nav button span {
     display: none;
@@ -1111,7 +1105,7 @@ dialog::backdrop {
     font-size: 1.4rem;
   }
   #page-subtitle {
-    font-size: 0.78rem;
+    font-size: var(--text-caption);
     max-width: 300px;
     margin-top: 5px;
   }
@@ -1135,7 +1129,7 @@ dialog::backdrop {
     grid-template-columns: 20px minmax(0, 1fr);
   }
   .video-title {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
   }
   .row-actions {
     gap: 1px;
@@ -1144,7 +1138,7 @@ dialog::backdrop {
     padding: 7px 8px;
   }
   .row-meta {
-    font-size: 0.7rem;
+    font-size: var(--text-micro);
     gap: 4px 8px;
   }
   .management-row {
@@ -1169,10 +1163,6 @@ dialog::backdrop {
   .connection-fields {
     gap: 16px;
   }
-  .connection-actions {
-    flex-wrap: wrap;
-    gap: 10px;
-  }
   .management-toolbar {
     flex-wrap: wrap;
   }
@@ -1180,7 +1170,7 @@ dialog::backdrop {
     max-width: none;
   }
   .dialog-toolbar h2 {
-    font-size: 0.9rem;
+    font-size: var(--text-body);
   }
   .dialog-toolbar {
     gap: 6px;
@@ -1200,7 +1190,7 @@ dialog::backdrop {
     padding: 20px;
   }
   .technical table {
-    font-size: 0.68rem;
+    font-size: var(--text-micro);
   }
   .technical td,
   .technical th {
@@ -1298,7 +1288,7 @@ dialog::backdrop {
   flex-direction: row;
   align-items: center;
 }
-@media (max-width: 700px) {
+:root[data-mobile] {
   .brand-mark {
     width: 1.933rem;
     height: 1.933rem;
@@ -1310,7 +1300,182 @@ dialog::backdrop {
   .navigation nav button {
     min-width: max-content;
   }
-  [data-compact] .video-row {
+  &[data-compact] .video-row {
     grid-template-columns: 20px minmax(0, 1fr);
   }
+}
+.token-usage-dialog {
+  width: min(700px, calc(100vw - 24px));
+}
+.usage-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0 14px;
+}
+.usage-summary > div {
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.usage-summary dt,
+.usage-scope,
+.usage-platforms {
+  font-size: var(--text-caption);
+}
+.usage-summary dd {
+  margin: 3px 0 0;
+  font-size: var(--text-section);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.usage-coverage {
+  font-size: var(--text-body);
+}
+.usage-heading {
+  margin: 24px 0 10px;
+}
+.usage-stage {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.usage-stage-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--text-body);
+}
+.usage-stage-heading h4 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 550;
+}
+.usage-stage-total {
+  font-variant-numeric: tabular-nums;
+}
+.usage-bar {
+  height: 5px;
+  margin-top: 8px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.usage-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.usage-platforms,
+.usage-scope {
+  margin-top: 16px;
+}
+@media (max-width: 380px) {
+  .usage-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.interests-copy {
+  display: grid;
+  gap: 14px;
+}
+.interests-copy label {
+  font-size: var(--text-control);
+  font-weight: 600;
+}
+.interests-copy textarea {
+  width: 100%;
+  min-height: 12rem;
+  max-height: 36vh;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--text);
+  background: var(--bg);
+  font: inherit;
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+.interests-copy textarea:disabled {
+  opacity: 0.6;
+}
+.interests-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.preferences-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px 20px;
+}
+.preferences-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.preference-panel {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  display: grid;
+  gap: 16px;
+}
+.preference-panel > h2 {
+  font-size: var(--text-section);
+}
+.preference-panel > p {
+  font-size: var(--text-body);
+}
+.preferences-transfer {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+.preference-panel .preference-file {
+  margin: 0;
+}
+.preference-panel .preference-summary {
+  font-size: var(--text-caption);
+}
+.preference-panel .button {
+  justify-self: start;
+}
+.preferences-warning {
+  color: var(--danger-text);
+  font-size: var(--text-control);
+  margin-top: 12px;
+}
+[data-compact] .preferences-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+:root[data-mobile] {
+  .preference-panel {
+    padding: 20px;
+  }
+  .preferences-layout,
+  .preferences-transfer {
+    gap: 18px;
+  }
+}
+
+#round-notice {
+  margin: 0;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--line);
 }

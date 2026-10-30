@@ -38,7 +38,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             def older_page(route):
                 response = route.fetch()
                 markup = re.sub(
-                    r'<dialog\s+id="preferences-dialog".*?</dialog>',
+                    r'<section\s+id="preferences-page".*</section>',
                     "",
                     response.text(),
                     flags=re.S,
@@ -55,10 +55,10 @@ class PreferenceDashboardTests(unittest.TestCase):
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.route(
-                "**/static/transfer.js",
+                "**/static/preferences.js",
                 lambda route: route.fulfill(status=404, body="Not found"),
             )
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded")
             page.locator(".video-row").first.wait_for()
             self.assertEqual(page.locator(".video-row").count(), 10)
             self.assertEqual(errors, [])
@@ -69,8 +69,8 @@ class PreferenceDashboardTests(unittest.TestCase):
             topic = inspector.get_by_role("group", name="Specific topic", exact=True)
             topic.get_by_label("Topic", exact=True).fill("unsaved subject")
             topic.get_by_role("radio", name="Low", exact=True).check()
-            page.get_by_role("button", name="Import/Export", exact=True).click()
-            dialog = page.get_by_role("dialog", name="Import/Export", exact=True)
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            dialog = page.get_by_role("region", name="Preferences", exact=True)
             with page.expect_download() as download:
                 dialog.get_by_role(
                     "button", name="Export preferences", exact=True
@@ -117,7 +117,7 @@ class PreferenceDashboardTests(unittest.TestCase):
                 self.assertEqual(preserved(store), before)
             page.keyboard.press("Escape")
             self.assertTrue(
-                page.get_by_role("button", name="Import/Export", exact=True).evaluate(
+                page.get_by_role("button", name="Preferences", exact=True).evaluate(
                     "e=>e===document.activeElement"
                 )
             )
@@ -128,6 +128,116 @@ class PreferenceDashboardTests(unittest.TestCase):
                 topic.get_by_role("radio", name="Low", exact=True).is_checked()
             )
             self.assertEqual(page.locator(".video-row").count(), 10)
+
+    def test_imported_interests_are_editable_on_the_same_page_and_operations_are_serial(
+        self,
+    ):
+        from broader_vids.learning.baseline import current_baseline
+        from broader_vids.preferences import get_profile, set_profile
+
+        with dashboard_fixture() as (page, directory):
+            inspector = open_first(page)
+            topic = inspector.get_by_role("group", name="Specific topic", exact=True)
+            topic.get_by_label("Topic", exact=True).fill("retained video draft")
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            settings = page.get_by_role("region", name="Preferences", exact=True)
+            field = settings.get_by_label("Your interests", exact=True)
+            page.wait_for_function(
+                "() => !document.getElementById('interests-save').disabled"
+            )
+            field.fill("games")
+            self.assertTrue(
+                settings.get_by_role(
+                    "button", name="Export preferences", exact=True
+                ).is_disabled()
+            )
+            with closing(Store(directory)) as store:
+                before = preserved(store)
+            with (
+                tempfile.TemporaryDirectory() as source,
+                closing(Store(source)) as store,
+            ):
+                set_profile(store, ["music", "travel"])
+                bundle = export_preferences(store)
+            settings.get_by_label("Preference file", exact=True).set_input_files(
+                {
+                    "name": "preferences.json",
+                    "mimeType": "application/json",
+                    "buffer": json.dumps(bundle).encode(),
+                }
+            )
+            settings.get_by_text(
+                "File is compatible. Check the summary before importing.", exact=True
+            ).wait_for()
+            self.assertEqual(field.input_value(), "games")
+            self.assertTrue(settings.locator("#preferences-draft-warning").is_visible())
+            pending = []
+
+            def hold(route):
+                pending.append(route)
+
+            page.route("**/api/preferences/import", hold)
+            try:
+                with page.expect_request("**/api/preferences/import"):
+                    settings.get_by_role(
+                        "button", name="Import preferences", exact=True
+                    ).click()
+                self.assertTrue(field.is_disabled())
+                self.assertTrue(
+                    settings.get_by_role(
+                        "button", name="Save", exact=True
+                    ).is_disabled()
+                )
+                page.get_by_role("button", name="Back", exact=True).click()
+                self.assertEqual(
+                    topic.get_by_label("Topic", exact=True).input_value(),
+                    "retained video draft",
+                )
+                page.get_by_role("button", name="Preferences", exact=True).click()
+                self.assertTrue(field.is_disabled())
+                pending[0].continue_()
+                settings.locator("#preferences-status").filter(
+                    has_text="Preferences imported."
+                ).wait_for()
+            finally:
+                for route in pending[1:]:
+                    route.abort()
+                page.unroute("**/api/preferences/import", hold)
+            self.assertEqual(field.input_value(), "music\ntravel")
+            self.assertTrue(
+                settings.get_by_role(
+                    "button", name="Export preferences", exact=True
+                ).is_enabled()
+            )
+            self.assertTrue(settings.locator("#preferences-preview").is_hidden())
+            with closing(Store(directory)) as store:
+                baseline = current_baseline(store)
+                self.assertEqual(get_profile(store)["interests"], ["music", "travel"])
+                self.assertEqual(preserved(store), before)
+            field.fill("music\ntravel\nphysics")
+            settings.get_by_role("button", name="Save", exact=True).click()
+            settings.locator("#interests-status").filter(has_text="Saved.").wait_for()
+            with closing(Store(directory)) as store:
+                self.assertEqual(current_baseline(store), baseline)
+                self.assertEqual(
+                    get_profile(store)["interests"], ["music", "travel", "physics"]
+                )
+                self.assertEqual(preserved(store), before)
+            with page.expect_download() as download:
+                settings.get_by_role(
+                    "button", name="Export preferences", exact=True
+                ).click()
+            exported = json.loads(
+                Path(download.value.path()).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                exported["preferences"]["interests"], ["music", "travel", "physics"]
+            )
+            page.get_by_role("button", name="Back", exact=True).click()
+            self.assertEqual(
+                topic.get_by_label("Topic", exact=True).input_value(),
+                "retained video draft",
+            )
 
     def test_preview_security_stale_save_and_failed_request(self):
         with dashboard_fixture() as (page, directory):
@@ -151,9 +261,12 @@ class PreferenceDashboardTests(unittest.TestCase):
                 data={"file_text": '{"format":1,"format":2}'},
             )
             self.assertEqual(response.status, 400)
-            page.get_by_role("button", name="Import/Export", exact=True).click()
-            dialog = page.get_by_role("dialog", name="Import/Export", exact=True)
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            dialog = page.get_by_role("region", name="Preferences", exact=True)
             field = dialog.get_by_label("Preference file", exact=True)
+            page.wait_for_function(
+                "() => !document.getElementById('preferences-file').disabled"
+            )
             field.set_input_files(
                 {
                     "name": "preferences.json",
@@ -190,3 +303,36 @@ class PreferenceDashboardTests(unittest.TestCase):
             dialog.get_by_text("Fixture import rejected", exact=True).wait_for()
             self.assertTrue(apply.is_enabled())
             self.assertEqual(field.evaluate("e=>e.files.length"), 1)
+
+    def test_closing_transfer_releases_selected_file_without_losing_rating_drafts(self):
+        with dashboard_fixture() as (page, directory):
+            inspector = open_first(page)
+            topic = inspector.get_by_role("group", name="Specific topic", exact=True)
+            topic.get_by_label("Topic", exact=True).fill("unsaved topic")
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            dialog = page.get_by_role("region", name="Preferences", exact=True)
+            with closing(Store(directory)) as store:
+                raw = json.dumps(export_preferences(store)).encode()
+            field = dialog.get_by_label("Preference file", exact=True)
+            page.wait_for_function(
+                "() => !document.getElementById('preferences-file').disabled"
+            )
+            field.set_input_files(
+                {
+                    "name": "preferences.json",
+                    "mimeType": "application/json",
+                    "buffer": raw,
+                }
+            )
+            dialog.get_by_text(
+                "File is compatible. Check the summary before importing.", exact=True
+            ).wait_for()
+            page.get_by_role("button", name="Back", exact=True).click()
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            self.assertEqual(field.evaluate("e=>e.files.length"), 0)
+            self.assertTrue(dialog.locator("#preferences-preview").is_hidden())
+            self.assertEqual(dialog.locator("#preferences-status").inner_text(), "")
+            page.keyboard.press("Escape")
+            self.assertEqual(
+                topic.get_by_label("Topic", exact=True).input_value(), "unsaved topic"
+            )

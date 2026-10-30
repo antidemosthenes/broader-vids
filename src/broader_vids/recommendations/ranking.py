@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timezone
 
 from broader_vids.identity import identify
@@ -6,6 +6,7 @@ from broader_vids.recommendations.engagement import rate_scores
 from broader_vids.exploration.domains import normalized
 from broader_vids.recommendations.originality import provenance
 from broader_vids.creators import excluded
+from broader_vids.recommendations.screening import DEFAULT_INSPECTION_LIMIT
 
 
 def domains(item):
@@ -28,12 +29,12 @@ def fair_buffer(items, limit):
             (o.get("family_id") for o in item.get("origins", []) if o.get("family_id")),
             "other",
         )
-        buckets.setdefault(key, []).append(item)
+        buckets.setdefault(key, deque()).append(item)
     result, seen = [], set()
     while any(buckets.values()) and len(result) < limit:
         for bucket in buckets.values():
             while bucket:
-                item = bucket.pop(0)
+                item = bucket.popleft()
                 if item["canonical_id"] not in seen:
                     seen.add(item["canonical_id"])
                     result.append(item)
@@ -43,7 +44,18 @@ def fair_buffer(items, limit):
     return result
 
 
-def screen(items, pending, states, profile, creator_rules=None, *, policy_version=3):
+def screen(
+    items,
+    pending,
+    states,
+    profile,
+    creator_rules=None,
+    *,
+    policy_version=3,
+    limit=DEFAULT_INSPECTION_LIMIT,
+):
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("The inspection limit must be an integer from 1 to 100.")
     blocked = {
         i["canonical_id"] for i in [*items, *pending] if excluded(i, creator_rules)
     }
@@ -85,13 +97,23 @@ def screen(items, pending, states, profile, creator_rules=None, *, policy_versio
         item["carryover"] = identifier in pending_ids
         item["screening_score"] = screening_score(item)
         eligible.append(item)
-    selected = sorted(
+    ordered = sorted(
         eligible, key=lambda item: (-item["screening_score"], item["canonical_id"])
-    )[:50]
+    )
+    if policy_version >= 4:
+        from broader_vids.recommendations.diversity import balanced_inspection
+
+        selected = balanced_inspection(ordered, limit)
+    else:
+        selected = ordered[:limit]
     chosen = {item["canonical_id"] for item in selected}
     for item in eligible:
         if item["canonical_id"] not in chosen:
-            rejected[item["canonical_id"]] = "lower_screening_priority_or_no_free_slot"
+            rejected[item["canonical_id"]] = (
+                "lower_screening_priority_or_query_diversity"
+                if policy_version >= 4
+                else "lower_screening_priority_or_no_free_slot"
+            )
     return selected, rejected
 
 
@@ -138,6 +160,14 @@ def rank_slate(
         and not provenance(i, profile)["excluded"]
         and not excluded(i, creator_rules)
     ]
+    from broader_vids.recommendations.diversity import signature, overlap_count
+
+    signatures = (
+        {i["canonical_id"]: signature(i, observations[i["canonical_id"]]) for i in pool}
+        if policy_version >= 4
+        else {}
+    )
+    chosen_signatures = []
     slate, creators = [], Counter()
     learned_channels, learned_scores = {}, {}
     target_unrelated = (
@@ -150,6 +180,16 @@ def rank_slate(
             if 10 - len(slate) <= need
             else pool
         ) or pool
+        repeats = 0
+        if policy_version >= 4:
+            overlaps = {
+                i["canonical_id"]: overlap_count(
+                    signatures[i["canonical_id"]], chosen_signatures
+                )
+                for i in eligible
+            }
+            repeats = min(overlaps.values())
+            eligible = [i for i in eligible if overlaps[i["canonical_id"]] == repeats]
         scored = []
         for item in eligible:
             creator = item.get("creator_id") or item["canonical_id"]
@@ -203,12 +243,25 @@ def rank_slate(
                 "components": parts,
                 "quality_evidence": observations[chosen["canonical_id"]],
                 **(
+                    {
+                        "selection_diversity": {
+                            "version": 1,
+                            "overlap_count": repeats,
+                            "relaxed": repeats > 0,
+                        }
+                    }
+                    if policy_version >= 4
+                    else {}
+                ),
+                **(
                     {"learning": details, "base_score": details["base_score"]}
                     if details
                     else {}
                 ),
             }
         )
+        if policy_version >= 4:
+            chosen_signatures.append(signatures[chosen["canonical_id"]])
         creators[chosen.get("creator_id") or chosen["canonical_id"]] += 1
         pool.remove(chosen)
     return slate

@@ -5,56 +5,135 @@ description: Set up an installed Broader Vids plugin, its external Python runtim
 
 # Set up Broader Vids
 
+Keep launcher commands internal.
+In user-facing replies, use chat requests, host-supported skill invocations, and relevant results or dashboard links.
+Do not include raw launcher or PowerShell command lines.
+
+
 Resolve the plugin root two directories above this skill to an absolute path.
 Use `node <absolute-plugin-root>/bin/broader-vids.cjs` for each command below.
 Run `data show` to resolve the saved profile selection.
-An explicit `--data-dir` takes precedence over `BROADER_VIDS_DATA_DIR`, the saved selection, and the system default.
-Keep that directory outside the plugin cache and use it on every command.
-The default is `%LOCALAPPDATA%/broader-vids` on Windows.
-Use `data use ABSOLUTE_PATH` when the user selects a stable profile for later conversations.
-This records its location without moving or copying its data.
-Use only explicit `--data-dir` overrides for temporary installation tests.
-Read [the reference](../../docs/REFERENCE.md) when the user needs another location or dependency details.
+Pass that absolute directory with `--data-dir` on subsequent commands.
+An explicit directory overrides `BROADER_VIDS_DATA_DIR`, the saved selection, and the system default.
+The Windows default is `%LOCALAPPDATA%/broader-vids`.
+Keep user data outside the plugin cache.
+Use `data use ABSOLUTE_PATH` when the user chooses another stable directory.
+This command records the location without moving its data.
+Use only explicit directory overrides for temporary installation tests.
+Read [the reference](../../docs/REFERENCE.md) for dependency or directory details.
+
+## Introduce and configure
+
+Run `onboarding status` when the runtime is available.
+For an incomplete profile, explain these features once during guided setup:
+
+- Recommendations appear directly in chat.
+- The dashboard provides ratings, exclusions, and optional calibration.
+- Ratings improve later recommendations.
+- Preferences transfers interests and learned weights without video history.
+
+Show the host's available dashboard invocation name.
+Ask whether the user wants YouTube, Bilibili, or both.
+Preserve a saved platform choice during interrupted setup unless the user changes it.
+Run `onboarding configure --platform youtube`, `bilibili`, or `both` after the runtime is available.
+Do not repeat the introduction for a completed profile during routine checks.
+
+## Install and check tools
 
 Check Node.js 20 or later, UV, and Codex CLI availability.
-Run `setup --asr` to install the engine and the media, browser, and optional transcription dependencies.
-This installation does not require administrator access.
-Run `doctor` and `codex login status`.
-Use the report's Required, Conditional, Optional, and Manual checks groups.
-Only missing or unusable required items fail the local check.
-Conditional items block only the workflow in their required_for field.
-Missing ffprobe does not block Broader Vids duration or frame checks.
-Missing faster-whisper affects videos without usable native captions.
-Do not install optional tools merely because their status is missing.
+Report exact repair steps for missing system tools.
+Run `setup --evidence` to install the external runtime and evidence dependencies when needed.
+Install optional transcription with `setup --asr` only when requested.
+Do not reinstall a working runtime during normal recommendation requests.
+Before runtime repair, finish active recommendation and browser operations.
+Stop this profile's verified dashboard with `dashboard stop` before changing the runtime.
+A busy installation does not authorize removal of a live or uncertain lock.
+If a launcher exited, check surviving children before repairing its lock.
+Installation alone does not establish readiness.
+
+Use `doctor` for local diagnostics.
+Missing ffprobe does not block duration or frame checks.
+Missing transcription does not block native captions or the existing visual fallback.
 Not checked means unverified, not missing.
-Check account access separately before reporting that recommendations are ready.
-Request the host's normal permission for the selected external directory, network, or existing Codex session when necessary.
+Request the host's normal permissions when the selected directory, network, or current session needs them.
 If permission is unavailable, report the incomplete step and preserve completed setup.
-Do not repair the host environment or inspect credential files to bypass a permission failure.
-Assessments require ChatGPT sign-in. Use `codex login` if needed.
-Keep the existing model provider and credentials intact.
+Do not inspect credentials or change unrelated host settings to bypass a permission failure.
+Assessments require ChatGPT sign-in through Codex CLI.
+Use `codex login` when necessary.
+Keep the existing provider and credentials intact.
 Do not use API billing as a fallback.
 
+## Restore or set interests
+
 Run `profile show` before changing interests.
-Preserve an existing profile unless the user asks to change it.
-For a requested preference restore, preview the supplied JSON file with `profile import FILE`.
-Then apply the requested restore with `profile import FILE --apply`.
+Preserve existing interests and learned weights.
+For a fresh profile, offer preference import or manual interest entry.
+For a requested restore, preview the supplied file with `profile import FILE`.
+Apply the requested restore with `profile import FILE --apply`.
 Import replaces learned parameters and creates a recovery file without importing video history.
-Skip manual interest entry when the restored file supplies interests.
-For a fresh profile, ask for broad interests when the user has not supplied them.
-Use `profile set --interest TOPIC` once for each supplied interest.
-Fresh profiles can request recommendations immediately.
-Development `gate` results and calibration quotas do not block normal use.
+Skip manual interest entry when the import supplies interests.
+Otherwise, ask for broad interests and use `profile set` with one `--interest TOPIC` per interest.
+Calibration remains optional.
 Do not invent feedback or copy another profile's history.
 
-If the user wants Bilibili, use `login bilibili` for the separate manual sign-in browser.
-After the user finishes, use `login bilibili --confirm`.
-Explain an access challenge and retain completed setup when verification fails.
+## Check access and complete setup
+
+Before opening Bilibili sign-in, tell the user to sign in, keep the window open, and report completion in chat.
+Explain that Broader Vids closes the window when sign-in checks finish.
+For Bilibili, use `login bilibili` for manual sign-in in the separate browser.
+After the user reports completion in chat, use `login bilibili --confirm`.
+If the user closes the window before verification, start sign-in again.
+Wait for verification from the original sign-in operation.
+The confirmation request alone does not prove successful sign-in.
 Do not request passwords or cookie text.
 A failed blacklist import preserves saved rules and does not undo successful sign-in.
 
-Report the selected data directory, installed tools, interests, and access status.
-Separate required failures, conditional limitations, and optional omissions in that report.
-Offer the installed recommendation and dashboard skills as the next actions.
-Use the invocation names exposed by the current host.
-Installation does not start a recommendation run or enable a schedule automatically.
+Run `onboarding complete` after configuration, interests, tools, and access are ready.
+This command checks the selected platforms before recording completion.
+If the user requested transcription, include `--asr-model base` or their chosen supported model.
+This verifies the requested transcription dependency without downloading a model or analyzing audio.
+It uses the invoking chat's model and effort.
+Supply both `--model` and `--effort` from the host when inheritance is unavailable.
+Report missing, unusable, unverified, and busy checks separately.
+Required failures block completion.
+Optional warnings do not block completion.
+Repair the reported requirement and repeat completion without resetting preferences.
+
+## Report the final check and next actions
+
+Completion is the final self-check after installation, profile configuration, and sign-in.
+Do not report success unless `onboarding complete` returns `self_check: passed`.
+Do not repeat the same checks solely to produce another report.
+Show the actual absolute `data_directory`, selected platforms, required-check result, and optional warnings.
+Use the returned `next_steps` to explain these four actions:
+
+1. Explain the dashboard as the local place for broader interests, ratings, exclusions, optional calibration, and preference transfer.
+   Show the request: "Use Broader Vids to open my dashboard."
+   Show the dashboard skill invocation exposed by the host.
+   Tell the user to select **Preferences** to import preferences and learned weights.
+2. Explain that recommendations appear in chat and use the saved platform choice.
+   Show the request: "Use Broader Vids to recommend videos for my saved platforms."
+   Show the recommendation skill invocation exposed by the host.
+
+3. Show **Reset**, its request, and the host's invocation for `broader-vids-reset`.
+   Explain that it removes learned preferences, ratings, exclusions, histories, results, evidence, and recovery files.
+   Installed tools and Bilibili sign-in remain.
+4. Show **Clean**, its request, and the host's invocation for `broader-vids-clean`.
+   Explain that it removes the complete managed data directory, including tools and sign-in.
+   The plugin stays installed. Run setup before reuse.
+
+Do not execute Reset or Clean while explaining first-time setup.
+A later explicit request authorizes the selected destructive action after its preview.
+Explain that active recommendations and sign-in must finish before either action.
+The dashboard must stop before either action.
+
+The returned skill names identify skills, but the host determines their invocation syntax.
+Use a qualified invocation when the host exposes one.
+Explain that the selected data directory stays separate from the plugin bundle.
+Broader Vids preserves this directory after you uninstall the plugin.
+If the path is inside a host sandbox, explain that another environment can resolve a different default.
+Do not silently move an existing profile or substitute an empty profile at another path.
+
+An explicit setup request ends after this guidance.
+If setup interrupted a recommendation request, return to the recommendation skill and continue that request.
+Installation does not enable a schedule.

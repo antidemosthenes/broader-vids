@@ -3,6 +3,7 @@ import re
 
 from broader_vids.preferences import canonical_identity, get_profile
 from broader_vids.storage import utc_now
+from broader_vids.tag_rules import tag_rules
 
 
 def creator_id(platform, value):
@@ -173,18 +174,10 @@ def status(store):
         "SELECT payload FROM creator_sync WHERE account_id=?", (policy["account_id"],)
     ).fetchone()
     profile = get_profile(store) or {}
-    tags = {
-        p: [
-            {"tag": tag, "source": "manual", "editable": True}
-            for tag in profile.get("excluded_tags", {}).get(p, [])
-        ]
-        for p in creators
-    }
-    tags["bilibili"] = [tag for tag in tags["bilibili"] if tag["tag"] != "视频翻译"] + [
-        {"tag": "视频翻译", "source": "builtin", "editable": False}
-    ]
+    tags = {platform: tag_rules(profile, platform) for platform in creators}
     return {
         "revision": policy["revision"],
+        "tag_revision": profile.get("revision", 0),
         "creators": {p: list(entries.values()) for p, entries in creators.items()},
         "tags": tags,
         "bilibili_sync": {

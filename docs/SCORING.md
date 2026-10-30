@@ -27,7 +27,7 @@ The same deduction applies to the learned quality component during ranking.
 Audio quality is not a criterion.
 Captions and frames support the four existing content criteria.
 Stored older scorecards retain their recorded policy.
-The exact Bilibili tag `视频翻译` excludes a video from final selection.
+By default, the exact Bilibili tag `视频翻译` excludes a video from final selection.
 Watched and dismissed videos cannot enter a new final list.
 
 A learned preference cannot override these checks.
@@ -68,10 +68,19 @@ These correlated metrics do not count as independent evidence of quality.
 
 Initial screening uses 70% community response and 30% title-anchor support.
 An anchor is a query term found in the returned metadata.
-Collection interleaves retrieval families until 100 eligible videos are available.
-The global top fifty screening scores receive inspection slots.
-Canonical IDs break ties.
-There are no fixed topic or creator quotas at this step.
+Collection scans batches of up to 100 unique candidates.
+The eligible pool targets 71 familiar and 29 exploratory retrievals.
+Each batch fills only the remaining slots in its own group, using the highest screening scores.
+Later batches target deficient groups and preserve source attribution through search continuations.
+Duplicates and rejected candidates do not fill slots.
+This balance applies to collection, before inspection selection.
+Screening policy 4 balances query coverage across thirty-five inspection slots.
+Each slot favors the candidate whose retrieval queries have the fewest existing slots.
+For several query origins, the largest query count applies.
+The metadata screening score and canonical ID resolve ties.
+A missing query uses its retrieval family when available. Unknown sources share no invented group.
+This rule permits repeats when fewer queries can supply candidates.
+Screening policy 3 retains its global ranking by metadata score.
 Pending entries compete on the same score without guaranteed slots.
 A creator exclusion removes eligibility without creating negative feedback.
 Creator IDs determine these exclusions.
@@ -178,7 +187,18 @@ Creator diversity is \(D=100/(1+n+0.1h)\).
 Here, \(n\) counts this creator in the developing list.
 The value \(h\) counts the creator in recent recommendation exposures.
 Randomness enters discovery rather than adding a random final-score bonus.
-This diversity factor compares creators, not content overlap with watched videos.
+This score component measures creator diversity.
+Screening policy 4 also applies a separate diversity rule when it constructs each platform list.
+For each remaining candidate, count earlier picks that share a retrieval query, primary narrow topic, or secondary-school course format.
+Choose the lowest count first, then the highest full score.
+Primary labels match after normalization, including possessives and multiword phrase containment.
+Broad subject labels do not create a match.
+High-school and Gaokao markers come from titles and metadata tags.
+Missing labels do not create a match.
+A positive overlap count means the rule relaxed to fill the list from the assessed pool.
+The saved `selection_diversity` field records that case.
+This selection rule changes no quality grade, component weight, or preference posterior.
+It adds no model calls. It cannot guarantee semantic uniqueness when labels or query coverage are incomplete.
 Different videos about the same subject can therefore recur.
 A subject match alone does not establish repeated content or equal explanatory depth.
 

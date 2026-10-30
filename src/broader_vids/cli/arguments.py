@@ -1,6 +1,7 @@
 import argparse
 
 from broader_vids import __version__
+from broader_vids.recommendations.budgets import DEFAULT_METADATA_REQUESTS
 from broader_vids.worker_context import EFFORTS
 
 
@@ -29,9 +30,50 @@ def parser():
         help="External state directory; defaults to LOCALAPPDATA/broader-vids on Windows",
     )
     commands = result.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        (
+            "reset",
+            "Erase learned preferences and histories while keeping tools and sign-in",
+        ),
+        ("clean", "Remove the managed data directory without uninstalling the plugin"),
+    ):
+        action = commands.add_parser(name, help=help_text)
+        action.add_argument(
+            "--apply",
+            action="store_true",
+            help="Apply the previewed destructive action",
+        )
+        action.add_argument(
+            "--confirm-path", help="Exact absolute data directory shown by the preview"
+        )
     commands.add_parser(
         "doctor", help="Inspect local prerequisites without reading credentials"
     )
+    preflight = commands.add_parser(
+        "preflight",
+        help="Check readiness and incomplete feedback without starting recommendations",
+    )
+    preflight.add_argument(
+        "platform", choices=("youtube", "bilibili", "both"), nargs="?"
+    )
+    preflight.add_argument("--asr-model", choices=("tiny", "base", "small"))
+    worker_arguments(preflight)
+    onboarding = commands.add_parser(
+        "onboarding", help="Inspect or complete guided setup for this profile"
+    )
+    onboarding_commands = onboarding.add_subparsers(dest="operation", required=True)
+    onboarding_commands.add_parser("status")
+    configure = onboarding_commands.add_parser("configure")
+    configure.add_argument(
+        "--platform", choices=("youtube", "bilibili", "both"), required=True
+    )
+    complete = onboarding_commands.add_parser("complete")
+    complete.add_argument("--asr-model", choices=("tiny", "base", "small"))
+    worker_arguments(complete)
+    usage = commands.add_parser(
+        "usage", help="Report saved recommendation token usage by stage"
+    )
+    usage.add_argument("run_id", nargs="?")
     commands.add_parser(
         "status", help="List discovery, evidence and recommendation checkpoints"
     )
@@ -126,9 +168,19 @@ def parser():
         "--apply", action="store_true", help="Remove the previewed disposable files"
     )
     recommend = commands.add_parser(
-        "recommend", help="Run the manual 50-to-10 recommendation workflow"
+        "recommend", help="Run the manual 35-to-10 recommendation workflow"
     )
-    recommend.add_argument("platform", choices=("youtube", "bilibili", "both"))
+    recommend.add_argument(
+        "platform",
+        choices=("youtube", "bilibili", "both"),
+        nargs="?",
+        help="Platforms to recommend; defaults to the onboarding choice",
+    )
+    recommend.add_argument(
+        "--allow-missing-feedback",
+        action="store_true",
+        help="Continue this new round after explicitly accepting the incomplete-feedback reminder",
+    )
     recommend.add_argument(
         "--discovery-run",
         help="Reuse a saved live discovery buffer instead of collecting a fresh round",
@@ -137,7 +189,9 @@ def parser():
     recommend.add_argument("--max-seconds", type=float, default=1800)
     recommend.add_argument("--workers", type=int, default=4)
     worker_arguments(recommend)
-    recommend.add_argument("--max-requests", type=int, default=160)
+    recommend.add_argument(
+        "--max-requests", type=int, default=DEFAULT_METADATA_REQUESTS
+    )
     recommend.add_argument("--max-assessments", type=int, default=52)
     recommend.add_argument("--max-mib", type=int, default=1024)
     recommend.add_argument("--asr-model", choices=("tiny", "base", "small"))
@@ -304,4 +358,9 @@ def parser():
         help="Resume a paused job without resetting its budget or random state",
     )
     continuation.add_argument("run_id")
+    continuation.add_argument(
+        "--max-requests",
+        type=int,
+        help="Explicitly increase the saved metadata request cap for unfinished recommendation platforms; retain prior usage and time",
+    )
     return result

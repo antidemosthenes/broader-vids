@@ -1,5 +1,7 @@
 import http.client
 import json
+import os
+import subprocess
 from pathlib import Path
 import sqlite3
 import sys
@@ -56,6 +58,44 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8")
     args = parser().parse_args(argv)
     try:
+        if args.command in {"reset", "clean"}:
+            if (
+                args.command == "clean"
+                and args.apply
+                and Path(sys.executable)
+                .resolve()
+                .is_relative_to(data_root(args.data_dir))
+            ):
+                raise ValueError(
+                    "Use the plugin's Node launcher for Clean so the Python runtime exits before its files are removed."
+                )
+            launcher = os.environ.get("BROADER_VIDS_LAUNCHER")
+            if not launcher:
+                candidate = Path(__file__).resolve().parents[3] / "bin/broader-vids.cjs"
+                if candidate.is_file():
+                    launcher = str(candidate)
+            if not launcher:
+                raise ValueError(
+                    "Use the installed reset or clean skill, or its Node launcher, to manage the data directory."
+                )
+            command = [
+                "node",
+                launcher,
+                "--data-dir",
+                str(data_root(args.data_dir)),
+                args.command,
+            ]
+            if args.apply:
+                command.append("--apply")
+            if args.confirm_path:
+                command.extend(["--confirm-path", args.confirm_path])
+            return subprocess.run(
+                command,
+                check=False,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).returncode
         if args.command == "dashboard":
             from broader_vids.web.runtime import dashboard
 
@@ -116,8 +156,70 @@ def main(argv=None):
                 }
             )
             return 0
-        store = Store(data_root(args.data_dir))
         try:
+            store = Store(data_root(args.data_dir))
+        except (OSError, sqlite3.Error):
+            if args.command not in {"preflight", "recommend", "continue", "onboarding"}:
+                raise
+            emit(
+                {
+                    "status": "blocked",
+                    "checks": {
+                        "profile": {
+                            "status": "unusable",
+                            "remedy": "Check the selected profile path, database access, and directory permissions, then retry.",
+                        }
+                    },
+                }
+            )
+            return 2
+        try:
+            if args.command == "usage":
+                from broader_vids.token_usage import report
+
+                emit(report(store, args.run_id))
+                return 0
+            if args.command == "onboarding":
+                from broader_vids.onboarding import status, configure, complete
+
+                if args.operation == "status":
+                    emit(status(store.root))
+                elif args.operation == "configure":
+                    emit(configure(store, args.platform))
+                else:
+                    report = complete(
+                        store,
+                        model=args.model,
+                        effort=args.effort,
+                        asr_model=args.asr_model,
+                    )
+                    emit(report)
+                    return 0 if report["status"] == "ready" else 2
+                return 0
+            if args.command == "preflight":
+                from broader_vids.preflight import preflight
+
+                report = preflight(
+                    store,
+                    args.platform,
+                    model=args.model,
+                    effort=args.effort,
+                    asr=bool(args.asr_model),
+                )
+                emit(report)
+                return 0 if report["status"] == "ready" else 2
+            if args.command in {"recommend", "continue"}:
+                from broader_vids.cli.startup import prepare_recommendation
+
+                report = prepare_recommendation(store, args)
+                if report is not None:
+                    if report["status"] != "ready":
+                        emit(report)
+                        return 2
+                    print(
+                        json.dumps({"preflight": report}, ensure_ascii=False),
+                        file=sys.stderr,
+                    )
             if args.command == "exclusions":
                 from broader_vids.creators import (
                     status,
@@ -161,10 +263,6 @@ def main(argv=None):
                         }
                     )
                 elif args.operation == "tag":
-                    if args.platform == "bilibili" and args.value.strip() == "视频翻译":
-                        raise ValueError(
-                            "The built-in translation tag rule cannot be changed."
-                        )
                     update_tag_rule(
                         store, args.platform, args.value, remove=args.change == "remove"
                     )
@@ -295,6 +393,10 @@ def main(argv=None):
                     )
                 else:
                     run_id = args.run_id
+                if args.command == "recommend":
+                    from broader_vids.preflight import charge_elapsed
+
+                    charge_elapsed(store, run_id, args.preflight_seconds)
                 if args.command != "report":
                     execute_batch(store, run_id, progress=show_progress)
                 report, path = batch_report(store, run_id)
@@ -358,9 +460,9 @@ def main(argv=None):
                             )
                         bundle = parse_bundle(raw.decode("utf-8-sig"))
                         emit(
-                            import_preferences(store, bundle)
+                            import_preferences(store, bundle, _validated=True)
                             if args.apply
-                            else preview_import(store, bundle)
+                            else preview_import(store, bundle, _validated=True)
                         )
                     return 0
                 emit(
@@ -396,6 +498,10 @@ def main(argv=None):
                     )
                 else:
                     run_id = args.run_id
+                if args.command == "recommend":
+                    from broader_vids.preflight import charge_elapsed
+
+                    charge_elapsed(store, run_id, args.preflight_seconds)
                 if args.command == "publish":
                     publish_recommendation(store, run_id, args.allow_incomplete)
                 elif args.command != "report":
@@ -409,6 +515,7 @@ def main(argv=None):
                         "status": report["status"],
                         "reason": report["reason"],
                         "counts": report["counts"],
+                        "request_budget": report["request_budget"],
                         "first_failure": report.get("first_failure"),
                         "digest_path": str(
                             store.root / "recommendations" / run_id / "digest.md"

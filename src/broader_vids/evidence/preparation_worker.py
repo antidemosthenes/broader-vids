@@ -140,10 +140,14 @@ def _prepare_bounded_owned(
         )
         raise
     finally:
-        release_owned(process)
-        if process.stdin is not None:
-            process.stdin.close()
-        diagnostics.close()
+        try:
+            release_owned(process)
+        finally:
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            finally:
+                diagnostics.close()
 
 
 def prepare_bounded(

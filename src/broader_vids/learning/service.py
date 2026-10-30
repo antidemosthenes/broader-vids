@@ -13,7 +13,7 @@ from broader_vids.learning.features import (
     CRITERION_WEIGHTS,
 )
 from broader_vids.learning.inference import fit_logistic, predict, sigmoid
-from broader_vids.preferences import get_profile, canonical_identity
+from broader_vids.preferences import get_profile, video_payload
 from broader_vids.storage import utc_now
 from broader_vids.recommendations.originality import (
     assessment_context,
@@ -35,18 +35,28 @@ def rating_metadata(store):
     }
 
 
-def change_epoch(store, metadata=None):
+def change_epoch(
+    store, metadata=None, *, baseline_override=None, profile_override=None
+):
     metadata = rating_metadata(store) if metadata is None else metadata
     revision = store.db.execute(
         "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='learning_evidence_revision' AND status='completed' ORDER BY rowid DESC LIMIT 1"
     ).fetchone()
-    baseline = current_baseline(store)
+    baseline = (
+        baseline_override
+        if baseline_override is not None
+        else current_baseline(store, identity_only=True)
+    )
     return {
         "imported_baseline": baseline["id"] if baseline else None,
         "feedback": store.db.execute(
             "SELECT COALESCE(MAX(id),0) FROM user_actions WHERE action='feedback'"
         ).fetchone()[0],
-        "profile": (get_profile(store) or {}).get("revision", 0),
+        "profile": (
+            profile_override
+            if profile_override is not None
+            else get_profile(store) or {}
+        ).get("revision", 0),
         "cohorts": [
             list(row)
             for row in store.db.execute(
@@ -86,10 +96,7 @@ def capture_rating(store, identifier):
             effective_features(json.loads(row[0])["features"], revision),
             latest_annotations(store).get(identifier),
         )
-    row = store.db.execute(
-        "SELECT payload FROM video_state WHERE canonical_id=?", (identifier,)
-    ).fetchone()
-    item = json.loads(row[0]) if row else canonical_identity(identifier)
+    item = video_payload(store, identifier)
     observation = item.get("quality_evidence", {})
     if observation.get("evidence_run"):
         from broader_vids.recommendations.quality import cached_quality
@@ -104,8 +111,15 @@ def capture_rating(store, identifier):
     )
 
 
-def source_data(store):
-    baseline = current_baseline(store)
+def source_data(store, *, baseline_override=None, profile_override=None):
+    baseline = (
+        baseline_override if baseline_override is not None else current_baseline(store)
+    )
+    profile = (
+        profile_override
+        if profile_override is not None
+        else get_profile(store) or {"revision": 0, "interests": []}
+    )
     cutoff = baseline["cutoff_action"] if baseline else 0
     metadata = rating_metadata(store)
     held_out_creators = set()
@@ -117,8 +131,10 @@ def source_data(store):
             held_out_creators.add(features["platform"] + ":" + features["creator"])
     data = {
         "version": MODEL_VERSION,
-        "epoch": change_epoch(store, metadata),
-        "profile": get_profile(store) or {"revision": 0, "interests": []},
+        "epoch": change_epoch(
+            store, metadata, baseline_override=baseline, profile_override=profile
+        ),
+        "profile": profile,
         "ratings": [
             {
                 "id": row["canonical_id"],
@@ -498,6 +514,13 @@ def train(data):
     }
 
 
+def prune_models(store, identifier):
+    store.db.execute(
+        "DELETE FROM learning_models WHERE id<>? AND id NOT IN (SELECT json_extract(state,'$.learning_snapshot.id') FROM runs WHERE json_extract(state,'$.learning_snapshot.id') IS NOT NULL) AND id NOT IN (SELECT json_extract(payload,'$.snapshot_id') FROM learning_evaluations WHERE json_extract(payload,'$.snapshot_id') IS NOT NULL)",
+        (identifier,),
+    )
+
+
 def ensure_model(store):
     data = source_data(store)
     identifier = digest(data)
@@ -519,10 +542,7 @@ def ensure_model(store):
                     "INSERT OR IGNORE INTO learning_models VALUES(?,?,?)",
                     (identifier, utc_now(), json.dumps(payload)),
                 )
-                store.db.execute(
-                    "DELETE FROM learning_models WHERE id<>? AND id NOT IN (SELECT json_extract(state,'$.learning_snapshot.id') FROM runs WHERE json_extract(state,'$.learning_snapshot.id') IS NOT NULL) AND id NOT IN (SELECT json_extract(payload,'$.snapshot_id') FROM learning_evaluations)",
-                    (identifier,),
-                )
+                prune_models(store, identifier)
                 return {"id": identifier, **payload}
     raise ValueError(
         "Feedback changed repeatedly during fitting; ratings are saved and fitting can be retried."

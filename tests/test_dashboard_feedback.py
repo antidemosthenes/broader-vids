@@ -1,5 +1,6 @@
 from contextlib import closing, contextmanager
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -19,7 +20,7 @@ from test_learning import example
 
 
 @contextmanager
-def dashboard_fixture():
+def dashboard_fixture(*, provisional=False):
     with tempfile.TemporaryDirectory() as directory:
         with closing(Store(directory)) as store:
             set_profile(store, ["mathematics"])
@@ -51,10 +52,11 @@ def dashboard_fixture():
                         engagement_score={"score": 50},
                     )
                     items.append(item)
-                    store.db.execute(
-                        "INSERT INTO video_state VALUES(?,?,?,0,0,1,'fixture')",
-                        (item["canonical_id"], platform, json.dumps(item)),
-                    )
+                    if not provisional:
+                        store.db.execute(
+                            "INSERT INTO video_state VALUES(?,?,?,0,0,1,'fixture')",
+                            (item["canonical_id"], platform, json.dumps(item)),
+                        )
                     if index == 1:
                         payload = {
                             "item": {
@@ -74,8 +76,9 @@ def dashboard_fixture():
                     platform,
                     {"kind": "recommendation", "weights": Policy().weights},
                     {
-                        "selected": items[:10],
-                        "published_at": "fixture",
+                        "selected": [] if provisional else items[:10],
+                        "preview": items[:10] if provisional else [],
+                        "published_at": None if provisional else "fixture",
                         "shortlist": items,
                         "evidence": {
                             item["canonical_id"]: {"quality": 75} for item in items
@@ -84,10 +87,12 @@ def dashboard_fixture():
                     },
                 )
                 run = store.get(rid)
-                run["status"] = "completed"
+                run["status"] = "paused" if provisional else "completed"
                 store.save(run)
         server = make_server(directory, 0)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=lambda: server.serve_forever(poll_interval=0.05), daemon=True
+        )
         thread.start()
         try:
             with sync_playwright() as playwright:
@@ -100,7 +105,7 @@ def dashboard_fixture():
                     page.set_default_timeout(8000)
                     page.goto(
                         f"http://127.0.0.1:{server.server_port}",
-                        wait_until="networkidle",
+                        wait_until="domcontentloaded",
                     )
                     page.locator(".video-row").first.wait_for()
                     yield page, directory
@@ -110,6 +115,14 @@ def dashboard_fixture():
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+
+def settle_layout(page, *, path, **options):
+    page.evaluate(
+        "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
+    if os.environ.get("BROADER_VIDS_TEST_SCREENSHOTS") == "1":
+        page.screenshot(path=path, **options)
 
 
 def open_first(page):
@@ -132,7 +145,9 @@ class DashboardFeedbackTests(unittest.TestCase):
     def test_manual_level_and_independent_drafts_survive_navigation_save_and_clear(
         self,
     ):
-        with dashboard_fixture() as (page, directory):
+        with dashboard_fixture(provisional=True) as (page, directory):
+            self.assertTrue(page.locator("#round-notice").is_visible())
+            self.assertEqual(page.locator(".video-row").count(), 10)
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             inspector = open_first(page)
@@ -148,6 +163,8 @@ class DashboardFeedbackTests(unittest.TestCase):
             depth.get_by_role("radio", name="Too basic", exact=True).check()
             page.get_by_role("tab", name="Bilibili", exact=True).click()
             open_first(page)
+            self.assertTrue(page.locator("#round-notice").is_visible())
+            self.assertEqual(page.locator(".video-row").count(), 10)
             page.get_by_role("tab", name="YouTube", exact=True).click()
             self.assertEqual(
                 topic.get_by_label("Topic", exact=True).input_value(),
@@ -185,7 +202,7 @@ class DashboardFeedbackTests(unittest.TestCase):
                 "unknown"
             )
             saved(page, depth)
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded")
             open_first(page)
             self.assertEqual(
                 depth.get_by_role(
@@ -208,6 +225,19 @@ class DashboardFeedbackTests(unittest.TestCase):
                 )
                 self.assertEqual(payload["level_source"], "user")
                 self.assertEqual(payload["level"], "unknown")
+                self.assertEqual(
+                    store.db.execute(
+                        "SELECT count(*) FROM recommendation_exposures"
+                    ).fetchone()[0],
+                    0,
+                )
+                saved_item = json.loads(
+                    store.db.execute(
+                        "SELECT payload FROM video_state WHERE canonical_id=?",
+                        ("youtube:0000000001A",),
+                    ).fetchone()[0]
+                )
+                self.assertEqual(saved_item["title"], "Development video 1")
             self.assertFalse(errors, errors)
 
     def test_mobile_dialog_details_keyboard_and_layout(self):
@@ -285,7 +315,7 @@ class DashboardFeedbackTests(unittest.TestCase):
                     }
                 ),
             )
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded")
             for theme in ("light", "dark"):
                 page.emulate_media(color_scheme=theme, reduced_motion="reduce")
                 page.get_by_role("navigation").get_by_role(
@@ -306,7 +336,7 @@ class DashboardFeedbackTests(unittest.TestCase):
                 self.assertEqual(page.evaluate("document.body.scrollWidth"), 1440)
                 page.evaluate("document.documentElement.style.fontSize='15px'")
             page.route("**/api/calibration", lambda route: route.fulfill(json=[]))
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded")
             page.get_by_role("navigation").get_by_role(
                 "button", name="Calibration", exact=True
             ).click()
@@ -419,3 +449,55 @@ class DashboardFeedbackTests(unittest.TestCase):
                     ).fetchone()[0],
                     0,
                 )
+
+    def test_overlapping_refreshes_wait_for_current_read_and_preserve_new_save(self):
+        with dashboard_fixture() as (page, _):
+            stale = page.request.get(page.url + "api/state").json()
+            pending = []
+            reads = []
+
+            def delay_first(route):
+                reads.append(route)
+                if len(reads) == 1:
+                    pending.append(route)
+                else:
+                    route.continue_()
+
+            page.route("**/api/state", delay_first)
+            for _ in range(3):
+                page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            page.wait_for_timeout(50)
+            self.assertEqual(len(reads), 1)
+            inspector = open_first(page)
+            quality = inspector.get_by_role("group", name="Video quality", exact=True)
+            quality.get_by_role("radio", name="High", exact=True).check()
+            saved(page, quality)
+            self.assertEqual(len(reads), 1)
+            pending[0].fulfill(json=stale)
+            page.wait_for_timeout(50)
+            self.assertEqual(len(reads), 2)
+            self.assertTrue(
+                quality.get_by_role("radio", name="High", exact=True).is_checked()
+            )
+            self.assertEqual(quality.locator(".field-status").inner_text(), "Saved")
+
+    def test_refresh_releases_unused_records_but_keeps_unsaved_draft_context(self):
+        with dashboard_fixture() as (page, _):
+            inspector = open_first(page)
+            topic = inspector.get_by_role("group", name="Specific topic", exact=True)
+            topic.get_by_label("Topic", exact=True).fill("Keep my draft")
+            page.evaluate("""async () => {
+                const {state} = await import('/static/state.js');
+                const example = Object.values(state.data.videos)[0];
+                state.data.videos['unused-video'] = {...example};
+                state.data.videos['draft-video'] = {...example};
+                state.drafts.set('draft-video|topic_interest', {value:'low', target:'Saved draft context'});
+            }""")
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+            page.wait_for_function("""async () => {
+                const {state} = await import('/static/state.js');
+                return !state.data.videos['unused-video'] && !!state.data.videos['draft-video'];
+            }""")
+            self.assertEqual(
+                topic.get_by_label("Topic", exact=True).input_value(), "Keep my draft"
+            )

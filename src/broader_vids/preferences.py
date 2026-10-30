@@ -1,8 +1,10 @@
+from contextlib import ExitStack
 import hashlib
 import json
 
 from broader_vids.identity import identify
 from broader_vids.storage import utc_now
+from broader_vids.tag_rules import BUILTIN_TAGS, normalize_tag
 
 
 ALIASES = {
@@ -26,7 +28,11 @@ def get_profile(store):
     return {"revision": row["revision"], **json.loads(row["payload"])} if row else None
 
 
-def set_profile(store, interests):
+class ProfileConflict(ValueError):
+    pass
+
+
+def set_profile(store, interests, *, expected_revision=None):
     if (
         not isinstance(interests, list)
         or not interests
@@ -35,19 +41,37 @@ def set_profile(store, interests):
             not isinstance(s, str) or not 1 <= len(s.strip()) <= 80 for s in interests
         )
     ):
-        raise ValueError("Supply 1–40 bounded interest names.")
+        raise ValueError("Enter 1–40 interests, each with 1–80 characters.")
     interests = list(
         dict.fromkeys(
             ALIASES.get(s.strip().casefold(), s.strip().casefold()) for s in interests
         )
     )
-    with store.lease(platform_lock("youtube")), store.lease(platform_lock("bilibili")):
-        previous = get_profile(store)
-        if previous and previous["interests"] == interests:
-            return previous
+    if any(len(name) > 80 for name in interests):
+        raise ValueError("Each normalized interest must contain at most 80 characters.")
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise ValueError("Load the saved interests before saving changes.")
+    with ExitStack() as leases:
+        try:
+            for platform in ("youtube", "bilibili"):
+                leases.enter_context(store.lease(platform_lock(platform)))
+        except ValueError:
+            raise ValueError(
+                "Recommendation work still uses this profile. Finish that work before changing interests."
+            ) from None
         with store.db:
             store.db.execute("BEGIN IMMEDIATE")
             current = get_profile(store)
+            if expected_revision is not None and expected_revision != (
+                current or {}
+            ).get("revision", 0):
+                raise ProfileConflict(
+                    "Saved interests changed in another window. Reload saved interests before saving again."
+                )
+            if current and current["interests"] == interests:
+                return current
             revision = current["revision"] + 1 if current else 1
             payload = {
                 **{k: v for k, v in (current or {}).items() if k != "revision"},
@@ -59,7 +83,7 @@ def set_profile(store, interests):
                 "INSERT INTO user_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload",
                 (revision, json.dumps(payload)),
             )
-    return get_profile(store)
+            return {"revision": revision, **payload}
 
 
 def update_tag_rule(store, platform, tag, *, remove=False):
@@ -70,24 +94,43 @@ def update_tag_rule(store, platform, tag, *, remove=False):
     ):
         raise ValueError("A tag rule requires a platform and bounded tag name.")
     tag = tag.strip()
-    if platform == "bilibili" and tag == "视频翻译":
-        raise ValueError("The built-in translation tag rule cannot be changed.")
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
         profile = get_profile(store)
         if not profile:
             raise ValueError("Set interests before adding a tag rule.")
         rules = {k: list(v) for k, v in profile.get("excluded_tags", {}).items()}
+        disabled = {
+            k: list(v) for k, v in profile.get("disabled_builtin_tags", {}).items()
+        }
         current = rules.setdefault(platform, [])
         previous = list(current)
-        if remove:
-            current[:] = [s for s in current if s.strip().casefold() != tag.casefold()]
-        elif not any(s.strip().casefold() == tag.casefold() for s in current):
+        previous_disabled = list(disabled.get(platform, []))
+        key = normalize_tag(tag)
+        builtin = next(
+            (
+                value
+                for value in BUILTIN_TAGS.get(platform, ())
+                if normalize_tag(value) == key
+            ),
+            None,
+        )
+        if builtin:
+            current[:] = [value for value in current if normalize_tag(value) != key]
+            inactive = disabled.setdefault(platform, [])
+            inactive[:] = [value for value in inactive if normalize_tag(value) != key]
+            if remove:
+                inactive.append(builtin)
+        elif remove:
+            current[:] = [value for value in current if normalize_tag(value) != key]
+        elif not any(normalize_tag(value) == key for value in current):
             current.append(tag)
-        if current == previous:
+        if current == previous and disabled.get(platform, []) == previous_disabled:
             return profile.get("excluded_tags", {})
         payload = {k: v for k, v in profile.items() if k != "revision"}
         payload.update(excluded_tags=rules, updated_at=utc_now())
+        if disabled or "disabled_builtin_tags" in profile:
+            payload["disabled_builtin_tags"] = disabled
         store.db.execute(
             "UPDATE user_profile SET revision=?,payload=? WHERE id=1",
             (profile["revision"] + 1, json.dumps(payload)),
@@ -106,6 +149,60 @@ def canonical_identity(value):
     if len(pieces) == 3 and pieces[0] == "bilibili" and pieces[2].startswith("p"):
         return identify(f"https://www.bilibili.com/video/{pieces[1]}?p={pieces[2][1:]}")
     raise ValueError("Use a canonical video URL or canonical platform/video/part ID.")
+
+
+def current_recommendation_id(store, platform):
+    cursor = store.db.execute(
+        "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='recommendation' AND platform=?"
+        " ORDER BY created_at DESC, id DESC",
+        (platform,),
+    )
+    newest = None
+    try:
+        for row in cursor:
+            newest = newest or row[0]
+            counts = store.db.execute(
+                "SELECT COALESCE(json_array_length(state,'$.selected'),0),"
+                " COALESCE(json_array_length(state,'$.preview'),0) FROM runs WHERE id=?",
+                (row[0],),
+            ).fetchone()
+            if counts and (counts[0] or counts[1]):
+                return row[0]
+        return newest
+    finally:
+        cursor.close()
+
+
+def video_payload(store, identifier):
+    identity = canonical_identity(identifier)
+    key = identity["canonical_id"]
+    row = store.db.execute(
+        "SELECT payload FROM video_state WHERE canonical_id=?", (key,)
+    ).fetchone()
+    saved = json.loads(row[0]) if row else {**identity, "title": key}
+    current = current_recommendation_id(store, identity["platform"])
+    if current:
+        row = store.db.execute(
+            "SELECT item.value FROM runs r, json_each(r.state, CASE"
+            " WHEN COALESCE(json_array_length(r.state,'$.selected'),0)>0"
+            " THEN '$.selected' ELSE '$.preview' END) item"
+            " WHERE r.id=? AND json_extract(item.value,'$.canonical_id')=?",
+            (current, key),
+        ).fetchone()
+        if row:
+            return json.loads(row[0])
+    if saved.get("quality_evidence"):
+        return saved
+    row = store.db.execute(
+        "SELECT item.value FROM runs r, json_each(r.state, CASE"
+        " WHEN COALESCE(json_array_length(r.state,'$.selected'),0)>0"
+        " THEN '$.selected' ELSE '$.preview' END) item"
+        " WHERE r.platform=? AND json_extract(r.settings,'$.kind')='recommendation'"
+        " AND json_extract(item.value,'$.canonical_id')=?"
+        " ORDER BY r.created_at DESC, r.id DESC LIMIT 1",
+        (identity["platform"], key),
+    ).fetchone()
+    return json.loads(row[0]) if row else saved
 
 
 def video_states(store, platform=None, *, identifiers=None):
@@ -200,6 +297,7 @@ def user_action(store, identifier, action, reason="", kind="overall"):
         from broader_vids.learning.service import capture_rating
 
         features = capture_rating(store, key)
+    item_payload = json.dumps(video_payload(store, key))
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
         store.db.execute(
@@ -207,7 +305,7 @@ def user_action(store, identifier, action, reason="", kind="overall"):
             (
                 key,
                 identity["platform"],
-                json.dumps({**identity, "title": key}),
+                item_payload,
                 utc_now(),
             ),
         )

@@ -11,6 +11,7 @@ from broader_vids.recommendations.engagement import (
     fresh,
     metadata_fresh,
 )
+from broader_vids.recommendations.collection_policy import default_collection_policy
 from broader_vids.recommendations.metadata import metadata_session
 from broader_vids.evidence.service import create_evidence, prepare_evidence
 from broader_vids.evidence.media import EvidencePending, public_error
@@ -23,8 +24,16 @@ from broader_vids.preferences import (
 )
 from broader_vids.storage import utc_now
 from broader_vids.policy import Policy
+from broader_vids.recommendations.budgets import (
+    DEFAULT_METADATA_REQUESTS,
+    collection_budget_message,
+)
 from broader_vids.recommendations.ranking import fair_buffer, screen, rank_slate
 from broader_vids.recommendations.quality import cached_quality
+from broader_vids.recommendations.screening import (
+    DEFAULT_INSPECTION_LIMIT,
+    inspection_limit,
+)
 from broader_vids.recommendations.originality import provenance, assessment_context
 from broader_vids.recommendations.timing import recover_elapsed, start_attempt
 from broader_vids.creators import (
@@ -40,7 +49,7 @@ def create_recommendation(
     discovery_run=None,
     use_browser=False,
     max_seconds=1800,
-    max_requests=160,
+    max_requests=DEFAULT_METADATA_REQUESTS,
     max_assessments=52,
     max_mib=1024,
     asr_model=None,
@@ -86,9 +95,12 @@ def create_recommendation(
             raise ValueError("Use a discovery run from the same platform.")
     settings = {
         "kind": "recommendation",
+        "token_usage_version": 1,
         "creator_policy_version": 1,
         "schema": 1,
-        "screening_policy_version": 3,
+        "screening_policy_version": 4,
+        "collection_policy": default_collection_policy(),
+        "inspection_limit": DEFAULT_INSPECTION_LIMIT,
         "worker_policy_version": 2,
         "assessment_model": assessment_model,
         "batch_id": batch_id,
@@ -252,7 +264,7 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
     complete = (
         len(state["selected"]) == 10
         and state["assessment_complete"]
-        and len(state["shortlist"]) == 50
+        and len(state["shortlist"]) == inspection_limit(run["settings"])
     )
     run.update(
         status="completed" if complete else "partial",
@@ -340,14 +352,16 @@ def enrich_buffer(store, run, http, remaining, save):
             run["settings"]["profile"],
             run["state"].get("creator_rules"),
             policy_version=run["settings"].get("screening_policy_version", 2),
+            limit=inspection_limit(run["settings"]),
         )
         run["state"]["rejections"] = {
             **run["state"].get("screening_rejections", {}),
             **rejected,
         }
-        if len(run["state"]["shortlist"]) != 50:
+        limit = inspection_limit(run["settings"])
+        if len(run["state"]["shortlist"]) != limit:
             raise EvidencePending(
-                "Fewer than 50 eligible screening entries remain; quality assessment has not started."
+                f"Fewer than {limit} eligible screening entries remain; quality assessment has not started."
             )
         run["state"]["phase"] = "assess"
         save()
@@ -473,6 +487,7 @@ def enrich_buffer(store, run, http, remaining, save):
         run["settings"]["profile"],
         state.get("creator_rules"),
         policy_version=run["settings"].get("screening_policy_version", 2),
+        limit=inspection_limit(run["settings"]),
     )
     state["phase"] = "assess"
     save()
@@ -639,6 +654,7 @@ def execute_recommendation(
                                 - state["planning_model_calls"],
                             ),
                             **model_options,
+                            usage_owner=run["id"],
                             cancel_event=runtime.cancelled if runtime else None,
                         )
                         source = store.get(source["id"])
@@ -724,10 +740,11 @@ def execute_recommendation(
                         state["assessment_index"] += 1
                         save()
                         continue
-                    if provenance(item)["excluded"]:
+                    original = provenance(item, settings["profile"])
+                    if original["excluded"]:
                         state["evidence"][key] = {
                             "status": "unavailable",
-                            "reason": "excluded_translation_tag",
+                            "reason": original["reason"],
                         }
                         state["assessment_index"] += 1
                         save()
@@ -748,7 +765,6 @@ def execute_recommendation(
                     if not observation and (
                         state["model_calls"] + state.get("planning_model_calls", 0)
                         >= settings["max_assessments"]
-                        or state["model_calls"] >= 50
                     ):
                         raise BudgetExhausted(
                             "Recommendation model-call budget exhausted; no automatic retry or score substitution."
@@ -799,6 +815,11 @@ def execute_recommendation(
                                     store,
                                     evidence_id,
                                     "augmented",
+                                    **(
+                                        {"usage_owner": run["id"]}
+                                        if assess is assess_evidence
+                                        else {}
+                                    ),
                                     max_seconds=remaining(),
                                 )
                             observation = cached_quality(store, evidence_id)
@@ -872,6 +893,15 @@ def execute_recommendation(
         except (BudgetExhausted, EvidencePending, AccessPaused) as error:
             from broader_vids.evidence.failures import failure_details
 
+            if (
+                isinstance(error, BudgetExhausted)
+                and error.resource == "http_requests"
+                and state["phase"] == "enrich"
+                and settings.get("screening_policy_version", 2) >= 3
+            ):
+                error = BudgetExhausted(
+                    collection_budget_message(store, run), resource="http_requests"
+                )
             failure = failure_details(error, state["phase"])
             state.setdefault("first_failure", failure)
             run.update(status="paused", reason=str(error))

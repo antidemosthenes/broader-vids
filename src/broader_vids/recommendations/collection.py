@@ -7,10 +7,19 @@ from broader_vids.recommendations.screening import rejection_reason
 from broader_vids.creators import enrich
 from broader_vids.storage import utc_now
 import json
+import hashlib
 
 
 def refill_candidates(
-    store, run, remaining, save, *, cancelled=None, request_gate=None
+    store,
+    run,
+    remaining,
+    save,
+    *,
+    cancelled=None,
+    request_gate=None,
+    lane=None,
+    visitor_session=None,
 ):
     from broader_vids.discovery.sources import YouTubeDiscovery, BilibiliDiscovery
     from broader_vids.discovery.service import (
@@ -40,6 +49,7 @@ def refill_candidates(
                 continue
             tasks.append(
                 {
+                    **plans.get(page["query"], {}),
                     **page,
                     "anchors": page.get("anchors")
                     or plans.get(page["query"], {}).get("anchors", []),
@@ -49,13 +59,35 @@ def refill_candidates(
                 }
             )
         state["refill_tasks"] = tasks
-    task = next((t for t in tasks if not t["done"]), None)
+    from broader_vids.recommendations.collection_policy import collection_lane
+
+    task = next(
+        (
+            t
+            for t in tasks
+            if not t["done"]
+            and (
+                lane is None
+                or collection_lane({"origins": [t]}, run["settings"]["profile"]) == lane
+            )
+        ),
+        None,
+    )
     if task is None or len(state["candidate_pool"]) >= 4000:
         return False
     if not task.get("anchors"):
         task["anchors"] = plans.get(task["query"], {}).get("anchors", [])
     if remaining() <= 0:
         raise BudgetExhausted("Candidate collection time budget exhausted.")
+    session_options = (
+        {
+            "cookie_jar": visitor_session.cookies,
+            "clock": visitor_session.clock,
+            "sleeper": visitor_session.sleeper,
+        }
+        if visitor_session is not None and run["platform"] == "youtube"
+        else {}
+    )
     retrieval = PublicHttp(
         store,
         {
@@ -66,6 +98,7 @@ def refill_candidates(
             },
         },
         anonymous_session=True,
+        **session_options,
     )
     retrieval.cancelled = cancelled
     if request_gate is not None:
@@ -85,7 +118,17 @@ def refill_candidates(
             items, cursor = provider.search(task["query"], page=task["page"])
         merge_page(source, items, "search", task, retrieval.last_receipt, cursor)
         store.save(source)
-    task.update(cursor=cursor, page=task["page"] + 1, done=not items or not cursor)
+    fingerprint = hashlib.sha256(
+        "\n".join(sorted({item["canonical_id"] for item in items})).encode()
+    ).hexdigest()
+    signatures = task.setdefault("page_signatures", [])
+    repeated = fingerprint in signatures or (
+        run["platform"] == "youtube" and cursor == task.get("cursor")
+    )
+    signatures.append(fingerprint)
+    task.update(
+        cursor=cursor, page=task["page"] + 1, done=not items or not cursor or repeated
+    )
     tasks.append(tasks.pop(tasks.index(task)))
     known = {item["canonical_id"]: item for item in state["candidate_pool"]}
     context = page_context("search", task, retrieval.last_receipt)
@@ -119,6 +162,21 @@ def collect_eligible_buffer(
     refill=refill_candidates,
     snapshot_collector=collect_snapshot,
 ):
+    if (
+        run["settings"].get("collection_policy")
+        and run["settings"].get("screening_policy_version", 2) >= 3
+    ):
+        from broader_vids.recommendations.collection_batches import collect_batches
+
+        return collect_batches(
+            store,
+            run,
+            http,
+            remaining,
+            save,
+            refill=refill,
+            snapshot_collector=snapshot_collector,
+        )
     state, settings = run["state"], run["settings"]
     state.setdefault("candidate_pool", list(state["buffer"]))
     state.setdefault("pool_index", 0)
@@ -156,6 +214,9 @@ def collect_eligible_buffer(
                     {
                         "cancelled": getattr(http, "cancelled", None),
                         "request_gate": getattr(http, "request_gate", None),
+                        "visitor_session": http
+                        if run["platform"] == "youtube"
+                        else None,
                     }
                     if refill is refill_candidates
                     else {}

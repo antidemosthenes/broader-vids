@@ -2,6 +2,8 @@ from contextlib import ExitStack
 import copy
 import json
 import math
+import os
+import sqlite3
 from pathlib import Path
 import time
 import uuid
@@ -9,10 +11,10 @@ import uuid
 from broader_vids import __version__
 from broader_vids.learning.depth import LEVELS, PRIOR_MEAN, PRIOR_SD, WIDTH
 from broader_vids.learning.features import FEATURE_VERSION, CRITERION_WEIGHTS
-from broader_vids.learning.inference import cholesky, work_scope
+from broader_vids.learning.inference import cholesky, work_scope, check_work
 from broader_vids.learning.posterior import portable_model
 from broader_vids.policy import Policy
-from broader_vids.preferences import ALIASES, get_profile, platform_lock
+from broader_vids.preferences import ALIASES, platform_lock
 from broader_vids.storage import utc_now
 
 
@@ -103,6 +105,7 @@ def _validate_model(model):
 
 
 def validate_bundle(bundle):
+    check_work()
     from broader_vids.learning.service import MODEL_VERSION
 
     _keys(
@@ -171,6 +174,7 @@ def validate_bundle(bundle):
         if not isinstance(cells, dict) or len(cells) > 2000:
             raise ValueError("The preference group limit is 2,000 cells per dimension.")
         for label, cell in cells.items():
+            check_work()
             _keys(cell, ("alpha", "observations"), "Preference cell")
             alpha, observations = cell["alpha"], cell["observations"]
             if (
@@ -188,6 +192,7 @@ def validate_bundle(bundle):
     if not isinstance(depth, dict) or len(depth) > 2000:
         raise ValueError("The depth preference limit is 2,000 subjects.")
     for label, model in depth.items():
+        check_work()
         _keys(
             model,
             ("mean", "sd", "observations", "predictions", "approximation", "counts"),
@@ -275,7 +280,7 @@ def _deadline(deadline):
         raise ValueError("Preference processing reached its time allowance.")
 
 
-def _snapshot(store):
+def _snapshot(store, **overrides):
     from broader_vids.learning.service import source_data
 
     if store.db.in_transaction:
@@ -284,17 +289,17 @@ def _snapshot(store):
         )
     store.db.execute("BEGIN")
     try:
-        return source_data(store)
+        return source_data(store, **overrides)
     finally:
         store.db.rollback()
 
 
-def _bundle(data):
+def _bundle(data, snapshot=None):
     from broader_vids.learning.service import train, MODEL_VERSION
 
     deadline = time.monotonic() + 60
     with work_scope(lambda: _deadline(deadline)):
-        snapshot = train(data)
+        snapshot = train(data) if snapshot is None else snapshot
         structured = snapshot["structured"]
         parameters = {
             "models": {k: portable_model(v) for k, v in snapshot["models"].items()},
@@ -336,8 +341,16 @@ def _bundle(data):
         return value
 
 
+def _cached_snapshot(store, data):
+    row = store.db.execute(
+        "SELECT payload FROM learning_models WHERE id=?", (_digest(data),)
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
 def export_preferences(store):
-    return _bundle(_snapshot(store))
+    data = _snapshot(store)
+    return _bundle(data, _cached_snapshot(store, data))
 
 
 def _encode(bundle):
@@ -354,31 +367,29 @@ def write_export(path, bundle, *, overwrite=False):
     raw = _encode(bundle)
     if len(raw) > MAX_BYTES:
         raise ValueError("The preference file exceeds the 8 MiB limit.")
-    if overwrite:
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with temporary.open("xb") as handle:
-                handle.write(raw)
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if overwrite:
             temporary.replace(destination)
-        finally:
-            temporary.unlink(missing_ok=True)
-    else:
-        created = False
-        try:
-            with destination.open("xb") as handle:
-                created = True
-                handle.write(raw)
-        except BaseException:
-            if created:
-                destination.unlink(missing_ok=True)
-            raise
+        elif os.name == "nt":
+            temporary.rename(destination)
+        else:
+            os.link(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
     return destination
 
 
-def preview_import(store, bundle):
+def preview_import(store, bundle, *, _validated=False):
     from broader_vids.learning.service import change_epoch
 
-    parameters = validate_bundle(bundle)["parameters"]
+    deadline = time.monotonic() + 20
+    with work_scope(lambda: _deadline(deadline)):
+        parameters = (bundle if _validated else validate_bundle(bundle))["parameters"]
     return {
         "compatible": True,
         "interests": bundle["preferences"]["interests"],
@@ -393,17 +404,19 @@ def preview_import(store, bundle):
     }
 
 
-def import_preferences(store, bundle, *, expected_revision=None):
+def import_preferences(store, bundle, *, expected_revision=None, _validated=False):
     from broader_vids.learning.service import (
         LEARNING_LOCK,
         change_epoch,
-        source_data,
+        prune_models,
         train,
     )
 
     deadline = time.monotonic() + 20
     with work_scope(lambda: _deadline(deadline)):
-        bundle = copy.deepcopy(validate_bundle(bundle))
+        bundle = copy.deepcopy(bundle)
+        if not _validated:
+            validate_bundle(bundle)
     with ExitStack() as locks:
         for key in (platform_lock("youtube"), platform_lock("bilibili"), LEARNING_LOCK):
             locks.enter_context(store.lease(key))
@@ -414,51 +427,78 @@ def import_preferences(store, bundle, *, expected_revision=None):
                 "Preferences changed after the preview. Preview the file again."
             )
         backup = store.root / "backups" / f"preferences-{uuid.uuid4().hex}.json"
-        write_export(backup, _bundle(data))
-        with store.db:
-            store.db.execute("BEGIN IMMEDIATE")
-            if _digest(change_epoch(store)) != revision:
-                raise ValueError(
-                    "Feedback changed during import. Preview the file again."
-                )
-            previous = get_profile(store)
-            payload = {k: v for k, v in (previous or {}).items() if k != "revision"}
+        write_export(backup, _bundle(data, _cached_snapshot(store, data)))
+        committed = False
+        identifier = uuid.uuid4().hex
+        try:
+            previous = data["profile"]
+            payload = {k: v for k, v in previous.items() if k != "revision"}
             interests = bundle["preferences"]["interests"]
             payload.update(
                 interests=interests,
                 updated_at=utc_now(),
                 learning="explicit_onboarding_only",
             )
-            profile_revision = (previous or {}).get("revision", 0) + (
-                previous is None or previous["interests"] != interests
+            profile_revision = previous.get("revision", 0) + (
+                previous.get("revision", 0) == 0 or previous["interests"] != interests
             )
-            store.db.execute(
-                "INSERT INTO user_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload",
-                (profile_revision, json.dumps(payload)),
-            )
-            cutoff = store.db.execute(
-                "SELECT COALESCE(MAX(id),0) FROM user_actions WHERE action='feedback'"
-            ).fetchone()[0]
-            identifier = store.create(
-                "both",
-                {"kind": "preference_import", "format_version": 1},
-                {
-                    "parameters": bundle["parameters"],
-                    "cutoff_action": cutoff,
-                    "source_checksum": bundle["checksum"],
-                },
-                commit=False,
-            )
-            store.db.execute(
-                "UPDATE runs SET status='completed' WHERE id=?", (identifier,)
-            )
-            restored_data = source_data(store)
-            snapshot = train(restored_data)
-            model_id = _digest(restored_data)
-            store.db.execute(
-                "INSERT OR REPLACE INTO learning_models VALUES(?,?,?)",
-                (model_id, utc_now(), json.dumps(snapshot)),
-            )
+            baseline = {
+                "id": identifier,
+                "parameters": bundle["parameters"],
+                "cutoff_action": data["epoch"]["feedback"],
+            }
+            deadline = time.monotonic() + 20
+            with work_scope(lambda: _deadline(deadline)):
+                restored_data = _snapshot(
+                    store,
+                    baseline_override=baseline,
+                    profile_override={"revision": profile_revision, **payload},
+                )
+                snapshot = train(restored_data)
+                model_id = _digest(restored_data)
+                serialized = json.dumps(snapshot)
+                check_work()
+            with store.db:
+                store.db.execute("BEGIN IMMEDIATE")
+                if _digest(change_epoch(store)) != revision:
+                    raise ValueError(
+                        "Feedback changed during import. Preview the file again."
+                    )
+                store.db.execute(
+                    "INSERT INTO user_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload",
+                    (profile_revision, json.dumps(payload)),
+                )
+                store.create(
+                    "both",
+                    {"kind": "preference_import", "format_version": 1},
+                    {
+                        "parameters": bundle["parameters"],
+                        "cutoff_action": baseline["cutoff_action"],
+                        "source_checksum": bundle["checksum"],
+                    },
+                    commit=False,
+                    run_id=identifier,
+                )
+                store.db.execute(
+                    "UPDATE runs SET status='completed' WHERE id=?", (identifier,)
+                )
+                store.db.execute(
+                    "INSERT OR REPLACE INTO learning_models VALUES(?,?,?)",
+                    (model_id, utc_now(), serialized),
+                )
+                prune_models(store, model_id)
+            committed = True
+        finally:
+            if not committed:
+                try:
+                    applied = store.db.execute(
+                        "SELECT 1 FROM runs WHERE id=? AND status='completed'",
+                        (identifier,),
+                    ).fetchone()
+                except sqlite3.Error:
+                    applied = True
+                if not applied:
+                    backup.unlink(missing_ok=True)
         return {
             "imported": True,
             "backup_path": str(backup),

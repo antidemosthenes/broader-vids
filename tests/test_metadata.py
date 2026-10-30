@@ -7,8 +7,8 @@ import urllib.error
 from unittest.mock import patch
 
 from broader_vids.cli.arguments import parser
-from broader_vids.http import AccessPaused, PublicHttp
-from broader_vids.recommendations.engagement import metadata_fresh
+from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
+from broader_vids.recommendations.engagement import collect_snapshot, metadata_fresh
 from broader_vids.recommendations.metadata import metadata_session, refresh_metadata
 from broader_vids.recommendations.service import enrich_buffer
 from broader_vids.storage import Store, utc_now
@@ -43,6 +43,18 @@ class Reply(io.BytesIO):
 
     def geturl(self):
         return "https://api.bilibili.com/x/web-interface/view/detail?bvid=" + VIDEO
+
+
+YOUTUBE_URL = "https://www.youtube.com/watch?v=0000000001A"
+
+
+class YouTubeReply(io.BytesIO):
+    def __init__(self, player):
+        body = "var ytInitialPlayerResponse = " + json.dumps(player) + ";"
+        super().__init__(body.encode())
+
+    def geturl(self):
+        return YOUTUBE_URL + "&hl=en"
 
 
 class MetadataTests(unittest.TestCase):
@@ -304,6 +316,132 @@ class MetadataTests(unittest.TestCase):
                     )
                 )
         self.assertIsNone(http.last_receipt)
+
+    @staticmethod
+    def youtube_http(store, run, **options):
+        return PublicHttp(store, run, sleeper=lambda _: None, **options)
+
+    def test_youtube_incomplete_metadata_retries_once_with_verified_receipts(self):
+        complete = {
+            "videoDetails": {
+                "videoId": "0000000001A",
+                "channelId": "UC" + "a" * 22,
+                "viewCount": "1000",
+                "lengthSeconds": "600",
+            },
+            "microformat": None,
+        }
+        for incomplete in (
+            {},
+            {"videoDetails": None},
+            {
+                "playabilityStatus": {
+                    "status": "ERROR",
+                    "reason": "An error occurred. Please try again later.",
+                }
+            },
+        ):
+            with (
+                self.subTest(response=incomplete),
+                patch(
+                    "urllib.request.OpenerDirector.open",
+                    side_effect=[YouTubeReply(incomplete), YouTubeReply(complete)],
+                ) as request,
+            ):
+                result = refresh_metadata(
+                    self.store, YOUTUBE_URL, http_factory=self.youtube_http
+                )
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(request.call_count, 2)
+            self.assertTrue(result["snapshot"]["identity_verified"])
+            self.assertEqual(result["snapshot"]["duration_seconds"], 600)
+            receipts = self.store.requests(result["run_id"])
+            self.assertEqual([r["outcome"] for r in receipts], ["unresolved", "ok"])
+            diagnostic = json.loads(receipts[0]["detail"])["metadata_validation"]
+            self.assertEqual(diagnostic["attempt"], 1)
+            self.assertEqual(diagnostic["requested_video_id"], "0000000001A")
+            self.assertEqual(
+                result["snapshot"]["receipt"]["request_id"], receipts[1]["id"]
+            )
+
+    def test_youtube_metadata_denials_and_limits_preserve_previous_snapshot(self):
+        key = "youtube:0000000001A"
+        previous = json.dumps({"previous": True})
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO engagement_snapshots VALUES(?,?)", (key, previous)
+            )
+        cases = (
+            ({"videoDetails": {"videoId": "0000000002A"}}, 1),
+            (
+                {
+                    "playabilityStatus": {
+                        "status": "LOGIN_REQUIRED",
+                        "reason": "Sign in to confirm you are not a bot. access_token=private-token",
+                    }
+                },
+                1,
+            ),
+            (
+                {
+                    "playabilityStatus": {
+                        "status": "UNPLAYABLE",
+                        "reason": "Video unavailable",
+                    }
+                },
+                1,
+            ),
+            ({}, 2),
+        )
+        for player, count in cases:
+            with (
+                self.subTest(player=player),
+                patch(
+                    "urllib.request.OpenerDirector.open",
+                    side_effect=[YouTubeReply(player) for _ in range(count)],
+                ) as request,
+            ):
+                result = refresh_metadata(
+                    self.store, YOUTUBE_URL, http_factory=self.youtube_http
+                )
+            self.assertEqual(result["status"], "paused")
+            self.assertEqual(request.call_count, count)
+            self.assertIn("0000000001A", result["reason"])
+            receipts = self.store.requests(result["run_id"])
+            self.assertTrue(all(r["outcome"] == "unresolved" for r in receipts))
+            self.assertNotIn("private-token", json.dumps(result) + json.dumps(receipts))
+            self.assertEqual(
+                self.store.db.execute(
+                    "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
+                    (key,),
+                ).fetchone()[0],
+                previous,
+            )
+        run = self.store.get(
+            self.store.create("youtube", {"max_seconds": 60, "max_requests": 1}, {})
+        )
+        http = PublicHttp(self.store, run, anonymous_session=True)
+        with patch(
+            "urllib.request.OpenerDirector.open", return_value=YouTubeReply({})
+        ) as request:
+            with self.assertRaises(BudgetExhausted):
+                collect_snapshot(
+                    http,
+                    {
+                        "platform": "youtube",
+                        "url": YOUTUBE_URL,
+                        "video_id": "0000000001A",
+                        "canonical_id": key,
+                    },
+                )
+        self.assertEqual(request.call_count, 1)
+        error = urllib.error.HTTPError(YOUTUBE_URL, 429, "blocked", {}, None)
+        with patch("urllib.request.OpenerDirector.open", side_effect=error) as request:
+            result = refresh_metadata(
+                self.store, YOUTUBE_URL, http_factory=self.youtube_http
+            )
+        self.assertEqual(result["status"], "paused")
+        self.assertEqual(request.call_count, 1)
 
 
 if __name__ == "__main__":

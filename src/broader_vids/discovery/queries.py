@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import re
 
+from broader_vids.discovery.languages import search_query
+
 
 def load_bank(path=None):
     raw = (
@@ -60,6 +62,7 @@ def load_bank(path=None):
                 raise ValueError(
                     "Each family needs 1–20 bounded query variants per platform."
                 )
+            family[platform] = [search_query(platform, term) for term in terms]
         groups = family.get("anchors", [])
         if not isinstance(groups, list) or not all(
             isinstance(g, list) and g and all(isinstance(s, str) and s for s in g)

@@ -77,7 +77,35 @@ class CliTests(unittest.TestCase):
                     else "broader_vids.recommendations.batch.execute_batch"
                 )
                 output = io.StringIO()
-                with patch(target) as execute, redirect_stdout(output):
+                from broader_vids.onboarding import configure, complete
+
+                with patch(
+                    "broader_vids.preflight.external_checks",
+                    return_value={
+                        "checks": {"tools": {"status": "available"}},
+                        "warnings": {},
+                    },
+                ):
+                    with closing(Store(directory)) as store:
+                        configure(store, platform)
+                        self.assertEqual(
+                            complete(store, model="fixture-model", effort="low")[
+                                "status"
+                            ],
+                            "ready",
+                        )
+                with (
+                    patch(
+                        "broader_vids.preflight.external_checks",
+                        return_value={
+                            "checks": {"tools": {"status": "available"}},
+                            "warnings": {},
+                        },
+                    ),
+                    patch(target) as execute,
+                    redirect_stdout(output),
+                    redirect_stderr(io.StringIO()),
+                ):
                     result = main(
                         [
                             "--data-dir",

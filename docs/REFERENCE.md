@@ -46,12 +46,17 @@ $env:BROADER_VIDS_DATA_DIR = 'C:\Broader Vids Data'
 
 An explicit `--data-dir` overrides this environment setting.
 Keep the data directory outside an installed plugin or npm package.
+The host can redirect `LOCALAPPDATA`, so setup always reports the actual absolute path.
+An ordinary terminal can resolve a different default from a sandboxed Codex conversation.
+Use the reported directory explicitly to access the same profile.
+Plugin uninstall preserves external profile data.
+Broader Vids supports sandbox profiles. Use an explicit path to select the same profile across environments.
 The Node launcher also stores its engine environment there.
 
 ## Prepare tools and sign-in
 
 ```powershell
-uv sync --locked --extra evidence --extra asr
+uv sync --locked --extra evidence
 uv run --no-sync broader-vids doctor
 codex login
 uv run --no-sync broader-vids login bilibili
@@ -66,13 +71,19 @@ uv run --no-sync broader-vids login bilibili
 | `login bilibili --confirm` | Request verification from the open sign-in window |
 | `login bilibili --timeout 600` | Allow 600 seconds for manual sign-in |
 
+Sign in manually in the separate Bilibili window.
+Keep the window open while you return to chat to report completion.
+For terminal use, run `login bilibili --confirm` in a second terminal.
+Broader Vids verifies the session and closes the window when sign-in checks finish.
+If you close it before verification, start sign-in again.
+
 ### Required and optional setup items
 
 `doctor` separates local requirements from optional tools and access checks.
 
 | Group | Items | Effect when unavailable |
 | --- | --- | --- |
-| Required for setup and recommendations | Python 3.12 or later, Node.js 20 or later, UV, Codex CLI, FFmpeg, yt-dlp, and Pillow | The local check fails and lists the required items to install or repair |
+| Required for setup and recommendations | Python 3.12 or later, Node.js 20 or later, UV, Codex CLI, FFmpeg, yt-dlp, Pillow, and OpenCC | The local check fails and lists the required items to install or repair |
 | Conditional for Bilibili browser access | Playwright and Edge, Chrome, or Playwright Chromium | Browser sign-in and authenticated Bilibili access need these items |
 | Conditional for full Bilibili video access | Verified Bilibili sign-in | Public discovery remains separate from full-video access |
 | Optional | faster-whisper | Native captions still work, but transcription fallback is unavailable |
@@ -108,6 +119,21 @@ uv run --no-sync playwright install chromium
 
 ## Set interests
 
+In the dashboard, select **Preferences**.
+The editor shows your current interests with or without an import.
+Enter one broader interest per line, then select **Save**.
+YouTube and Bilibili share this list.
+Use 1–40 interests, with at most 80 characters each.
+Saving preserves ratings, learned calibration, exclusions, and video history.
+Finish active recommendation work before saving.
+After a change, start a new round instead of continuing a paused round with an older profile.
+Unsaved interests stay in the current tab when you leave Preferences.
+Select **Reload saved interests** to discard that draft and load the current saved list.
+If another window changes the interests, reload the saved list before another save.
+Unrelated exclusion edits do not discard or block an interest draft.
+
+The terminal provides the same interest update:
+
 ```powershell
 uv run --no-sync broader-vids profile show
 uv run --no-sync broader-vids profile set --interest mathematics --interest travel
@@ -119,7 +145,9 @@ It does not infer interests from your watch history.
 
 ## Export or import learned preferences
 
-In the dashboard, select **Import/Export**.
+In the dashboard, select **Preferences**.
+Imported interests appear in the same page editor. Edit them and select **Save** when needed.
+Save interest edits before exporting.
 Select **Export preferences** to download a JSON file.
 For import, select **Choose file**.
 Broader Vids checks the file and shows its summary automatically.
@@ -152,6 +180,129 @@ Use that file with the same import operation to restore the earlier parameters.
 This recovery file contains no video history.
 Import does not reconstruct or replace a dashboard list.
 
+Exports use atomic file publication and leave existing files intact unless overwrite is explicit.
+An exact cached model avoids another fitting operation during export.
+Import prepares its model before the database write transaction.
+If feedback changes during preparation, the replacement stops and preserves that feedback.
+Failed imports remove unused recovery files. Successful imports retain recovery files for later restoration.
+The transfer dialog releases its selected file when you close it.
+Rating drafts remain intact.
+
+## Reset or remove profile data
+
+Use the installed Reset or Clean skill for the guided workflow.
+Their identifiers are `$broader-vids-reset` and `$broader-vids-clean`.
+The host can show plugin-qualified names.
+These commands are separate from `cleanup`, which removes disposable evidence and preserves preferences.
+
+| Action | Removes | Preserves |
+| --- | --- | --- |
+| Reset | Preferences, learned weights, ratings, creator and tag rules, histories, results, evidence, and recovery files | Installed runtime, transcription models, Bilibili sign-in, selected directory, and unknown files |
+| Clean | Complete managed data directory, including tools and local sign-in | Installed plugin, exports outside the directory, and shared UV or npm caches |
+
+Built-in screening rules remain part of the installed code.
+Neither action changes your remote Bilibili blacklist.
+A later sync can import that blacklist again.
+Run setup after either action.
+
+The following source-checkout commands preview the selected profile without changing it:
+
+```powershell
+node bin/broader-vids.cjs data show
+node bin/broader-vids.cjs reset
+node bin/broader-vids.cjs clean
+```
+
+Use the absolute launcher path from setup when running an installed plugin.
+Run these commands from outside the selected data directory.
+A source checkout also supports `uv run --no-sync broader-vids reset` and `clean`.
+Both routes delegate destructive file operations to Node.
+This lets Clean remove its Python runtime after that runtime exits.
+
+Check the printed absolute target, estimated size, removed items, retained items, and blockers.
+Finish active runs and sign-in. Stop this profile's dashboard.
+An explicit apply requires the same absolute directory in `--confirm-path`:
+
+```powershell
+node bin/broader-vids.cjs --data-dir 'C:\exact\profile' dashboard stop
+node bin/broader-vids.cjs --data-dir 'C:\exact\profile' reset --apply --confirm-path 'C:\exact\profile'
+node bin/broader-vids.cjs --data-dir 'C:\exact\profile' clean --apply --confirm-path 'C:\exact\profile'
+```
+
+Choose Reset or Clean. Do not run both unless that is your intent.
+An explanatory or implementation request does not authorize deletion of the real profile.
+Unknown files block Clean, and Reset preserves them.
+The commands reject home directories, system roots, plugin directories, and unrecognized profiles.
+They do not follow directory links outside the selected data.
+Active or uncertain locks block both actions.
+A failed reset staging move restores the files before deletion starts.
+An interrupted deletion can retain `.reset-pending` for recovery.
+Complete Reset or Clean before using that profile again.
+A partial result means some data can remain.
+The commands do not create an archive that retains the removed preferences.
+Keep an export outside the target directory if you want to restore its learned parameters later.
+
+## Guided setup and preflight
+
+The installed setup skill introduces the plugin and records your platform choice.
+An existing profile without onboarding metadata receives this introduction once.
+Its interests, ratings, and learned weights remain intact.
+
+```powershell
+uv run --no-sync broader-vids onboarding status
+uv run --no-sync broader-vids onboarding configure --platform both
+uv run --no-sync broader-vids onboarding complete
+uv run --no-sync broader-vids preflight
+```
+
+Configure the platform before completion.
+Import preferences or set interests before completion.
+Complete Bilibili sign-in when the selected platforms include Bilibili.
+Completion verifies the requirements before it records success.
+Include `--asr-model base` in `onboarding complete` only when you requested transcription.
+The check verifies the transcription package without downloading a model.
+A successful response includes `self_check: passed`, the actual data directory, and `next_steps`.
+Each next action includes a chat request, skill name, and skill invocation.
+Skill replies keep raw launcher commands internal.
+The host supplies the exact skill invocation syntax.
+For terminal use, supply the model and effort as described in the recommendation command reference.
+Changing the default platform requires completion again.
+Reusing the same choice preserves completion.
+
+`preflight [youtube|bilibili|both]` checks readiness without creating a recommendation round.
+Omitting the platform uses the saved default.
+Use `--asr-model base` to check requested transcription support.
+Pass both `--model` and `--effort` from the host when chat inheritance is unavailable.
+The report contains checks, remedies, optional warnings, platform counts, and elapsed seconds.
+Statuses are `ready`, `setup_required`, `blocked`, and `feedback_required`.
+Only `ready` returns exit code zero. The other statuses return two.
+
+Unlike `doctor`, preflight checks ChatGPT sign-in and starts the saved Bilibili browser when needed.
+It imports required media modules and checks the selected FFmpeg executable.
+It does not call a quality model or synchronize the blacklist.
+Automated subprocess checks have a maximum thirty-second deadline.
+They use the existing owned-process cleanup.
+A timed-out browser check removes only its own browser lock.
+A busy browser or recommendation operation requires a later retry.
+Do not remove another operation's lock.
+
+Any blank rating dimension makes a recommended video incomplete.
+Counts include all previous recommendation exposures for the requested platforms, with duplicate videos counted once.
+Dismissed videos and calibration-only examples do not count.
+The report separates videos without ratings from partially rated videos.
+Choose **Open dashboard and stop** to review feedback.
+Request recommendations again after review.
+Alternatively, explicitly choose **Continue this round**.
+The terminal equivalent is `recommend --allow-missing-feedback`.
+That flag does not fill blank ratings or disable later reminders.
+
+Required failures always block work, including when that flag is present.
+For both platforms, a failure does not silently switch to one platform.
+Existing blacklist-sync failures remain nonblocking under the saved-copy policy.
+Resuming uses saved settings and checks readiness without the feedback prompt.
+Automated checks consume the new or resumed round's existing time allowance.
+Setup, manual repairs, and user decisions occur outside that allowance.
+
 ## Request recommendations
 
 ```powershell
@@ -159,17 +310,20 @@ uv run --no-sync broader-vids recommend both --use-browser --asr-model base
 ```
 
 Use `youtube` or `bilibili` instead of `both` for one platform.
+Omit the platform to use the saved onboarding choice.
+An explicit platform applies to this request without changing the saved default.
 A new command requests a new round.
 It retains existing feedback and pending recommendations.
 
 | Argument | Meaning | Default |
 | --- | --- | --- |
-| `--use-browser` | Use the separate Bilibili login for metadata and evidence | Disabled |
+| `--use-browser` | Use the separate Bilibili login for metadata and evidence | Automatic for new Bilibili rounds |
+| `--allow-missing-feedback` | Continue this round after accepting the feedback reminder | Disabled |
 | `--max-seconds` | Time allowance for the recommendation invocation | 1800 seconds |
 | `--workers` | Maximum shared model-worker count | 4 |
 | `--model` | Explicit host bridge for the invoking chat's model | Inherit current chat |
 | `--effort` | Explicit host bridge for its reasoning effort | Inherit current chat |
-| `--max-requests` | Metadata request allowance per platform | 160 |
+| `--max-requests` | Metadata request allowance per platform, including blacklist sync and collection refills | 320 |
 | `--max-assessments` | Total model-call allowance per platform, including planning | 52 |
 | `--max-mib` | New media allowance per platform, in mebibytes | 1024 |
 | `--asr-model` | Local transcription model, `tiny`, `base`, or `small` | No transcription fallback |
@@ -190,6 +344,17 @@ Failed calls consume their allowance.
 The engine does not switch to paid API access automatically.
 
 ## Continue an incomplete run
+
+Continue uses the saved request cap unless you explicitly increase it.
+For a metadata-budget pause, use `continue RUN_ID --max-requests 320` or a larger cap up to 1,000.
+For a two-platform round, use its batch ID.
+The update applies to unfinished platform checkpoints and leaves completed results intact.
+The new value is a total cap, not an additional request count.
+Prior requests, elapsed time, collected candidates, model settings, and exclusion snapshots do not reset.
+Active workers block the update.
+The readiness check must pass before the update applies.
+A request-cap increase cannot repair exhausted time or an access challenge.
+
 
 ```powershell
 uv run --no-sync broader-vids status
@@ -314,7 +479,11 @@ uv run --no-sync broader-vids exclusions sync-bilibili
 Replace CHANNEL_ID with the complete YouTube channel ID that starts with UC.
 Replace ACCOUNT_ID with the creator's positive numeric Bilibili ID.
 Replace TAG with an exact tag name.
-The built-in 视频翻译 rule cannot be removed.
+The 视频翻译 exclusion is built in but removable.
+Remove it under Exclusions → Bilibili → Tags, or use the terminal remove command.
+Use Add tag or the terminal add command to restore it.
+A removal persists across restarts, interest changes, and preference imports.
+The tag still supplies originality evidence when its exclusion is off.
 Imported creator rules cannot be overridden locally.
 A manual removal leaves any imported ban in effect.
 The manual list is separate for each platform.
@@ -366,6 +535,52 @@ Times use your browser's local time zone.
 The timestamp tooltip includes seconds and the time zone.
 Sync blacklist updates only that operation's busy state.
 Other navigation remains available.
+
+To change accounts, select Switch account under Exclusions → Bilibili.
+Sign in manually in the new browser window.
+Keep it open, return to the dashboard, and select I've signed in.
+Broader Vids closes the window when sign-in checks finish.
+The current session stays active until the new session passes verification.
+Cancel switch, a timeout, or failed verification keeps the current session.
+After verification, the dashboard activates the new session and removes the previous local session.
+This does not sign you out on other devices.
+Preferences, ratings, histories, and manual exclusions stay unchanged.
+The new account uses its own imported blacklist.
+If sync fails, its saved blacklist stays active.
+Without a saved copy, only manual bans apply.
+Finish active Bilibili work before switching accounts.
+If file cleanup fails, select Finish recovery before using Bilibili again.
+Navigation and rating drafts remain available during sign-in.
+Closing the dashboard server cancels a sign-in that has not reached activation.
+
+Select Token usage in the dashboard to inspect a saved recommendation round.
+The report remains available before publication and after a pause or failure.
+It shows input tokens, output tokens, cached input, and each step's share of reported tokens.
+Reported tokens equal input plus output. Input totals include cached input.
+Local search, screening, evidence preparation, and scoring do not use model tokens.
+Quality assessment combines caption and frame input in the same model call.
+Caption rows retain their IDs, timestamps, and text in compact arrays.
+Assessment workers use task-specific instructions through the supported Codex `model_instructions_file` setting.
+This setting applies only to child workers. It does not change the user's Codex configuration.
+The saved model, reasoning effort, quality criteria, and evidence checks remain unchanged.
+The report does not estimate separate image-token counts.
+The report includes retries and failed attempts when Codex reports their usage.
+The report marks missing measurements as unreported. It does not estimate their tokens.
+Stage percentages use only reported tokens, so a report can be partial.
+Historical rounds use the saved measurements that remain in their checkpoints.
+Cached assessments reused from an earlier round do not create new token usage.
+The report excludes the host chat and does not measure subscription quota or money.
+Opening it makes no model requests.
+
+The terminal provides the same saved report:
+
+```powershell
+uv run --no-sync broader-vids usage
+uv run --no-sync broader-vids usage RUN_ID
+```
+
+The first command selects the latest round. The second selects an exact round.
+Codex exposes model usage through its [JSON event stream](https://learn.chatgpt.com/docs/non-interactive-mode).
 
 Calibration remains optional and starts empty for a new profile.
 The current dashboard does not select examples automatically.
@@ -503,9 +718,37 @@ uv sync --locked --extra evidence --extra asr
 npm ci --ignore-scripts
 uv run --no-sync ruff check src tests scripts
 uv run --no-sync ruff format --check src tests scripts
-uv run --no-sync python -m unittest discover -s tests
+uv run --no-sync scripts/test.py
 npm test
 npm run check:web
+```
+
+The default Python command runs the full suite with up to four isolated worker processes.
+Each worker runs one test file at a time.
+Files use separate temporary profiles, ports, and mock state.
+The runner reports failures and the slowest tests.
+It starts slower files first using timings in the ignored `.cache/test-durations.json` file.
+Only one browser-test file runs at a time. Other workers continue core tests.
+Each file keeps its own process and temporary profile.
+Layout checks run by default. Inspection screenshots require `BROADER_VIDS_TEST_SCREENSHOTS=1`.
+It returns a nonzero exit code when a test or worker fails.
+The GitHub Actions test step uses two workers.
+Use a smaller group for a change in one area:
+
+```powershell
+uv run --no-sync scripts/test.py --group core
+uv run --no-sync scripts/test.py --group dashboard
+uv run --no-sync scripts/test.py --pattern test_preflight.py
+```
+
+Core excludes files whose names contain `dashboard`.
+Dashboard includes browser tests and the dashboard server lifecycle tests.
+The full suite includes both groups.
+Use `--jobs 1` to run isolated files in sequence.
+Use the standard command to debug tests in one process:
+
+```powershell
+uv run --no-sync python -m unittest discover -s tests
 ```
 
 Tests use temporary data and controlled responses.
@@ -552,7 +795,7 @@ Open a new desktop or CLI conversation after installation.
 For installation through the ChatGPT desktop app, follow [the README](../README.md#option-2-install-in-the-chatgpt-desktop-app).
 Use the installed Broader Vids setup skill for guided setup.
 The host exposes the recommendation, setup, and dashboard skills through its skill menu.
-Their skill names are `broader-vids`, `broader-vids-setup`, and `broader-vids-dashboard`.
+Their skill names include `broader-vids`, `broader-vids-setup`, `broader-vids-dashboard`, `broader-vids-reset`, and `broader-vids-clean`.
 Use the invocation syntax that the host shows.
 The manifest declares the onboarding skill through `extensions.com.openai.onboardingSkill`.
 Allow the host to access the selected external profile, required network services, and existing Codex session when prompted.
@@ -587,6 +830,10 @@ node bin/broader-vids.cjs dashboard stop
 ```
 
 Open starts or reuses the verified server for the selected profile.
+It requests the system browser and returns the exact URL.
+`browser_status: launch_requested` means the operating system accepted the request. It does not check that the page rendered.
+If the system cannot start the browser, the command returns `manual_open_required` and keeps the server available.
+Open the returned URL in your system browser if an embedded browser stays blank.
 `--no-browser` returns its URL without opening the system browser.
 The dashboard skill presents that URL in chat.
 A busy preferred port causes the server to select a free port.
@@ -613,11 +860,20 @@ These commands do not upload artifacts.
 From an unpacked package, install its external engine:
 
 ```powershell
-node bin/broader-vids.cjs setup --asr
+node bin/broader-vids.cjs setup --evidence
 node bin/broader-vids.cjs doctor
 ```
 
-`setup` installs the dependency-free core.
+Stop the profile's dashboard with `dashboard stop` before changing its runtime.
+Finish active recommendations and Bilibili browser operations before setup.
+Concurrent setup or runtime use returns a busy result instead of changing active files.
+A failed child command releases its installation lock.
+If a launcher exits unexpectedly, check for surviving children before repairing its lock.
+The launcher does not remove uncertain locks automatically.
+
+`setup` installs the engine and its locked core dependencies, including OpenCC.
+Its `installed` status does not mean onboarding is complete.
+Use the guided setup skill to configure interests, choose platforms, and check access.
 `setup --evidence` also installs browser and media tools.
 `setup --asr` includes those tools and transcription dependencies.
 Setup requires Node.js 20 or later and UV.
@@ -651,6 +907,14 @@ The project notice names copyright holder **antidemosthenes**, year **2026**.
 Keep that notice with redistributed Broader Vids code.
 
 Third-party authors retain their own copyright.
+Search keywords use English for YouTube and Simplified Chinese for Bilibili.
+The existing AI topic plan stores both variants for each selected keyword.
+The hierarchy and interest labels retain their existing forms.
+The AI supplies English wording. Script checks reject incompatible writing systems before keyword requests.
+OpenCC converts Traditional Chinese to Simplified Chinese locally. It does not translate between languages.
+Creator-name lookups retain the exact observed name, including Latin names.
+A language repair uses the remaining planning-call allowance and retains the current hierarchy refinement setting.
+
 The following table identifies the main tools and their upstream license information.
 It is not a complete list of optional transitive packages.
 
@@ -661,6 +925,7 @@ It is not a complete list of optional transitive packages.
 | [Node.js](https://github.com/nodejs/node/blob/main/LICENSE) | Launcher runtime | MIT and included third-party notices |
 | [Codex CLI](https://developers.openai.com/codex/cli/) | Authenticated model execution | See the CLI distribution and OpenAI service terms |
 | [SQLite](https://sqlite.org/copyright.html) | Local database through Python | Public domain dedication |
+| [opencc-python-reimplemented](https://github.com/yichen0831/opencc-python) | Local Simplified Chinese keyword conversion | Apache-2.0 |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp#license) | Playable metadata, captions, and media | Unlicense for core source, with separate dependency notices |
 | [Playwright](https://github.com/microsoft/playwright-python/blob/main/LICENSE) | Separate browser profile | Apache-2.0 |
 | [Pillow](https://pillow.readthedocs.io/en/stable/about.html#license) | Frame image processing | MIT-CMU |
@@ -676,13 +941,14 @@ It is not a complete list of optional transitive packages.
 | [Prettier](https://github.com/prettier/prettier/blob/main/LICENSE) | Browser asset formatting | MIT |
 
 The Node archive contains the Broader Vids wheel and dependency lock files.
+Setup always installs the core requirements, including OpenCC. Evidence and transcription retain their separate dependency groups.
 It does not bundle the optional Python distributions, browser binaries, or model weights.
 Explicit setup downloads selected dependencies separately.
 FFmpeg binaries and model weights can have terms distinct from their Python wrappers.
 Retain the notices supplied with the exact versions that you redistribute.
 
 `uv.lock` and `package-lock.json` record resolved dependency versions.
-The two requirements files under `python/` also record package hashes.
+The three requirements files under `python/` record package hashes for core, evidence, and transcription dependencies.
 Check the installed distributions' license files when preparing a release.
 The Broader Vids license does not grant rights to platform videos or third-party media.
 
@@ -716,8 +982,15 @@ Its call allowance is at most 180 seconds.
 The parent deadline includes queue waits and all work.
 Continuation preserves that deadline and all cumulative allowances.
 
-Metadata retrieval uses at most two concurrent requests per platform.
-Their starts remain at least one second apart.
+YouTube metadata retrieval uses one active watch-page request and starts at least one second apart.
+Bilibili metadata retrieval uses at most two concurrent requests and starts at least one second apart.
+Workers retain server-issued session cookies in memory.
+Pacing waits consume the saved time allowance.
+The [yt-dlp request-rate guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#common-youtube-errors) recommends longer waits between downloads when rate limits occur.
+YouTube can still require sign-in or verification.
+Such a response pauses the platform without an automatic retry or a negative video rating.
+Review the reported video in your system browser and continue explicitly after access is restored.
+Browser sign-in is not imported automatically. Increasing the request cap does not repair an access challenge.
 They share one request counter and retain the existing access checks.
 Video downloads omit audio unless transcription requires it.
 Exact selected-stream sizes support a check before transfer.
@@ -729,7 +1002,8 @@ The final JSON result remains on standard output.
 Reports include phase times, queue waits, assessment times, caption counts, and cache hits.
 Assessment times include worker startup and access checks.
 They do not measure isolated model inference time.
-Paused rounds can show a provisional preview in the digest.
+Paused rounds can show a provisional preview in the digest and dashboard.
+The dashboard labels the preview and allows ratings before publication.
 That preview does not publish recommendations or change pending membership.
 
 Scorecard schemas and validators use the same topic-label length bound of 120 characters.

@@ -32,6 +32,8 @@ def main(archive_path):
         assert not any(private.intersection(Path(name).parts) for name in names), (
             "Private file in package"
         )
+        for group in ("core", "evidence", "asr"):
+            assert f"package/python/{group}-requirements.txt" in names, group
         wheel_names = [name for name in names if name.endswith(".whl")]
         assert (
             len(wheel_names) == 1

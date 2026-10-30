@@ -265,9 +265,17 @@ class FeedbackWorkflowTests(unittest.TestCase):
             get_profile(self.store)["excluded_tags"],
             {"bilibili": [], "youtube": ["YouDub"]},
         )
-        for remove in (True, False):
-            with self.assertRaises(ValueError):
-                update_tag_rule(self.store, "bilibili", "视频翻译", remove=remove)
+        update_tag_rule(self.store, "bilibili", "视频翻译", remove=True)
+        self.assertEqual(
+            get_profile(self.store)["disabled_builtin_tags"], {"bilibili": ["视频翻译"]}
+        )
+        revision = get_profile(self.store)["revision"]
+        update_tag_rule(self.store, "bilibili", "视频翻译", remove=True)
+        self.assertEqual(get_profile(self.store)["revision"], revision)
+        update_tag_rule(self.store, "bilibili", "视频翻译")
+        self.assertEqual(
+            get_profile(self.store)["disabled_builtin_tags"], {"bilibili": []}
+        )
 
     def test_blank_rating_creates_no_observation(self):
         with self.assertRaises(ValueError):

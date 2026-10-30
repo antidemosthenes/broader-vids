@@ -4,6 +4,7 @@ import random
 import subprocess
 import time
 
+from broader_vids.discovery.languages import QueryLanguageError
 from broader_vids.evidence.assessment import run_codex
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.exploration.domains import (
@@ -54,7 +55,9 @@ def new_plan(store, seed=None):
     }
 
 
-def prepare_plan(store, run, save, remaining, model_runner=run_codex):
+def prepare_plan(
+    store, run, save, remaining, model_runner=run_codex, *, usage_owner=None
+):
     state = run["state"]["exploration"]
     if state["profile"]["revision"] != get_profile(store)["revision"]:
         raise EvidencePending("Interests changed; create a new exploration round.")
@@ -74,7 +77,11 @@ def prepare_plan(store, run, save, remaining, model_runner=run_codex):
         recent_empty = sum(
             r.get("new_topic") and r.get("matched", 0) == 0 for r in state["recent"]
         )
-        refine = number > 1 or recent_empty >= 5
+        refine = (
+            state["attempts"][-1]["allow_refinements"]
+            if state["attempts"] and state["attempts"][-1].get("language_error")
+            else number > 1 or recent_empty >= 5
+        )
         prompt = proposal_prompt(
             current,
             state["selected"],
@@ -82,6 +89,9 @@ def prepare_plan(store, run, save, remaining, model_runner=run_codex):
             state["profile"],
             5 - len(state["new_nodes"]),
             refine,
+            language_errors=[
+                a["reason"] for a in state["attempts"] if a.get("language_error")
+            ],
         )
         if len(prompt.encode("utf-8")) > 192 * 1024:
             raise EvidencePending(
@@ -103,7 +113,15 @@ def prepare_plan(store, run, save, remaining, model_runner=run_codex):
         save()
         started = time.monotonic()
         try:
-            response, usage = model_runner(
+            from broader_vids.token_usage import tracked_call
+
+            response, usage = tracked_call(
+                store,
+                usage_owner or run["id"],
+                run["id"],
+                "exploration",
+                number,
+                model_runner,
                 prompt,
                 schema,
                 root / f"attempt-{number}.json",
@@ -145,10 +163,18 @@ def prepare_plan(store, run, save, remaining, model_runner=run_codex):
             subprocess.TimeoutExpired,
         ) as error:
             attempt.update(status="failed", reason=public_error(error))
+            if isinstance(error, QueryLanguageError):
+                attempt["language_error"] = True
         finally:
             attempt["seconds"] = round(time.monotonic() - started, 3)
             save()
         if attempt["status"] == "failed":
+            if (
+                attempt.get("language_error")
+                and len(state["attempts"]) < allowance
+                and remaining() > 0
+            ):
+                continue
             raise EvidencePending(
                 "Exploration generation failed; its attempt is recorded. Continue within the original planning allowance."
             )

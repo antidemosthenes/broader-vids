@@ -3,31 +3,62 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 
 
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 
 
+def _recent_lines(path):
+    deadline = time.monotonic() + 3
+    with Path(path).open("rb") as handle:
+        position = handle.seek(0, 2)
+        pending, skipping = b"", False
+        while position:
+            if time.monotonic() >= deadline:
+                return
+            length = min(65536, position)
+            position -= length
+            handle.seek(position)
+            block = handle.read(length)
+            if skipping:
+                boundary = block.rfind(b"\n")
+                if boundary < 0:
+                    continue
+                block, skipping = block[: boundary + 1], False
+            lines = (block + pending).split(b"\n")
+            pending = lines[0]
+            for line in reversed(lines[1:]):
+                if len(line) <= 1024 * 1024:
+                    yield line
+            if len(pending) > 1024 * 1024:
+                pending, skipping = b"", True
+        if pending and not skipping:
+            yield pending
+
+
 @lru_cache(maxsize=8)
 def _turn_settings(path, modified, size):
-    selected = None
-    with Path(path).open(encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if record.get("type") != "turn_context":
-                continue
-            payload = record.get("payload") or {}
-            settings = (payload.get("collaboration_mode") or {}).get("settings") or {}
-            selected = (
-                payload.get("model") or settings.get("model"),
-                payload.get("effort")
-                or payload.get("reasoning_effort")
-                or settings.get("reasoning_effort"),
-            )
-    return selected
+    for line in _recent_lines(path):
+        try:
+            record = json.loads(line)
+        except (ValueError, UnicodeError, RecursionError):
+            continue
+        if not isinstance(record, dict) or record.get("type") != "turn_context":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        mode = payload.get("collaboration_mode")
+        settings = mode.get("settings") if isinstance(mode, dict) else None
+        settings = settings if isinstance(settings, dict) else {}
+        return (
+            payload.get("model") or settings.get("model"),
+            payload.get("effort")
+            or payload.get("reasoning_effort")
+            or settings.get("reasoning_effort"),
+        )
+    return None
 
 
 def resolve_worker_settings(model=None, effort=None, *, environ=None):

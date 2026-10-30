@@ -294,6 +294,7 @@ class VideoFetcher:
             "retries": 0,
             "fragment_retries": 0,
             "extractor_retries": 0,
+            "extractor_args": {"youtube": {"skip": ["translated_subs"]}},
             "js_runtimes": {"node": {}},
             "cachedir": False,
             "format": VIDEO_FORMAT,
@@ -406,72 +407,64 @@ class VideoFetcher:
         return info
 
     def captions(self, info, directory, platform):
-        groups = (
-            ("author", info.get("subtitles") or {}),
-            ("automatic", info.get("automatic_captions") or {}),
-        )
-        preferred = ("zh", "en") if platform == "bilibili" else ("en", "zh")
-        for source, languages in groups:
-            for prefix in preferred:
-                for language, tracks in languages.items():
-                    if not language.removeprefix("ai-").startswith(prefix):
-                        continue
-                    track = next(
-                        (
-                            t
-                            for extension in ("json3", "json", "vtt", "srt")
-                            for t in tracks
-                            if t.get("ext") == extension
-                            and (t.get("url") or isinstance(t.get("data"), str))
-                        ),
-                        None,
-                    )
-                    if track is None:
-                        continue
-                    try:
-                        inline = isinstance(track.get("data"), str)
-                        if inline:
-                            raw = track["data"].encode("utf-8")
-                        else:
-                            with self.ydl.urlopen(track["url"]) as response:
-                                raw = response.read(2 * 1024 * 1024 + 1)
-                        if len(raw) > 2 * 1024 * 1024:
-                            raise EvidencePending("Caption response exceeded 2 MiB.")
-                        cues = parse_captions(
-                            raw.decode("utf-8-sig"), track["ext"], info["duration"]
-                        )
-                    except Exception as error:
-                        status = getattr(error, "status", None) or getattr(
-                            error, "code", None
-                        )
+        from broader_vids.evidence.captions import caption_tracks
+
+        failure = None
+        for source, language, track in caption_tracks(info, platform)[:3]:
+            try:
+                inline = isinstance(track.get("data"), str)
+                if inline:
+                    raw = track["data"].encode("utf-8")
+                else:
+                    if time.monotonic() >= self.deadline or (
+                        getattr(self, "cancelled", None) is not None
+                        and self.cancelled.is_set()
+                    ):
                         raise EvidencePending(
-                            f"Caption access/format failed ({type(error).__name__}, status {status}); no transcript was invented.",
-                            scope="platform"
-                            if status in {403, 412, 429}
-                            else "candidate",
-                            category="access"
-                            if status in {403, 412, 429}
-                            else "captions",
-                        ) from None
-                    if cues:
-                        target = Path(directory) / "captions.json"
-                        target.write_text(
-                            json.dumps(cues, ensure_ascii=False, indent=2),
-                            encoding="utf-8",
+                            "Caption retrieval was cancelled or reached its deadline.",
+                            retryable=True,
                         )
-                        return {
-                            "source": "automatic"
-                            if language.startswith("ai-")
-                            else source,
-                            "language": language,
-                            "format": track["ext"],
-                            "path": str(target),
-                            "sha256": file_hash(target),
-                            "cue_count": len(cues),
-                            "download_bytes": 0 if inline else len(raw),
-                            "materialized_bytes": len(raw),
-                            "delivery": "extractor_inline" if inline else "caption_url",
-                        }
+                    with self.ydl.urlopen(track["url"]) as response:
+                        raw = response.read(2 * 1024 * 1024 + 1)
+                if len(raw) > 2 * 1024 * 1024:
+                    raise EvidencePending("Caption response exceeded 2 MiB.")
+                cues = parse_captions(
+                    raw.decode("utf-8-sig"), track["ext"], info["duration"]
+                )
+            except Exception as error:
+                if isinstance(error, EvidencePending) and error.retryable:
+                    raise
+                status = getattr(error, "status", None) or getattr(error, "code", None)
+                failure = EvidencePending(
+                    f"Caption access/format failed ({type(error).__name__}, status {status}, language {language}); no transcript was invented.",
+                    scope="platform" if status in {403, 412, 429} else "candidate",
+                    category="access" if status in {403, 412, 429} else "captions",
+                    retryable=status == 429,
+                )
+                if failure.scope == "platform":
+                    raise failure from None
+                continue
+            if cues:
+                target = Path(directory) / "captions.json"
+                target.write_text(
+                    json.dumps(cues, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                return {
+                    "source": "automatic" if language.startswith("ai-") else source,
+                    "language": language,
+                    "format": track["ext"],
+                    "path": str(target),
+                    "sha256": file_hash(target),
+                    "cue_count": len(cues),
+                    "download_bytes": 0 if inline else len(raw),
+                    "materialized_bytes": len(raw),
+                    "delivery": "extractor_inline" if inline else "caption_url",
+                    "selection_policy": "original_tracks"
+                    if platform == "youtube"
+                    else "preferred_languages",
+                }
+        if failure:
+            raise failure
         return None
 
     def download(self, info, directory):

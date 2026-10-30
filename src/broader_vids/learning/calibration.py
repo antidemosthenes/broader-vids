@@ -121,7 +121,7 @@ def start_calibration(store, size=30, seed=42, new=False):
         }
         if (
             not observation
-            or provenance(item)["excluded"]
+            or provenance(item, source["profile"])["excluded"]
             or run["platform"] + ":" + str(item.get("creator_id") or "")
             in existing_creators
             or context_identity(assessment_context(item))

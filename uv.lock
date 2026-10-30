@@ -46,6 +46,48 @@ wheels = [
 ]
 
 [[package]]
+name = "broader-vids"
+version = "0.1.0a17"
+source = { editable = "." }
+dependencies = [
+    { name = "opencc-python-reimplemented" },
+]
+
+[package.optional-dependencies]
+asr = [
+    { name = "faster-whisper" },
+]
+evidence = [
+    { name = "imageio-ffmpeg" },
+    { name = "pillow" },
+    { name = "playwright" },
+    { name = "yt-dlp", extra = ["default"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyyaml" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "faster-whisper", marker = "extra == 'asr'", specifier = ">=1.2.1" },
+    { name = "imageio-ffmpeg", marker = "extra == 'evidence'", specifier = ">=0.6.0" },
+    { name = "opencc-python-reimplemented", specifier = "==0.1.7" },
+    { name = "pillow", marker = "extra == 'evidence'", specifier = ">=13.0.0" },
+    { name = "playwright", marker = "extra == 'evidence'", specifier = ">=1.64.1" },
+    { name = "yt-dlp", extras = ["default"], marker = "extra == 'evidence'", specifier = ">=2026.10.21" },
+]
+provides-extras = ["evidence", "asr"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "ruff", specifier = "==0.14.3" },
+]
+
+[[package]]
 name = "brotli"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -410,44 +452,6 @@ wheels = [
 ]
 
 [[package]]
-name = "broader-vids"
-version = "0.1.0a17"
-source = { editable = "." }
-
-[package.optional-dependencies]
-asr = [
-    { name = "faster-whisper" },
-]
-evidence = [
-    { name = "imageio-ffmpeg" },
-    { name = "pillow" },
-    { name = "playwright" },
-    { name = "yt-dlp", extra = ["default"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pyyaml" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "faster-whisper", marker = "extra == 'asr'", specifier = ">=1.2.1" },
-    { name = "imageio-ffmpeg", marker = "extra == 'evidence'", specifier = ">=0.6.0" },
-    { name = "pillow", marker = "extra == 'evidence'", specifier = ">=13.0.0" },
-    { name = "playwright", marker = "extra == 'evidence'", specifier = ">=1.64.1" },
-    { name = "yt-dlp", extras = ["default"], marker = "extra == 'evidence'", specifier = ">=2026.10.21" },
-]
-provides-extras = ["evidence", "asr"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "ruff", specifier = "==0.14.3" },
-]
-
-[[package]]
 name = "faster-whisper"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -783,6 +787,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/af/99/75a36172c1ed1d74ac0e91c11d642548081e2c9c63f15ee796564619556f/onnxruntime-1.31.0-cp314-cp314-win_arm64.whl", hash = "sha256:d2d5ac22f896c810be2b2b171392bb908f80b6c9a7e2d592ddb7435c928044e1", size = 15153795, upload-time = "2026-10-09T04:19:06.609Z" },
     { url = "https://files.pythonhosted.org/packages/9c/ec/23b7749edc7aad53bf4632de190399fda69a9195499426637ef1b02f06c6/onnxruntime-1.31.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:d25cd65874b75fdf16149120a04d0cd4551f860a3c8e2ecec785a1903e41d8aa", size = 21432344, upload-time = "2026-10-09T04:19:09.646Z" },
     { url = "https://files.pythonhosted.org/packages/f2/76/155ab0b265e9ceade28a8dd3858fdfa509b039f78010042c875940e32e58/onnxruntime-1.31.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:1ecc1450af28d2cf362990e188ccc81b51388f317f641ad973ab4301473200f2", size = 23772576, upload-time = "2026-10-09T04:19:12.731Z" },
+]
+
+[[package]]
+name = "opencc-python-reimplemented"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/6d/c6f37eed651dd6b752e50f80a93396cdaa42a6acc6ce05ad7452303ea511/opencc-python-reimplemented-0.1.7.tar.gz", hash = "sha256:4f777ea3461a25257a7b876112cfa90bb6acabc6dfb843bf4d11266e43579dee", size = 482566, upload-time = "2023-02-11T03:58:42.25Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/6b/055b7806f320cc8f2cdf23c5f70221c0dc1683fca9ffaf76dfc2ad4b91b6/opencc_python_reimplemented-0.1.7-py2.py3-none-any.whl", hash = "sha256:41b3b92943c7bed291f448e9c7fad4b577c8c2eae30fcfe5a74edf8818493aa6", size = 481813, upload-time = "2023-02-11T03:58:39.66Z" },
 ]
 
 [[package]]

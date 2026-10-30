@@ -109,6 +109,31 @@ class WorkerDefaultsTests(unittest.TestCase):
                 store.get(second)["settings"]["reasoning_effort"], "medium"
             )
 
+    def test_latest_context_is_found_after_large_records_with_bounded_reads(self):
+        with self.session.open("ab") as handle:
+            handle.write(
+                b'{"type":"tool_output","payload":"'
+                + b"x" * (2 * 1024 * 1024)
+                + b'"}\n'
+            )
+        self.assertEqual(resolve_worker_settings(), ("parent-model", "high"))
+        self.select("latest-model", "low")
+        with self.session.open("ab") as handle:
+            handle.write(b'[]\n{"type":"turn_context","payload":null}\n{"incomplete":')
+        self.assertEqual(resolve_worker_settings(), ("latest-model", "low"))
+
+    def test_reverse_context_scan_preserves_split_utf8_records(self):
+        self.select("unicode-model", "medium")
+        with self.session.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {"type": "tool_output", "payload": "数学" * 11000},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        self.assertEqual(resolve_worker_settings(), ("unicode-model", "medium"))
+
     def test_missing_context_does_not_silently_use_global_defaults(self):
         with self.assertRaisesRegex(ValueError, "invoking chat"):
             resolve_worker_settings(environ={})
@@ -141,3 +166,9 @@ class WorkerDefaultsTests(unittest.TestCase):
         command = commands[-1]
         self.assertEqual(command[command.index("--model") + 1], "parent-model")
         self.assertIn('model_reasoning_effort="high"', command)
+        instruction_setting = next(
+            value for value in command if value.startswith("model_instructions_file=")
+        )
+        instructions = Path(json.loads(instruction_setting.split("=", 1)[1]))
+        self.assertTrue(instructions.is_file())
+        self.assertIn("untrusted data", instructions.read_text(encoding="utf-8"))

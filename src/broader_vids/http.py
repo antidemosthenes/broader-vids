@@ -21,7 +21,9 @@ class AccessPaused(Exception):
 
 
 class BudgetExhausted(Exception):
-    pass
+    def __init__(self, message, *, resource=None):
+        super().__init__(message)
+        self.resource = resource
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -39,6 +41,7 @@ class PublicHttp:
         clock=time.monotonic,
         sleeper=time.sleep,
         anonymous_session=False,
+        cookie_jar=None,
     ):
         self.store = store
         self.run = run
@@ -48,7 +51,11 @@ class PublicHttp:
         self.initial_elapsed = run["elapsed"]
         self.last_request = None
         self.anonymous_session = anonymous_session
-        self.cookies = http.cookiejar.CookieJar() if anonymous_session else None
+        self.cookies = (
+            (cookie_jar if cookie_jar is not None else http.cookiejar.CookieJar())
+            if anonymous_session
+            else None
+        )
         self.opener = urllib.request.build_opener(
             NoRedirect(),
             *(
@@ -72,7 +79,9 @@ class PublicHttp:
             self.store.request_count(self.run["id"])
             >= self.run["settings"]["max_requests"]
         ):
-            raise BudgetExhausted("Session HTTP request budget exhausted.")
+            raise BudgetExhausted(
+                "Session HTTP request budget exhausted.", resource="http_requests"
+            )
 
     def get(self, url):
         return self.request(url)
@@ -95,20 +104,17 @@ class PublicHttp:
             raise ValueError(
                 "Only the declared public platform HTTPS endpoints are supported."
             )
+        interval = 1.0
         gate = getattr(self, "request_gate", None)
         if gate is not None:
             with gate.lock:
                 self.check()
-                if gate.last_request is not None:
-                    self.sleeper(max(0, 1.0 - (self.clock() - gate.last_request)))
-                self.check()
+                self.pace(gate.last_request, interval)
                 request_id = self.store.begin_request(self.run["id"], url)
                 gate.last_request = self.clock()
         else:
             self.check()
-            if self.last_request is not None:
-                self.sleeper(max(0, 1.0 - (self.clock() - self.last_request)))
-            self.check()
+            self.pace(self.last_request, interval)
             request_id = self.store.begin_request(self.run["id"], url)
         self.last_receipt = None
         self.last_request = self.clock()
@@ -195,6 +201,22 @@ class PublicHttp:
         except (AccessPaused, BudgetExhausted) as error:
             self.store.end_request(request_id, "unresolved", str(error))
             raise
+
+    def pace(self, previous, interval):
+        if previous is not None:
+            delay = max(0, interval - (self.clock() - previous))
+            available = max(0, self.run["settings"]["max_seconds"] - self.elapsed())
+            if delay:
+                self.sleeper(min(delay, available))
+        self.check()
+
+    def metadata_failed(self, diagnostic):
+        if self.last_receipt:
+            self.store.end_request(
+                self.last_receipt["request_id"],
+                "unresolved",
+                json.dumps({**self.last_receipt, "metadata_validation": diagnostic}),
+            )
 
     def get_json(self, url):
         return self.decode_json(self.get(url))

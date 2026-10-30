@@ -5,6 +5,8 @@ from broader_vids.preferences import pending_videos
 from broader_vids.recommendations.quality import cached_quality
 from broader_vids.creators import policy_summary
 from broader_vids.recommendations.timing import live_elapsed
+from broader_vids.recommendations.screening import inspection_limit
+from broader_vids.recommendations.budgets import request_budget
 
 
 def recommendation_readiness(store):
@@ -17,8 +19,9 @@ def recommendation_readiness(store):
             continue
         state = run["state"]
         if (
-            len(state.get("shortlist", [])) != 50
-            or len({i["canonical_id"] for i in state["shortlist"]}) != 50
+            len(state.get("shortlist", [])) != inspection_limit(run["settings"])
+            or len({i["canonical_id"] for i in state["shortlist"]})
+            != inspection_limit(run["settings"])
             or len(state.get("selected", [])) != 10
             or len({i["canonical_id"] for i in state["selected"]}) != 10
         ):
@@ -50,6 +53,7 @@ def recommendation_report(store, identifier):
         "status": run["status"],
         "reason": run["reason"],
         "settings": run["settings"],
+        "request_budget": request_budget(store, run),
         "elapsed_seconds": live_elapsed(run),
         **state,
         "creator_rules": policy_summary(state.get("creator_rules", {})),
@@ -64,6 +68,12 @@ def recommendation_report(store, identifier):
             "fresh_buffer": len(state["buffer"]),
             "eligible_buffer": len(state["buffer"]),
             "raw_candidates_examined": state.get("pool_index", 0),
+            "collection_batches": state.get("collection", {}).get(
+                "batches_completed", 0
+            ),
+            "pending_batch_eligible": len(
+                state.get("collection", {}).get("active", {}).get("eligible", [])
+            ),
             "screening_rejected": len(state.get("screening_rejections", {})),
             "metadata_observed": sum("engagement" in i for i in state["buffer"]),
             "inspection": len(state["shortlist"]),
@@ -121,6 +131,17 @@ def write_recommendation_report(store, identifier):
         lines.extend(
             [
                 f"Bilibili blacklist sync failed: {html.escape(sync['error'])} Using saved creator rules. Last complete sync: {sync.get('last_success') or 'never'}.",
+                "",
+            ]
+        )
+    displayed = report["selected"] or report.get("preview", [])
+    repeated = sum(
+        item.get("selection_diversity", {}).get("relaxed", False) for item in displayed
+    )
+    if repeated:
+        lines.extend(
+            [
+                f"Topic diversity: {repeated} picks repeat earlier topics, queries, or course formats because no nonoverlapping candidate remained.",
                 "",
             ]
         )

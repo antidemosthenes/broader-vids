@@ -79,7 +79,20 @@ def select_existing(store, profile, seed, limit=12):
     )
     usage = Counter(row["node_id"] for row in history)
     recent = {row["node_id"] for row in history[:24]}
-    available = [node for node in current.values() if node["status"] == "active"]
+    retired = {
+        n["id"]
+        for n in current.values()
+        if n.get("origin") == "onboarding" and not is_related(n, profile)
+    }
+    available = [
+        node
+        for node in current.values()
+        if node["status"] == "active"
+        and (
+            is_related(node, profile)
+            or not ({node["id"], *node["ancestors"]} & retired)
+        )
+    ]
     chosen, rng = [], random.Random(seed)
     while available and len(chosen) < limit:
         familiar = [n for n in available if is_related(n, profile)]

@@ -22,8 +22,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: uv run --no-sync ruff check src tests scripts
       - run: uv run --no-sync ruff format --check src tests scripts
-      - name: Run tests without a live Codex chat
-        run: uv run --no-sync python -m unittest discover -s tests
+      - name: Run isolated tests in parallel without a live Codex chat
+        run: uv run --no-sync scripts/test.py --jobs 2
         env:
           CODEX_THREAD_ID: ""
           CODEX_SESSION_ID: ""

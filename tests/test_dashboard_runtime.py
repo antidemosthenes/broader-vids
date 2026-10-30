@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import webbrowser
+from unittest.mock import patch
 
 from broader_vids.evidence.service import atomic_json
 from broader_vids.storage import Store
@@ -64,6 +66,46 @@ class DashboardRuntimeTests(unittest.TestCase):
                 if original_session:
                     atomic_json(session_path(root), original_session)
                 dashboard(root, "stop")
+
+    def test_system_browser_launch_and_failures_preserve_the_ready_server(self):
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                ready = dashboard(directory, port=0, open_browser=False)
+                for response in (
+                    True,
+                    False,
+                    OSError("Fixture system association failure"),
+                    webbrowser.Error("Fixture browser unavailable"),
+                ):
+                    with self.subTest(response=type(response).__name__):
+                        options = (
+                            {"side_effect": response}
+                            if isinstance(response, Exception)
+                            else {"return_value": response}
+                        )
+                        with patch(
+                            "broader_vids.web.runtime.webbrowser.open", **options
+                        ) as launch:
+                            result = dashboard(directory)
+                        launch.assert_called_once_with(ready["url"], new=2)
+                        self.assertEqual(result["url"], ready["url"])
+                        self.assertEqual(result["pid"], ready["pid"])
+                        self.assertEqual(result["browser_opened"], response is True)
+                        self.assertEqual(
+                            result["browser_status"],
+                            "launch_requested"
+                            if response is True
+                            else "manual_open_required",
+                        )
+                        self.assertTrue(active(read_session(directory)))
+                        if response is not True:
+                            self.assertIn("server is ready", result["browser_message"])
+                with patch("broader_vids.web.runtime.webbrowser.open") as launch:
+                    result = dashboard(directory, open_browser=False)
+                launch.assert_not_called()
+                self.assertNotIn("browser_status", result)
+            finally:
+                dashboard(directory, "stop")
 
     def test_corrupt_registry_and_missing_server_are_recoverable(self):
         with tempfile.TemporaryDirectory() as directory:

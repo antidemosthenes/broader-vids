@@ -1,7 +1,7 @@
 import json
 
 from broader_vids.exploration.domains import normalized
-from broader_vids.preferences import canonical_identity, video_states
+from broader_vids.preferences import canonical_identity, video_states, video_payload
 from broader_vids.storage import utc_now
 
 
@@ -112,6 +112,7 @@ def save_detail(
         )
     if features:
         payload["features"] = features
+    item_payload = json.dumps(video_payload(store, key))
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
         store.db.execute(
@@ -119,7 +120,7 @@ def save_detail(
             (
                 key,
                 identity["platform"],
-                json.dumps({**identity, "title": key}),
+                item_payload,
                 utc_now(),
             ),
         )

@@ -284,6 +284,7 @@ def execute_discovery(
     model_runner=None,
     max_new_planning_calls=None,
     cancel_event=None,
+    usage_owner=None,
 ):
     with store.lease(run_id):
         run = store.get(run_id)
@@ -347,6 +348,7 @@ def execute_discovery(
                     run,
                     save,
                     lambda: run["settings"]["max_seconds"] - http.elapsed(),
+                    usage_owner=usage_owner,
                     **({"model_runner": model_runner} if model_runner else {}),
                 )
             if state["phase"] == "bootstrap":

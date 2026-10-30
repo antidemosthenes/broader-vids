@@ -1,4 +1,5 @@
 from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.recommendations.budgets import DEFAULT_METADATA_REQUESTS
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import time
 import json
@@ -23,7 +24,7 @@ def create_batch(
     *,
     use_browser=False,
     max_seconds=1800,
-    max_requests=160,
+    max_requests=DEFAULT_METADATA_REQUESTS,
     max_assessments=52,
     max_mib=1024,
     asr_model=None,
@@ -137,7 +138,7 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
             )
             save()
             return run
-        runtime = Runtime(preparations=2, models=run["settings"]["workers"])
+        runtime = Runtime(models=run["settings"]["workers"])
 
         def platform_work(platform, child):
             local = Store(store.root)

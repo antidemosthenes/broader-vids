@@ -20,7 +20,7 @@ from test_recommendations import candidate, quality
 
 class ParallelTests(unittest.TestCase):
     def test_validation_repair_can_use_the_saved_total_call_allowance(self):
-        run, save = self.run_fixture(count=50, calls=52)
+        run, save = self.run_fixture(count=35, calls=37)
         first = run["state"]["shortlist"][0]["canonical_id"]
 
         def worker(root, work, *args):
@@ -60,8 +60,8 @@ class ParallelTests(unittest.TestCase):
             worker=worker,
             quality_lookup=lambda *args: None,
         )
-        self.assertEqual(run["state"]["model_calls"], 51)
-        self.assertEqual(run["state"]["assessment_index"], 50)
+        self.assertEqual(run["state"]["model_calls"], 36)
+        self.assertEqual(run["state"]["assessment_index"], 35)
 
     def test_saved_unknown_result_does_not_require_a_new_model_call(self):
         run, save = self.run_fixture(count=1, calls=0)
@@ -333,7 +333,7 @@ class ParallelTests(unittest.TestCase):
         self.store.close()
         self.directory.cleanup()
 
-    def run_fixture(self, count=6, calls=50):
+    def run_fixture(self, count=6, calls=37):
         identifier = create_recommendation(
             self.store,
             "youtube",

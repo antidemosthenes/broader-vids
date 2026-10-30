@@ -5,6 +5,8 @@ import hashlib
 import json
 from urllib.parse import urlsplit, parse_qs
 
+from broader_vids.tag_rules import tag_rules, normalize_tag
+
 
 def provenance(item, profile=None):
     metadata = item.get("engagement", {})
@@ -81,16 +83,20 @@ def provenance(item, profile=None):
                 "value": "original" if declared == 1 else "repost",
             }
         )
+    rules = tag_rules(profile, item.get("platform"))
     excluded_user_tags = {
-        unicodedata.normalize("NFKC", s).strip().casefold()
-        for s in (profile or {}).get("excluded_tags", {}).get(item.get("platform"), [])
+        normalize_tag(rule["tag"]) for rule in rules if rule["source"] == "manual"
     }
     user_matches = sorted(normalized_tags & excluded_user_tags)
+    translation_blocked = "视频翻译" in normalized_tags and any(
+        rule["source"] == "builtin" and normalize_tag(rule["tag"]) == "视频翻译"
+        for rule in rules
+    )
     return {
         "version": 1,
-        "excluded": "视频翻译" in normalized_tags or bool(user_matches),
+        "excluded": translation_blocked or bool(user_matches),
         "reason": "excluded_translation_tag"
-        if "视频翻译" in normalized_tags
+        if translation_blocked
         else "excluded_user_tag"
         if user_matches
         else None,

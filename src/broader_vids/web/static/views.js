@@ -86,7 +86,8 @@ export function createExclusions(actions) {
   let connection;
   if (platform === "bilibili") {
     connection = el("section", "connection-panel");
-    connection.append(el("h2", "section-title", "Bilibili connection"));
+    const heading = el("div", "connection-heading");
+    heading.append(el("h2", "section-title", "Bilibili connection"));
     const values = el("dl", "connection-fields");
     const status = el("dd");
     const account = el("dd");
@@ -105,12 +106,30 @@ export function createExclusions(actions) {
     const remote = link(
       "Manage on Bilibili ↗",
       "https://account.bilibili.com/account/blacklist",
-      "subtle-link",
+      "connection-link",
     );
+    heading.append(remote);
     const error = el("p", "inline-error");
     const fallback = el("p", "muted compact");
-    footer.append(sync, remote);
-    connection.append(values, footer, error, fallback);
+    const switchButton = button(
+      "Switch account",
+      actions.switchAccount,
+      "button small",
+    );
+    const confirm = button(
+      "I've signed in",
+      actions.confirmAccount,
+      "button small",
+    );
+    const cancel = button(
+      "Cancel switch",
+      actions.cancelAccount,
+      "button quiet small",
+    );
+    const switchStatus = el("p", "muted compact");
+    switchStatus.setAttribute("role", "status");
+    footer.append(sync, switchButton, confirm, cancel);
+    connection.append(heading, values, footer, switchStatus, error, fallback);
     root.append(connection);
     connection.update = () => {
       const data = state.exclusions.bilibili_sync || {};
@@ -136,8 +155,33 @@ export function createExclusions(actions) {
       last.title = data.last_success
         ? `${dateLabel(data.last_success, true)} · ${data.last_success}`
         : "Never";
-      sync.disabled = state.busy.has("sync");
-      sync.textContent = sync.disabled ? "Syncing…" : "Sync blacklist";
+      const switching = state.accountSwitch || {};
+      sync.disabled =
+        state.busy.has("sync") || switching.active || switching.pending;
+      switchButton.textContent =
+        switching.status === "cleanup_pending"
+          ? "Finish recovery"
+          : "Switch account";
+      switchButton.disabled =
+        !!switching.pending ||
+        !!switching.active ||
+        switching.can_start === false ||
+        state.busy.has("sync");
+      confirm.hidden =
+        !switching.active || switching.status !== "awaiting_sign_in";
+      cancel.hidden = !switching.active;
+      confirm.disabled = !!switching.pending;
+      cancel.disabled =
+        !!switching.pending ||
+        ["activating", "cancelling"].includes(switching.status);
+      switchStatus.textContent =
+        switching.error || switching.message || switching.busy_reason || "";
+      switchStatus.className =
+        ["failed", "cleanup_pending"].includes(switching.status) ||
+        switching.error
+          ? "inline-error"
+          : "muted compact";
+      sync.textContent = state.busy.has("sync") ? "Syncing…" : "Sync blacklist";
       error.textContent =
         state.notes.get("sync")?.kind === "error"
           ? state.notes.get("sync").text
@@ -294,7 +338,9 @@ export function createExclusions(actions) {
         action.append(remove);
         row.append(error);
         const update = () => {
-          remove.disabled = state.busy.has(key);
+          remove.disabled = state.busy.has(
+            kind === "tags" ? `tags:${platform}` : key,
+          );
           const note = state.notes.get(key);
           error.textContent = note?.kind === "error" ? note.text : "";
         };
@@ -313,9 +359,10 @@ export function createExclusions(actions) {
         if (document.activeElement !== input || !state.tagDrafts.has(platform))
           input.value = state.tagDrafts.get(platform) || "";
         const key = `addtag:${platform}`;
-        add.disabled = state.busy.has(key);
-        add.textContent = add.disabled ? "Saving…" : "Add tag";
+        add.disabled = state.busy.has(`tags:${platform}`);
         const note = state.notes.get(key);
+        add.textContent =
+          add.disabled && note?.text === "Saving…" ? "Saving…" : "Add tag";
         formStatus.textContent = note?.text || "";
         formStatus.className = `field-status ${note?.kind || ""}`;
       }

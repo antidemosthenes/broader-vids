@@ -7,6 +7,7 @@ import {
   updateRecord,
   updateRating,
   applyExclusions,
+  applyTagRules,
 } from "./state.js";
 import { get, post } from "./api.js";
 import { el, platformName } from "./ui.js";
@@ -33,7 +34,9 @@ let rows = [],
   reviewId,
   management,
   managementKey,
-  secondary = false;
+  secondary = false,
+  preferences,
+  preferencesReturnView = "recommendations";
 let returnFocus,
   earlier = new Map();
 const earlierItems = new Map();
@@ -51,6 +54,8 @@ function currentEntries() {
     : entries();
 }
 function rememberPosition() {
+  if (state.view === "preferences" && $("#preferences-page"))
+    state.scrolls.set("preferences", $("#preferences-page").scrollTop);
   state.scrolls.set(
     contextKey() + ":" + !!earlier.get(contextKey()),
     listPane.scrollTop,
@@ -66,6 +71,8 @@ function rememberPosition() {
   }
 }
 function navigate(change) {
+  if (change.view === "preferences" && state.view !== "preferences")
+    preferencesReturnView = state.view;
   rememberPosition();
   if (change.view && change.view !== state.view) route = "";
   if (mobile.open) mobile.close();
@@ -74,23 +81,43 @@ function navigate(change) {
   state.reviewOpen = !isNarrow() && !!selectedId();
   render();
 }
+let refreshing = false,
+  refreshQueued = false;
 async function refresh() {
   if (document.hidden || state.busy.size) return;
+  if (refreshing) {
+    refreshQueued = true;
+    return;
+  }
+  refreshing = true;
   const version = ++state.readVersion,
     generation = state.generation;
   try {
-    const [data, calibration, exclusions] = await Promise.all([
+    const responses = await Promise.allSettled([
       get("/api/state"),
       get("/api/calibration"),
       get("/api/exclusions"),
     ]);
+    const failure = responses.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
+    const [data, calibration, exclusions] = responses.map(
+      (result) => result.value,
+    );
     if (
       version !== state.readVersion ||
       generation !== state.generation ||
       state.busy.size
     )
       return;
-    data.videos = { ...state.data.videos, ...data.videos };
+    const retained = {};
+    const retain = (id) => {
+      if (state.data.videos[id]) retained[id] = state.data.videos[id];
+    };
+    for (const key of state.drafts.keys())
+      retain(key.slice(0, key.lastIndexOf("|")));
+    for (const items of earlierItems.values())
+      for (const item of items) retain(item.canonical_id);
+    data.videos = { ...retained, ...data.videos };
     state.data = data;
     state.calibration = calibration;
     applyExclusions(exclusions);
@@ -101,6 +128,12 @@ async function refresh() {
     if (version === state.readVersion && generation === state.generation)
       $("#status").textContent =
         `${error.message} Saved edits remain in this tab.`;
+  } finally {
+    refreshing = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      queueMicrotask(refresh);
+    }
   }
 }
 async function mutate(key, body, apply, noteKey = key) {
@@ -122,20 +155,6 @@ async function mutate(key, body, apply, noteKey = key) {
     state.generation++;
     render();
     if (!state.busy.size) await refresh();
-  }
-}
-function updateTags(rules) {
-  for (const platform of ["youtube", "bilibili"]) {
-    state.exclusions.tags[platform] = [
-      ...(state.exclusions.tags[platform] || []).filter(
-        (rule) => !rule.editable,
-      ),
-      ...(rules[platform] || []).map((tag) => ({
-        tag,
-        source: "manual",
-        editable: true,
-      })),
-    ];
   }
 }
 const actions = {
@@ -180,13 +199,14 @@ const actions = {
   },
   addTag(platform, tag) {
     mutate(
-      `addtag:${platform}`,
+      `tags:${platform}`,
       { action: "add_tag", id: "all", platform, tag },
       (rules) => {
-        updateTags(rules);
+        applyTagRules(rules);
         if (state.tagDrafts.get(platform) === tag)
           state.tagDrafts.delete(platform);
       },
+      `addtag:${platform}`,
     );
   },
   removeRule(kind, platform, entry) {
@@ -195,7 +215,7 @@ const actions = {
         ? `tag:${platform}:${entry.tag}`
         : `removecreator:${platform}:${entry.creator_id}`;
     mutate(
-      key,
+      kind === "tags" ? `tags:${platform}` : key,
       {
         action: kind === "tags" ? "remove_tag" : "remove_creator",
         id: "all",
@@ -203,8 +223,18 @@ const actions = {
         tag: entry.tag,
         creator_id: entry.creator_id,
       },
-      kind === "creators" ? applyExclusions : updateTags,
+      kind === "creators" ? applyExclusions : applyTagRules,
+      key,
     );
+  },
+  switchAccount() {
+    accountSwitch?.start();
+  },
+  confirmAccount() {
+    accountSwitch?.confirm();
+  },
+  cancelAccount() {
+    accountSwitch?.cancel();
   },
   sync() {
     mutate("sync", { action: "sync_blacklist", id: "all" });
@@ -264,19 +294,23 @@ function move(delta) {
   if (items[index + delta]) actions.select(items[index + delta].canonical_id);
 }
 function render() {
-  const isRules = state.view === "exclusions";
-  const title =
-    state.view === "recommendations"
+  const isRules = state.view === "exclusions",
+    isPreferences = state.view === "preferences";
+  const title = isPreferences
+    ? "Preferences"
+    : state.view === "recommendations"
       ? "Recommendations"
       : isRules
         ? "Exclusions"
         : "Calibration";
   $("#page-title").textContent = title;
-  $("#page-subtitle").textContent = isRules
-    ? "Choose the sources you want to see."
-    : state.view === "calibration"
-      ? "Optional examples to refine your preferences."
-      : "A little familiar. A little unexpected.";
+  $("#page-subtitle").textContent = isPreferences
+    ? "Your interests and learned preferences."
+    : isRules
+      ? "Choose the sources you want to see."
+      : state.view === "calibration"
+        ? "Optional examples to refine your preferences."
+        : "A little familiar. A little unexpected.";
   document.querySelectorAll("[data-view]").forEach((node) => {
     if (node.dataset.view === state.view)
       node.setAttribute("aria-current", "page");
@@ -289,8 +323,20 @@ function render() {
     );
     node.tabIndex = node.dataset.platform === state.platform ? 0 : -1;
   });
-  $("#workspace").hidden = isRules;
+  $("#workspace").hidden = isRules || isPreferences;
   $("#management").hidden = !isRules;
+  $(".platform-switch").hidden = isPreferences;
+  if ($("#preferences-back")) $("#preferences-back").hidden = !isPreferences;
+  const preferencesPage = $("#preferences-page"),
+    enteringPreferences = isPreferences && preferencesPage?.hidden;
+  if (preferencesPage) preferencesPage.hidden = !isPreferences;
+  if (isPreferences) {
+    if (enteringPreferences)
+      preferencesPage.scrollTop = state.scrolls.get("preferences") || 0;
+    preferences?.open();
+    return;
+  }
+  preferences?.close();
   if (isRules) {
     const key = `${state.platform}:${state.exclusionTab}`;
     if (managementKey !== key) {
@@ -329,6 +375,16 @@ function render() {
           (pick) => pick.canonical_id === item.canonical_id,
         ),
     ).length || 0;
+  const run = state.data.runs[state.platform];
+  const preview =
+    state.view === "recommendations" &&
+    !earlier.get(contextKey()) &&
+    run?.provisional &&
+    items.length > 0;
+  $("#round-notice").hidden = !preview;
+  $("#round-notice").textContent = preview
+    ? `Provisional preview · ${run.assessed} of ${run.inspection} assessed. This list is not yet published. You can save ratings now.`
+    : "";
   $("#pending-toggle").hidden =
     state.view !== "recommendations" ||
     (!pending && !earlier.get(contextKey()));
@@ -411,22 +467,49 @@ for (const prefix of ["review", "mobile"]) {
 $("#details-close").onclick = () => details.close();
 $("#help-open").onclick = () => $("#help-dialog").showModal();
 $("#help-close").onclick = () => $("#help-dialog").close();
-if ($("#preferences-dialog")) {
-  const { createPreferenceTransfer } = await import("./transfer.js");
-  createPreferenceTransfer({
-    busy(active) {
-      state.generation++;
-      if (active) state.busy.add("preference-transfer");
-      else {
-        state.busy.delete("preference-transfer");
-        refresh();
-      }
-    },
-    changed() {
-      $("#status").textContent =
-        "Learned preferences replaced. Your video lists and rating drafts are preserved.";
-    },
-  });
+function leavePreferences() {
+  navigate({ view: preferencesReturnView });
+  $("#preferences-open").focus({ preventScroll: true });
+}
+$("#preferences-back")?.addEventListener("click", leavePreferences);
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "Escape" &&
+    state.view === "preferences" &&
+    !document.querySelector("dialog[open]")
+  ) {
+    event.preventDefault();
+    leavePreferences();
+  }
+});
+if ($("#preferences-page")) {
+  import("./preferences.js")
+    .then(({ createPreferences }) => {
+      preferences = createPreferences({
+        getProfile() {
+          return state.data.profile;
+        },
+        busy(active) {
+          state.generation++;
+          if (active) state.busy.add("preferences");
+          else {
+            state.busy.delete("preferences");
+            refresh();
+          }
+        },
+        changed(profile) {
+          if (profile && state.data) state.data.profile = profile;
+        },
+      });
+      $("#preferences-open").disabled = false;
+      if (state.view === "preferences") preferences.open();
+    })
+    .catch(() => {
+      $("#preferences-open").disabled = false;
+      $("#preferences-open").onclick = () => {
+        $("#status").textContent = "Restart the dashboard to use Preferences.";
+      };
+    });
 }
 $("#pending-toggle").onclick = () => {
   rememberPosition();
@@ -461,10 +544,16 @@ document.querySelectorAll("[data-platform]").forEach((node) => {
   };
 });
 function updateLayout() {
-  const compact = isNarrow();
+  const root = document.documentElement,
+    compact = isNarrow(),
+    mobileNavigation =
+      innerWidth <= 700 ||
+      innerWidth / parseFloat(getComputedStyle(root).fontSize) < 700 / 15;
   const changed =
-    document.documentElement.hasAttribute("data-compact") !== compact;
-  document.documentElement.toggleAttribute("data-compact", compact);
+    root.hasAttribute("data-compact") !== compact ||
+    root.hasAttribute("data-mobile") !== mobileNavigation;
+  root.toggleAttribute("data-compact", compact);
+  root.toggleAttribute("data-mobile", mobileNavigation);
   if (!changed) return;
   state.reviewOpen = !compact && !!selectedId();
   if (!compact && mobile.open) mobile.close();
@@ -480,5 +569,33 @@ updateLayout();
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh();
 });
+if ($("#token-usage-dialog")) {
+  import("./token-usage.js")
+    .then(({ createTokenUsage }) => createTokenUsage())
+    .catch(() => {
+      $("#token-usage-open").onclick = () => {
+        $("#status").textContent =
+          "Restart the dashboard to enable token usage reports.";
+      };
+    });
+}
+let accountSwitch;
+state.accountSwitch = {
+  active: false,
+  can_start: false,
+  message: "Loading account controls…",
+};
+import("./bilibili-account.js")
+  .then(({ createBilibiliAccount }) => {
+    accountSwitch = createBilibiliAccount({ changed: render, refresh });
+  })
+  .catch(() => {
+    state.accountSwitch = {
+      active: false,
+      can_start: false,
+      message: "Restart the dashboard to enable account switching.",
+    };
+    render();
+  });
 setInterval(refresh, 15000);
 refresh();

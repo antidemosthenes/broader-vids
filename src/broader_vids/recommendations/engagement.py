@@ -43,11 +43,76 @@ def metadata_fresh(snapshot, platform):
     )
 
 
+class YouTubeMetadataError(AccessPaused):
+    def __init__(self, identifier, player, parse_error=None):
+        from broader_vids.evidence.media import public_error
+
+        details = player.get("videoDetails")
+        actual = details.get("videoId") if isinstance(details, dict) else None
+        playback = player.get("playabilityStatus")
+        playback = playback if isinstance(playback, dict) else {}
+        status = playback.get("status")
+        status = status[:80] if isinstance(status, str) else None
+        reason = playback.get("reason")
+        reason = public_error(reason)[:500] if isinstance(reason, str) else None
+        actual = (
+            actual
+            if isinstance(actual, str) and re.fullmatch(r"[A-Za-z0-9_-]{11}", actual)
+            else "<invalid-video-id>"
+            if actual is not None
+            else None
+        )
+        temporary_error = status == "ERROR" and bool(
+            re.search(
+                r"(?i)try again|temporary|temporarily|something went wrong",
+                reason or "",
+            )
+        )
+        self.retryable = not actual and (status in (None, "OK") or temporary_error)
+        if status == "LOGIN_REQUIRED":
+            self.recovery = {
+                "action": "review_youtube_access",
+                "url": "https://www.youtube.com/watch?v=" + identifier,
+                "message": "Stop automated YouTube requests. Review this video in your system browser for any required sign-in or verification. Continue the saved round only after access is restored. Browser sign-in is not imported automatically.",
+            }
+        self.metadata_diagnostic = {
+            "requested_video_id": identifier,
+            "returned_video_id": actual,
+            "playability_status": status,
+            "playability_reason": reason,
+            "player_parse_error": public_error(parse_error) if parse_error else None,
+        }
+        if actual:
+            message = f"YouTube metadata identity mismatch for {identifier} (returned {actual})."
+        elif status and status != "OK":
+            message = f"YouTube metadata for {identifier} is unavailable ({status}"
+            message += f": {reason})." if reason else ")."
+        else:
+            message = f"YouTube metadata for {identifier} lacks a verified video ID."
+        super().__init__(message)
+
+
+def youtube_snapshot(http, item):
+    for attempt in (1, 2):
+        try:
+            return parse_youtube(http.get(item["url"] + "&hl=en"), item["video_id"])
+        except YouTubeMetadataError as error:
+            diagnostic = {**error.metadata_diagnostic, "attempt": attempt}
+            recorder = getattr(http, "metadata_failed", None)
+            if recorder:
+                recorder(diagnostic)
+            if not error.retryable or attempt == 2:
+                raise
+
+
 def parse_youtube(body, identifier):
-    player = embedded_json(body, r"(?:var\s+)?ytInitialPlayerResponse\s*=\s*")
+    try:
+        player = embedded_json(body, r"(?:var\s+)?ytInitialPlayerResponse\s*=\s*")
+    except AccessPaused as error:
+        raise YouTubeMetadataError(identifier, {}, parse_error=error) from None
     details = player.get("videoDetails", {})
     if not isinstance(details, dict) or details.get("videoId") != identifier:
-        raise AccessPaused("YouTube metadata identity was not verified.")
+        raise YouTubeMetadataError(identifier, player)
     try:
         initial = embedded_json(body, r"(?:var\s+)?ytInitialData\s*=\s*")
     except AccessPaused:
@@ -76,7 +141,13 @@ def parse_youtube(body, identifier):
                     )
                     if match:
                         likes = integer((match[1] or match[2]).replace(",", ""))
-    micro = player.get("microformat", {}).get("playerMicroformatRenderer", {})
+    microformat = player.get("microformat")
+    micro = (
+        microformat.get("playerMicroformatRenderer")
+        if isinstance(microformat, dict)
+        else None
+    )
+    micro = micro if isinstance(micro, dict) else {}
     return {
         "creator_id": details.get("channelId"),
         "creator_name": details.get("author", ""),
@@ -169,7 +240,7 @@ def parse_bilibili(value, identifier):
 
 def collect_snapshot(http, item):
     if item["platform"] == "youtube":
-        value = parse_youtube(http.get(item["url"] + "&hl=en"), item["video_id"])
+        value = youtube_snapshot(http, item)
     else:
         value = parse_bilibili(
             http.get_json(

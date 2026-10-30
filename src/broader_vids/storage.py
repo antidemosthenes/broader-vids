@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import sys
 import uuid
+import tempfile
 
 
 def utc_now():
@@ -20,7 +22,11 @@ def data_root(override=None):
     base = (
         Path(os.environ["LOCALAPPDATA"])
         if os.environ.get("LOCALAPPDATA")
-        else Path.home() / ".local" / "share"
+        else (
+            Path(os.environ.get("USERPROFILE") or Path.home()) / "AppData" / "Local"
+            if sys.platform == "win32"
+            else Path.home() / ".local" / "share"
+        )
     )
     default = base / "broader-vids"
     selection = default / "launcher.json"
@@ -42,9 +48,34 @@ def data_root(override=None):
     return default
 
 
+def mark_profile(root):
+    target = root / ".broader-vids-profile.json"
+    if target.exists():
+        return
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=root, suffix=".tmp", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump({"format": "broader-vids.profile", "version": 1}, handle)
+        temporary.replace(target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 class Store:
     def __init__(self, root):
         self.root = Path(root).expanduser().resolve()
+        if (self.root / ".launcher/setup.json").exists():
+            raise ValueError(
+                "A runtime or data operation holds this profile. Wait for it to finish before using the database."
+            )
+        if (self.root / ".reset-pending").exists():
+            raise ValueError(
+                "A reset is unfinished. Complete reset or clean through the Node launcher before using this profile."
+            )
         self.root.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.root / "broader-vids.sqlite3", timeout=5)
         self.db.row_factory = sqlite3.Row
@@ -56,6 +87,11 @@ class Store:
             )
         self.db.execute("PRAGMA foreign_keys=ON")
         if version == 12:
+            try:
+                mark_profile(self.root)
+            except BaseException:
+                self.db.close()
+                raise
             return
         backup = self.root / "broader-vids.before-v12.sqlite3"
         if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) and not backup.exists():
@@ -192,6 +228,11 @@ class Store:
             COMMIT;
         """)
         self.db.commit()
+        try:
+            mark_profile(self.root)
+        except BaseException:
+            self.db.close()
+            raise
 
     def close(self):
         self.db.close()
@@ -231,8 +272,9 @@ class Store:
             if isinstance(record, dict) and record.get("token") == token:
                 lock.unlink(missing_ok=True)
 
-    def create(self, platform, settings, state, *, commit=True):
-        run_id = uuid.uuid4().hex
+    def create(self, platform, settings, state, *, commit=True, run_id=None):
+        run_id = uuid.uuid4().hex if run_id is None else run_id
+        self.validate_id(run_id)
         now = utc_now()
         self.db.execute(
             "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

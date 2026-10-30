@@ -241,7 +241,20 @@ def dashboard(root, operation="open", *, port=8765, open_browser=True):
             _children[instance] = child
         result = public_state(root, session)
     if open_browser:
-        result["browser_opened"] = webbrowser.open(result["url"])
+        try:
+            result["browser_opened"] = bool(webbrowser.open(result["url"], new=2))
+        except (OSError, webbrowser.Error) as error:
+            result["browser_opened"] = False
+            result["browser_error"] = (
+                f"Could not start the system browser ({type(error).__name__})."
+            )
+        result["browser_status"] = (
+            "launch_requested" if result["browser_opened"] else "manual_open_required"
+        )
+        if not result["browser_opened"]:
+            result["browser_message"] = (
+                "Open the returned URL in your system browser. The dashboard server is ready."
+            )
     return result
 
 

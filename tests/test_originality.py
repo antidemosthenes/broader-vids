@@ -35,7 +35,18 @@ class OriginalityTests(unittest.TestCase):
         self.assertIsNotNone(assessment_context({"engagement": snapshot}))
 
     def test_exact_tag_blocks_fresh_and_pending_selection_without_eviction(self):
-        items = [candidate(n) for n in range(1, 102)]
+        items = [candidate(n, "bilibili") for n in range(1, 102)]
+        from broader_vids.identity import identify
+
+        alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+        for index, item in enumerate(items):
+            item.update(
+                identify(
+                    "https://www.bilibili.com/video/BV1aaaaaaa"
+                    + alphabet[index // 58]
+                    + alphabet[index % 58]
+                )
+            )
         items[0]["engagement"]["tags"] = ["视频翻译"]
         items[1]["engagement"]["tags"] = ["视频翻译教程"]
         profile = {"interests": ["mathematics"]}
