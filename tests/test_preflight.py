@@ -103,6 +103,49 @@ class PreflightTests(unittest.TestCase):
         self.probe.assert_not_called()
         self.store.db.rollback()
 
+    def test_setup_questions_cover_fresh_profile_choices_without_side_effects(self):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM user_profile")
+        before = self.store.db.total_changes
+        code, report = self.invoke("onboarding", "questions")
+        self.assertEqual(code, 0)
+        self.assertTrue(report["requires_explicit_answer"])
+        questions = report["questions"]
+        self.assertEqual(
+            [o["value"] for o in questions["platform"]["options"]],
+            ["youtube", "bilibili", "both"],
+        )
+        self.assertEqual(
+            [o["value"] for o in questions["preference_source"]["options"]],
+            ["manual", "import"],
+        )
+        self.assertEqual(questions["import_path"]["input"], "text")
+        self.assertEqual(questions["interests"]["input"], "text")
+        self.assertEqual(
+            [o["value"] for o in questions["bilibili_signin"]["options"]],
+            ["signed_in", "trouble", "waiting"],
+        )
+        self.assertEqual(questions["bilibili_trouble"]["input"], "text")
+        self.assertEqual(self.store.db.total_changes, before)
+        self.assertFalse((self.store.root / "onboarding.json").exists())
+        self.assertEqual(self.store.list_runs(), [])
+        self.probe.assert_not_called()
+
+    def test_setup_questions_preserve_existing_preferences_and_platform(self):
+        configure(self.store, "both")
+        previous = (self.store.root / "onboarding.json").read_bytes()
+        profile = get_profile(self.store)
+        code, report = self.invoke("onboarding", "questions")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["saved_platform"], "both")
+        self.assertEqual(
+            report["questions"]["preference_source"]["options"][-1],
+            {"value": "keep", "label": "Keep saved preferences"},
+        )
+        self.assertEqual((self.store.root / "onboarding.json").read_bytes(), previous)
+        self.assertEqual(get_profile(self.store), profile)
+        self.probe.assert_not_called()
+
     def test_fresh_and_interrupted_setup_block_without_run_or_optional_install(self):
         profile = get_profile(self.store)
         self.assertEqual(self.check()["status"], "setup_required")

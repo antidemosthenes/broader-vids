@@ -421,9 +421,6 @@ class RetentionTests(unittest.TestCase):
             verify_bundle(self.store, result)
 
 
-@unittest.skipUnless(
-    importlib.util.find_spec("numpy"), "Optional ASR dependencies are required"
-)
 class TranscriptionMemoryTests(unittest.TestCase):
     @unittest.skipUnless(
         importlib.util.find_spec("imageio_ffmpeg"), "FFmpeg is required"

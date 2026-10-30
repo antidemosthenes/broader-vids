@@ -43,6 +43,59 @@ def status(root):
         ) from None
 
 
+def setup_questions(store):
+    from broader_vids.preferences import get_profile
+
+    previous = status(store.root)
+    profile = get_profile(store)
+
+    def choice(title, options):
+        return {
+            "input": "choice",
+            "title": title,
+            "options": [{"value": value, "label": label} for value, label in options],
+        }
+
+    sources = [("manual", "Type interests"), ("import", "Import preferences")]
+    if profile and profile.get("interests"):
+        sources.append(("keep", "Keep saved preferences"))
+    return {
+        "version": 1,
+        "requires_explicit_answer": True,
+        "saved_platform": previous["default_platform"],
+        "setup_complete": previous["completed_at"] is not None,
+        "questions": {
+            "platform": choice(
+                "Which platforms should Broader Vids recommend?",
+                [("youtube", "YouTube"), ("bilibili", "Bilibili"), ("both", "Both")],
+            ),
+            "preference_source": choice(
+                "How would you like to set your interests and preferences?", sources
+            ),
+            "import_path": {
+                "input": "text",
+                "title": "Enter the full local path to your Broader Vids preferences JSON file.",
+            },
+            "interests": {
+                "input": "text",
+                "title": "Enter your broad interests, separated by commas or lines.",
+            },
+            "bilibili_signin": choice(
+                "Have you finished signing in to Bilibili? Keep the sign-in window open while you answer.",
+                [
+                    ("signed_in", "Signed in"),
+                    ("trouble", "Having trouble"),
+                    ("waiting", "Still signing in"),
+                ],
+            ),
+            "bilibili_trouble": {
+                "input": "text",
+                "title": "What problem appeared during Bilibili sign-in? Do not include passwords or cookies.",
+            },
+        },
+    }
+
+
 def configure(store, platform):
     if platform not in PLATFORMS:
         raise ValueError("Choose youtube, bilibili, or both.")

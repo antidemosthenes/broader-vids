@@ -180,10 +180,17 @@ def main(argv=None):
                 emit(report(store, args.run_id))
                 return 0
             if args.command == "onboarding":
-                from broader_vids.onboarding import status, configure, complete
+                from broader_vids.onboarding import (
+                    status,
+                    configure,
+                    complete,
+                    setup_questions,
+                )
 
                 if args.operation == "status":
                     emit(status(store.root))
+                elif args.operation == "questions":
+                    emit(setup_questions(store))
                 elif args.operation == "configure":
                     emit(configure(store, args.platform))
                 else:

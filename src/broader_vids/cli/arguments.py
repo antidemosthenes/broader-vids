@@ -63,6 +63,9 @@ def parser():
     )
     onboarding_commands = onboarding.add_subparsers(dest="operation", required=True)
     onboarding_commands.add_parser("status")
+    onboarding_commands.add_parser(
+        "questions", help="Get the guided setup questions and choices for the chat host"
+    )
     configure = onboarding_commands.add_parser("configure")
     configure.add_argument(
         "--platform", choices=("youtube", "bilibili", "both"), required=True

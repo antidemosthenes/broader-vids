@@ -22,6 +22,37 @@ This command records the location without moving its data.
 Use only explicit directory overrides for temporary installation tests.
 Read [the reference](../../docs/REFERENCE.md) for dependency or directory details.
 
+## Ask through the host's question tool
+
+When the runtime is available, run `onboarding questions` to get the canonical question titles and choices.
+If the runtime is missing, install it first without selecting platforms or inventing interests.
+Use the host's available structured user-question tool for these questions.
+Prefer `request_user_input_async` when available.
+Use `request_user_input` only when the current host and mode permit it.
+Do not change modes just to get a question box.
+If no suitable tool exists, ask the same question in chat and wait for a reply.
+
+Ask one question at a time. Pass the returned title and option labels to the tool.
+For text questions, show a free-text input without invented choices.
+Map a selected label to its returned value.
+Do not treat a preselected option, silence, or elapsed time as an answer.
+With an asynchronous question tool, wait for the user's submitted reply before dependent work.
+Do not report setup complete while a required answer is pending.
+Do not substitute a paragraph containing all the questions for separate prompts.
+A clear answer already supplied for this setup can satisfy its question without asking again.
+A path mentioned in an unrelated earlier conversation does not authorize a new import.
+
+Use the questions in this order:
+
+1. `platform`: YouTube, Bilibili, or Both.
+2. `preference_source`: Type interests or Import preferences. Existing profiles can also keep saved preferences.
+3. `interests` for manual entry, or `import_path` for an import. Ask for the full file path in a text box.
+4. `bilibili_signin` after opening a sign-in window, when Bilibili is selected.
+
+Keep paths and interests as literal data when calling the launcher.
+Never execute user input as shell code.
+The question UI belongs to the host. Do not claim that every host exposes the same dialog.
+
 ## Introduce and configure
 
 Run `onboarding status` when the runtime is available.
@@ -33,7 +64,8 @@ For an incomplete profile, explain these features once during guided setup:
 - Preferences transfers interests and learned weights without video history.
 
 Show the host's available dashboard invocation name.
-Ask whether the user wants YouTube, Bilibili, or both.
+For first-time setup or explicit configuration, ask `platform` unless the user already chose for this setup.
+An installation repair can retain an already completed profile without repeating configuration questions.
 Preserve a saved platform choice during interrupted setup unless the user changes it.
 Run `onboarding configure --platform youtube`, `bilibili`, or `both` after the runtime is available.
 Do not repeat the introduction for a completed profile during routine checks.
@@ -65,14 +97,21 @@ Do not use API billing as a fallback.
 
 ## Restore or set interests
 
-Run `profile show` before changing interests.
-Preserve existing interests and learned weights.
-For a fresh profile, offer preference import or manual interest entry.
-For a requested restore, preview the supplied file with `profile import FILE`.
-Apply the requested restore with `profile import FILE --apply`.
-Import replaces learned parameters and creates a recovery file without importing video history.
-Skip manual interest entry when the import supplies interests.
-Otherwise, ask for broad interests and use `profile set` with one `--interest TOPIC` per interest.
+Run `profile show` before changing interests. Preserve existing interests and learned weights.
+Ask `preference_source` unless the user already supplied that choice for this setup.
+Never infer the choice from a saved or recently exported file.
+
+- **Type interests:** ask `interests` in a text box. Use `profile set` with one `--interest TOPIC` per supplied interest.
+- **Import preferences:** ask `import_path` in a text box before reading a file.
+  Preview with `profile import FILE`, then apply the requested restore with `profile import FILE --apply`.
+  Import replaces learned parameters and creates a recovery file without importing video history.
+  Do not ask for manual interests after a successful import.
+- **Keep saved preferences:** preserve interests and learned weights. Skip both text questions.
+
+If a file is missing or invalid, explain the error and ask `import_path` again.
+If host permissions block access, preserve the supplied path while access is resolved.
+Do not select another file or switch to manual interests without the user's answer.
+
 Calibration remains optional.
 Do not invent feedback or copy another profile's history.
 
@@ -81,8 +120,15 @@ Do not invent feedback or copy another profile's history.
 Before opening Bilibili sign-in, tell the user to sign in, keep the window open, and report completion in chat.
 Explain that Broader Vids closes the window when sign-in checks finish.
 For Bilibili, use `login bilibili` for manual sign-in in the separate browser.
-After the user reports completion in chat, use `login bilibili --confirm`.
-If the user closes the window before verification, start sign-in again.
+After opening the window, ask the `bilibili_signin` question through the host's question tool.
+For **Signed in**, use `login bilibili --confirm` and wait for the original sign-in operation to check access.
+For **Still signing in**, keep the browser open and wait. Ask the status question again when the user is ready.
+For **Having trouble**, ask `bilibili_trouble` in a text box. Preserve completed setup and help with the reported problem.
+Do not run `login bilibili --confirm` or mark setup complete while the user reports trouble.
+Do not open another sign-in window unless the user requests another attempt.
+Skip this status question for YouTube-only setup or when an existing Bilibili session already passes verification.
+If the user closes the window before verification, explain the incomplete verification.
+Wait for the user to request another attempt before opening a new sign-in window.
 Wait for verification from the original sign-in operation.
 The confirmation request alone does not prove successful sign-in.
 Do not request passwords or cookie text.

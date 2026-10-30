@@ -80,7 +80,11 @@ You can also ask:
 Setup installs the separate Python runtime and checks its tools.
 It introduces the dashboard and asks whether you want YouTube, Bilibili, or both.
 This choice becomes your default for later rounds.
-It guides you through preference import or interest entry, followed by Bilibili sign-in when needed.
+Setup asks one question at a time through the host's question controls when available.
+Choose **Type interests** or **Import preferences**, then enter your interests or the full preferences-file path in a text box.
+Existing profiles can also keep saved preferences.
+For Bilibili sign-in, choose **Signed in**, **Having trouble**, or **Still signing in**.
+If the host has no question controls, setup asks the same questions in chat and waits for your answers.
 Required failures block setup. The report gives repair steps.
 Optional tools do not block setup.
 Sign in yourself in the separate browser window.

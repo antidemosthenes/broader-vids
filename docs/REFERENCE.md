@@ -250,11 +250,17 @@ Its interests, ratings, and learned weights remain intact.
 
 ```powershell
 uv run --no-sync broader-vids onboarding status
+uv run --no-sync broader-vids onboarding questions
 uv run --no-sync broader-vids onboarding configure --platform both
 uv run --no-sync broader-vids onboarding complete
 uv run --no-sync broader-vids preflight
 ```
 
+`onboarding questions` returns the shared question titles, input types, and choice values for the chat host.
+It does not change preferences, configure platforms, open a browser, or run access checks.
+The setup skill uses those definitions with an available user-question tool and waits for each answer.
+Free-text questions collect interests, an import-file path, or sign-in troubleshooting details.
+A host without suitable question controls uses text questions.
 Configure the platform before completion.
 Import preferences or set interests before completion.
 Complete Bilibili sign-in when the selected platforms include Bilibili.
@@ -753,6 +759,7 @@ uv run --no-sync python -m unittest discover -s tests
 
 Tests use temporary data and controlled responses.
 Optional media tests need their dependencies.
+The development dependencies include NumPy so transcription buffer tests run without installing speech inference or downloading models.
 Unit tests do not require platform sign-in or subscription model calls.
 Run fixtures supply explicit model settings instead of reading your current Codex chat.
 Model-inheritance tests create temporary session files with controlled settings.

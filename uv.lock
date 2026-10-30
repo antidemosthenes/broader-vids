@@ -66,6 +66,7 @@ evidence = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "numpy" },
     { name = "pyyaml" },
     { name = "ruff" },
 ]
@@ -83,6 +84,7 @@ provides-extras = ["evidence", "asr"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "numpy", specifier = "==2.5.4" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "ruff", specifier = "==0.14.3" },
 ]

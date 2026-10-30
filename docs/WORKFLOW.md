@@ -8,7 +8,12 @@ See the [terminal reference](REFERENCE.md) for commands.
 
 First-time setup introduces chat recommendations and the local dashboard.
 Choose YouTube, Bilibili, or both as your default.
-Import saved preferences or enter your interests.
+Setup asks separate questions for platforms, preference import or manual interest entry, and the corresponding text input.
+An import asks for the full local JSON file path.
+Existing profiles can keep their saved preferences.
+The host shows question controls when available. A text-only host asks the same questions in chat.
+Setup waits for each submitted answer before dependent work.
+After opening Bilibili sign-in, setup asks whether you signed in, need help, or are still signing in.
 Required tools and selected platform access must pass before setup completes.
 Transcription and ffprobe remain optional.
 Each later round checks readiness without repeating setup.
