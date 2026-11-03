@@ -2,7 +2,6 @@ import tempfile
 import json
 import math
 import threading
-import time
 import unittest
 from unittest.mock import patch
 
@@ -462,24 +461,22 @@ class ParallelTests(unittest.TestCase):
         lock = threading.Lock()
         active = {"prepare": 0, "model": 0}
         peak = dict(active)
-        both = threading.Event()
+        preparations_overlap = threading.Barrier(2)
+        models_overlap = threading.Barrier(2)
 
         def worker(root, work, settings, runtime, jar, cancelled):
             with runtime.slot(runtime.preparations, lambda: 10, cancelled):
                 with lock:
                     active["prepare"] += 1
                     peak["prepare"] = max(peak["prepare"], active["prepare"])
-                time.sleep(0.03)
+                preparations_overlap.wait(timeout=10)
                 with lock:
                     active["prepare"] -= 1
             with runtime.slot(runtime.models, lambda: 10, cancelled):
                 with lock:
                     active["model"] += 1
                     peak["model"] = max(peak["model"], active["model"])
-                    if active["model"] == 2:
-                        both.set()
-                self.assertTrue(both.wait(2))
-                time.sleep(0.04)
+                models_overlap.wait(timeout=10)
                 local = Store(root)
                 try:
                     child = local.get(work["evidence_run"])

@@ -58,14 +58,14 @@ class StorageTests(unittest.TestCase):
                 json.dumps({"version": 1, "data_directory": str(selected)}),
                 encoding="utf-8",
             )
-            self.assertEqual(data_root(), selected)
-            self.assertEqual(data_root(directory), Path(directory))
+            self.assertEqual(data_root(), selected.resolve())
+            self.assertEqual(data_root(directory), Path(directory).resolve())
             with patch.dict("os.environ", {"BROADER_VIDS_DATA_DIR": directory}):
-                self.assertEqual(data_root(), Path(directory))
+                self.assertEqual(data_root(), Path(directory).resolve())
             choice.write_text("{broken", encoding="utf-8")
             with self.assertRaises(ValueError):
                 data_root()
-            self.assertEqual(data_root(directory), Path(directory))
+            self.assertEqual(data_root(directory), Path(directory).resolve())
             choice.unlink()
             self.assertEqual(data_root(), default)
 

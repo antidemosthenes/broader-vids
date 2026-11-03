@@ -39,11 +39,25 @@ class CreatorDashboardTests(unittest.TestCase):
             def reject(route):
                 route.fulfill(status=400, json={"error": "Fixture write rejected"})
 
-            page.route("**/api/action", reject)
-            checkbox.uncheck()
-            page.get_by_text("Fixture write rejected", exact=True).wait_for()
-            self.assertTrue(checkbox.is_checked())
-            page.unroute("**/api/action", reject)
+            pending = []
+
+            def hold_rejection(route):
+                pending.append(route)
+
+            page.route("**/api/action", hold_rejection)
+            try:
+                with page.expect_request("**/api/action"):
+                    checkbox.uncheck()
+                self.assertFalse(checkbox.is_checked())
+                self.assertTrue(checkbox.is_disabled())
+                reject(pending.pop())
+                page.get_by_text("Fixture write rejected", exact=True).wait_for()
+                self.assertTrue(checkbox.is_checked())
+                self.assertTrue(checkbox.is_enabled())
+            finally:
+                for route in pending:
+                    route.abort()
+                page.unroute("**/api/action", hold_rejection)
             nav = page.get_by_role("navigation")
             nav.get_by_role("button", name="Exclusions", exact=True).click()
             page.get_by_role("button", name="Remove", exact=True).click()

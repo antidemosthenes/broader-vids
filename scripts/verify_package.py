@@ -37,6 +37,10 @@ def main(archive_path):
         assert not any(private.intersection(Path(name).parts) for name in names), (
             "Private file in package"
         )
+        for required in ("bin/broader-vids.cjs", "bin/plugin-install.cjs"):
+            assert f"package/{required}" in names, (
+                f"Missing plugin installer: {required}"
+            )
         for group in ("core", "evidence", "asr"):
             required = f"package/python/{group}-requirements.txt"
             assert required in names, (

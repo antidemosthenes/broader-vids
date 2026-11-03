@@ -32,9 +32,14 @@ def _dashboard_browser():
     _stop_dashboard_browser()
     _playwright = sync_playwright().start()
     try:
+        selected = os.environ.get("BROADER_VIDS_TEST_BROWSER") or (
+            "msedge" if sys.platform == "win32" else "chromium"
+        )
+        if selected not in {"chromium", "msedge"}:
+            raise ValueError("Choose chromium or msedge for BROADER_VIDS_TEST_BROWSER.")
         _browser = _playwright.chromium.launch(
             headless=True,
-            **({"channel": "msedge"} if sys.platform == "win32" else {}),
+            **({"channel": selected} if selected != "chromium" else {}),
         )
     except BaseException:
         _playwright.stop()
@@ -146,11 +151,30 @@ def dashboard_fixture(*, provisional=False):
             try:
                 page = context.new_page()
                 page.set_default_timeout(8000)
+                startup_errors = []
+
+                def record_startup_error(message):
+                    if len(startup_errors) < 8:
+                        startup_errors.append(str(message)[:1000])
+
+                page.on("pageerror", record_startup_error)
+                page.on(
+                    "requestfailed",
+                    lambda request: record_startup_error(
+                        f"{request.url}: {request.failure}"
+                    ),
+                )
                 page.goto(
                     f"http://127.0.0.1:{server.server_port}",
                     wait_until="domcontentloaded",
                 )
-                page.locator(".video-row").first.wait_for()
+                try:
+                    page.locator(".video-row").first.wait_for()
+                except Exception as error:
+                    error.add_note(
+                        "Dashboard startup errors: " + json.dumps(startup_errors)
+                    )
+                    raise
                 yield page, directory
             finally:
                 context.close()

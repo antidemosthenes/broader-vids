@@ -68,11 +68,21 @@ def save_timings(previous, results):
 
 
 def worker(filename):
+    progress = sys.stderr
+    print(f"Discovering {filename}", file=progress, flush=True)
+
+    class ProgressResult(unittest.TextTestResult):
+        def startTest(self, test):
+            print(f"Running {test.id()}", file=progress, flush=True)
+            super().startTest(test)
+
     output = io.StringIO()
     sys.path.insert(0, str(TESTS))
     with redirect_stdout(output), redirect_stderr(output):
         suite = unittest.defaultTestLoader.discover(str(TESTS), pattern=filename)
-        result = unittest.TextTestRunner(stream=output, buffer=True).run(suite)
+        result = unittest.TextTestRunner(
+            stream=output, buffer=True, resultclass=ProgressResult
+        ).run(suite)
     return {
         "file": filename,
         "count": result.testsRun,
@@ -105,7 +115,15 @@ def run_file(filename, cancelled):
             "count": 0,
             "skipped": 0,
             "success": False,
-            "log": str(error),
+            "log": "\n".join(
+                str(value)
+                for value in (
+                    error,
+                    getattr(error, "stderr", ""),
+                    getattr(error, "output", ""),
+                )
+                if value
+            ),
             "durations": [],
             "duration": time.perf_counter() - started,
         }
@@ -123,6 +141,11 @@ def main(argv=None):
         "--pattern", default="test_*.py", help="Test filename or glob within tests"
     )
     parser.add_argument("--slowest", type=int, default=5)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print each test file's start and result on separate lines",
+    )
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
@@ -153,6 +176,11 @@ def main(argv=None):
         f"Running {len(files)} files with {min(args.jobs, len(files))} workers...",
         flush=True,
     )
+    if args.verbose:
+        print(
+            f"Python {sys.version.split()[0]}; scratch: {tempfile.gettempdir()}; browser: {os.environ.get('BROADER_VIDS_TEST_BROWSER', 'system default')}",
+            flush=True,
+        )
     browser_files = {
         name
         for name in files
@@ -165,25 +193,51 @@ def main(argv=None):
         try:
             while browsers or core or pending:
                 while len(pending) < args.jobs:
-                    if browsers and not any(pending.values()):
+                    if browsers and not any(info[1] for info in pending.values()):
                         filename, browser = browsers.popleft(), True
                     elif core:
                         filename, browser = core.popleft(), False
                     else:
                         break
-                    pending[pool.submit(run_file, filename, cancelled)] = browser
-                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    if args.verbose:
+                        print(f"START {filename}", flush=True)
+                    pending[pool.submit(run_file, filename, cancelled)] = (
+                        filename,
+                        browser,
+                        time.monotonic(),
+                    )
+                done, _ = wait(pending, timeout=15, return_when=FIRST_COMPLETED)
+                if not done:
+                    active = ", ".join(
+                        f"{info[0]} ({time.monotonic() - info[2]:.0f}s)"
+                        for info in pending.values()
+                    )
+                    print(f"\nStill running: {active}", flush=True)
                 for future in done:
                     pending.pop(future)
                     result = future.result()
                     results.append(result)
-                    print("." if result["success"] else "F", end="", flush=True)
+                    if args.verbose:
+                        label = "PASS" if result["success"] else "FAIL"
+                        print(
+                            f"{label} {result['file']} ({result['duration']:.2f}s, {result['count']} tests)",
+                            flush=True,
+                        )
+                        if not result["success"]:
+                            print(result["log"], flush=True)
+                    else:
+                        print("." if result["success"] else "F", end="", flush=True)
         except KeyboardInterrupt:
             cancelled.set()
             for future in pending:
                 future.cancel()
             print("\nCancelled; stopping test workers.", flush=True)
             return 130
+        except BaseException:
+            cancelled.set()
+            for future in pending:
+                future.cancel()
+            raise
     print()
     save_timings(timings, results)
     failures = [result for result in results if not result["success"]]

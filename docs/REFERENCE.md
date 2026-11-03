@@ -794,17 +794,60 @@ Unit tests do not require platform sign-in or subscription model calls.
 Run fixtures supply explicit model settings instead of reading your current Codex chat.
 Model-inheritance tests create temporary session files with controlled settings.
 Dashboard browser tests require Playwright and a supported local browser.
-The current Windows tests use installed Edge.
+Local Windows browser tests use installed Edge by default.
+CI installs the Playwright Chromium headless shell on both operating systems.
+Set `BROADER_VIDS_TEST_BROWSER=chromium` to use that browser locally.
 Linux tests use Playwright Chromium. Install its browser and system dependencies before running tests:
 
 ```bash
 uv run --no-sync playwright install --with-deps chromium
 ```
 
-The Ubuntu GitHub Actions workflow performs this installation before the test step.
+The GitHub Actions workflows install the matching headless shell before the test step.
+CI uses `scripts/test.py --jobs 2 --verbose` and limits that step to ten minutes.
+The runner reports active files every fifteen seconds. Timeout reports include the last running test.
+CI uses the runner scratch directory for temporary profiles.
+Path tests compare resolved paths. Reset and Clean tests use the exact directory shown by each preview.
 Dashboard tests check drafts, failed writes, duplicate feedback, dialogs, platform navigation, and responsive themes.
 Keep screenshots and other visual checks under the ignored `.cache/` directory.
 Browser tests reuse a browser process within each worker and create a fresh context for each test.
+
+## Remote plugin installation
+
+The [README](../README.md#install-the-plugin) gives GitHub and npm installation procedures.
+The desktop app accepts the public GitHub repository directly through Add marketplace.
+The repository catalog points to the released npm package.
+GitHub provides the catalog, not an unbuilt engine checkout.
+
+`npx --yes broader-vids@0.1.0 plugin install` provides a separate npm entry point.
+It registers an npm-only marketplace named `broader-vids-npm` and installs `broader-vids@broader-vids-npm` through Codex.
+Its source pins the version of the running npm package.
+This route does not require the GitHub catalog.
+The package contains the engine wheel, launcher, skills, and dashboard assets.
+No npm lifecycle script registers plugins or installs the runtime.
+
+The npm installer stores its small catalog under `CODEX_HOME/broader-vids-npm`.
+When CODEX_HOME is absent, it uses `~/.codex/broader-vids-npm`.
+This host metadata is separate from profile storage. Reset and Clean do not uninstall the plugin or remove its catalog.
+An installation lock prevents concurrent writes. A failed command releases that lock and preserves the catalog for retry.
+If an installer stops unexpectedly, check for surviving commands before removing its stale `install.lock` file.
+The installer does not remove uncertain locks automatically.
+
+Choose one marketplace route to avoid installing duplicate copies.
+Remove a plugin through its original source:
+
+```powershell
+codex plugin remove broader-vids@broader-vids
+codex plugin remove broader-vids@broader-vids-npm
+```
+
+Each command removes only the named installation.
+The desktop app can also uninstall the corresponding plugin.
+External profiles remain available after uninstall.
+
+For terminal commands without plugin registration, `npm install -g broader-vids` installs only the launcher.
+Use guided plugin setup to complete onboarding for chat workflows.
+The standalone `setup` command installs the runtime but does not complete onboarding.
 
 ## Build and install locally
 
@@ -823,7 +866,7 @@ The generated local marketplace contains the installable plugin payload.
 These commands install locally and do not publish anything.
 
 Open a new desktop or CLI conversation after installation.
-For installation through the ChatGPT desktop app, follow [the README](../README.md#install-from-the-codex-marketplace).
+For installation through the ChatGPT desktop app, follow [the README](../README.md#install-the-plugin).
 Use the installed Broader Vids setup skill for guided setup.
 The host exposes the recommendation, setup, and dashboard skills through its skill menu.
 Their skill names include `broader-vids`, `broader-vids-setup`, `broader-vids-dashboard`, `broader-vids-reset`, and `broader-vids-clean`.
@@ -887,7 +930,7 @@ It does not upload artifacts.
 The public npm package is `broader-vids@0.1.0`.
 The GitHub marketplace catalog uses the name `broader-vids` and pins its npm source to version `0.1.0`.
 Users install the marketplace plugin from the README instructions.
-The optional global npm install provides the CLI only and does not register Codex skills.
+The npm `plugin install` command registers the full plugin. A plain global npm install provides only the launcher.
 
 ### Publish a release
 

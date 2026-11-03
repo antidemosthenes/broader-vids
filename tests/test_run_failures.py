@@ -380,10 +380,33 @@ class RunFailureTests(unittest.TestCase):
             reasoning_effort="low",
         )
         runtime = Runtime(preparations=1)
-        runtime.preparations.acquire()
-        release = threading.Timer(0.15, runtime.preparations.release)
-        release.start()
-        self.addCleanup(release.cancel)
+        held_slot = threading.BoundedSemaphore(1)
+        held_slot.acquire()
+        waiting_for_slot = threading.Event()
+
+        class ObservedSemaphore:
+            def acquire(self, timeout=None):
+                waiting_for_slot.set()
+                return held_slot.acquire(timeout=timeout)
+
+            def release(self):
+                held_slot.release()
+
+        class ControlledClock:
+            def __init__(self):
+                self.value = 100.0
+                self.lock = threading.Lock()
+
+            def monotonic(self):
+                with self.lock:
+                    return self.value
+
+            def advance(self, seconds):
+                with self.lock:
+                    self.value += seconds
+
+        runtime.preparations = ObservedSemaphore()
+        clock = ControlledClock()
         seen = []
 
         def prepare(root, key, asr, seconds, *args, **kwargs):
@@ -397,7 +420,7 @@ class RunFailureTests(unittest.TestCase):
             "evidence_run": rid,
             "seconds": 0.1,
             "bytes": 1,
-            "parent_deadline": time.monotonic() + 3,
+            "parent_deadline": clock.value + 10,
             "preparation_token": "queue-test",
         }
         with (
@@ -410,18 +433,42 @@ class RunFailureTests(unittest.TestCase):
                 return_value=quality(rid),
             ),
         ):
-            result = process_candidate(
-                self.store.root,
-                work,
-                {"asr_model": None},
-                runtime,
-                None,
-                threading.Event(),
-            )
+            with patch("broader_vids.recommendations.parallel.time", clock):
+                results = []
+                errors = []
+
+                def run_candidate():
+                    try:
+                        results.append(
+                            process_candidate(
+                                self.store.root,
+                                work,
+                                {"asr_model": None},
+                                runtime,
+                                None,
+                                threading.Event(),
+                            )
+                        )
+                    except BaseException as error:
+                        errors.append(error)
+
+                thread = threading.Thread(target=run_candidate)
+                thread.start()
+                try:
+                    self.assertTrue(waiting_for_slot.wait(timeout=10))
+                    clock.advance(1)
+                finally:
+                    held_slot.release()
+                    thread.join(timeout=10)
+                self.assertFalse(thread.is_alive())
+                if errors:
+                    raise errors[0]
+                result = results[0]
         self.assertIsNotNone(result.get("quality"))
         self.assertAlmostEqual(seen[0], 0.1)
-        self.assertGreater(
-            self.store.get(rid)["state"]["timings"]["preparation_queue_seconds"], 0.1
+        self.assertAlmostEqual(
+            self.store.get(rid)["state"]["timings"]["preparation_queue_seconds"],
+            1,
         )
 
     def test_killed_preparation_has_a_child_failure_and_bounded_byte_receipt(self):

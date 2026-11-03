@@ -43,9 +43,16 @@ class ProfileDataTests(unittest.TestCase):
                 folder = root / name
                 folder.mkdir(parents=True)
                 (folder / "retained.txt").write_text("keep", encoding="utf-8")
-            self.assertTrue(self.invoke(root, "reset")["dry_run"])
+            reset_preview = self.invoke(root, "reset")
+            self.assertTrue(reset_preview["dry_run"])
             self.assertFalse((root / ".broader-vids-profile.json").exists())
-            report = self.invoke(root, "reset", "--apply", "--confirm-path", str(root))
+            report = self.invoke(
+                root,
+                "reset",
+                "--apply",
+                "--confirm-path",
+                reset_preview["data_directory"],
+            )
             self.assertEqual(report["status"], "completed")
             for name in ("runtimes", "models", "access/bilibili/profile"):
                 self.assertEqual((root / name / "retained.txt").read_text(), "keep")
@@ -62,10 +69,15 @@ class ProfileDataTests(unittest.TestCase):
                         store.db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0],
                         0,
                     )
+            clean_preview = self.invoke(root, "clean")
             self.assertEqual(
-                self.invoke(root, "clean", "--apply", "--confirm-path", str(root))[
-                    "status"
-                ],
+                self.invoke(
+                    root,
+                    "clean",
+                    "--apply",
+                    "--confirm-path",
+                    clean_preview["data_directory"],
+                )["status"],
                 "completed",
             )
             self.assertFalse(root.exists())

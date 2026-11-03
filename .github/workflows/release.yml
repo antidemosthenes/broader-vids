@@ -65,17 +65,21 @@ jobs:
           node-version: "24"
       - run: uv sync --locked --extra evidence
       - run: npm ci --ignore-scripts
-      - name: Install Linux Chromium and dependencies
-        if: runner.os == 'Linux'
-        run: uv run --no-sync playwright install --with-deps chromium
+      - name: Install Chromium headless shell and dependencies
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
       - name: Check runtime dependency files are tracked
         run: |
           git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
       - run: uv run --no-sync ruff check src tests scripts
       - run: uv run --no-sync ruff format --check src tests scripts
       - name: Run isolated tests in parallel without a live Codex chat
-        run: uv run --no-sync scripts/test.py --jobs 2
+        run: uv run --no-sync scripts/test.py --jobs 2 --verbose
+        timeout-minutes: 10
         env:
+          BROADER_VIDS_TEST_BROWSER: chromium
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
           CODEX_THREAD_ID: ""
           CODEX_SESSION_ID: ""
       - run: npm test

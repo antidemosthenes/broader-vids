@@ -309,3 +309,73 @@ test('Windows defaults honor redirected LOCALAPPDATA and have a native fallback'
   assert.equal(defaultRoot({ LOCALAPPDATA: sandbox, USERPROFILE: directory }, 'win32'), path.join(sandbox, 'broader-vids'));
   assert.equal(defaultRoot({ USERPROFILE: directory }, 'win32'), path.join(directory, 'AppData', 'Local', 'broader-vids'));
 });
+
+
+test('npm plugin installation registers a pinned registry source without touching a profile', () => {
+  const { installPlugin } = require('../bin/plugin-install.cjs');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-npm-'));
+  try {
+    const cli = path.join(directory, 'cli with spaces');
+    fs.mkdirSync(cli);
+    fs.writeFileSync(path.join(cli, 'codex.exe'), 'fixture');
+    const env = { CODEX_HOME: path.join(directory, 'codex'), PATH: cli, LOCALAPPDATA: path.join(directory, 'profiles') };
+    const calls = [];
+    const version = require('../package.json').version;
+    const report = installPlugin(version, (command, args) => calls.push({ command, args }), env);
+    assert.equal(report.status, 'installed');
+    const root = path.join(env.CODEX_HOME, 'broader-vids-npm');
+    const catalog = path.join(root, '.agents', 'plugins', 'marketplace.json');
+    const saved = JSON.parse(fs.readFileSync(catalog, 'utf8'));
+    assert.deepEqual(saved.plugins[0].source, { source: 'npm', package: 'broader-vids', version, registry: 'https://registry.npmjs.org' });
+    assert.deepEqual(calls.map(call => call.args), [
+      ['plugin', 'marketplace', 'add', root],
+      ['plugin', 'add', 'broader-vids@broader-vids-npm'],
+    ]);
+    assert.equal(fs.existsSync(env.LOCALAPPDATA), false);
+    assert.equal(fs.existsSync(path.join(root, 'install.lock')), false);
+    assert.deepEqual(fs.readdirSync(path.dirname(catalog)), ['marketplace.json']);
+    installPlugin(version, () => {}, env);
+    assert.deepEqual(JSON.parse(fs.readFileSync(catalog, 'utf8')), saved);
+    assert.throws(() => installPlugin(version, () => { throw new Error('fixture registration failed'); }, env), /fixture registration failed/);
+    assert.equal(fs.existsSync(path.join(root, 'install.lock')), false);
+    assert.deepEqual(fs.readdirSync(path.dirname(catalog)), ['marketplace.json']);
+    fs.writeFileSync(path.join(root, 'install.lock'), 'busy');
+    assert.throws(() => installPlugin(version, () => assert.fail('must not invoke Codex'), env), /Another plugin installation/);
+    assert.equal(fs.readFileSync(path.join(root, 'install.lock'), 'utf8'), 'busy');
+  } finally {
+    assert.ok(path.basename(directory).startsWith('broader-vids-npm-'));
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('npm installer resolves Windows native and npm-provided Codex without shell execution', () => {
+  const { resolveCodex } = require('../bin/plugin-install.cjs');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-codex-'));
+  try {
+    const env = { PATH: directory };
+    assert.throws(() => resolveCodex(env, 'win32'), /Install Codex CLI/);
+    const script = path.join(directory, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.writeFileSync(script, 'fixture');
+    assert.deepEqual(resolveCodex(env, 'win32'), [process.execPath, [script]]);
+    const executable = path.join(directory, 'codex.exe');
+    fs.writeFileSync(executable, 'fixture');
+    assert.deepEqual(resolveCodex(env, 'win32'), [executable, []]);
+    assert.deepEqual(resolveCodex(env, 'linux'), ['codex', []]);
+  } finally {
+    assert.ok(path.basename(directory).startsWith('broader-vids-codex-'));
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('plugin help needs no runtime and profile flags cannot redirect the installer', () => {
+  const { spawnSync } = require('node:child_process');
+  const launcher = path.resolve(__dirname, '../bin/broader-vids.cjs');
+  const env = { ...process.env, BROADER_VIDS_DATA_DIR: 'unused installer profile' };
+  const help = spawnSync(process.execPath, [launcher, 'plugin', '--help'], { env, encoding: 'utf8' });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /broader-vids plugin install/);
+  const invalid = spawnSync(process.execPath, [launcher, '--data-dir', 'unused installer profile', 'plugin', 'install'], { env, encoding: 'utf8' });
+  assert.equal(invalid.status, 2);
+  assert.match(invalid.stderr, /without profile arguments/);
+});

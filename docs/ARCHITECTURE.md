@@ -10,17 +10,22 @@ The launcher releases locks after normal completion or command failure.
 A stale or unreadable lock blocks later work until the operator checks for surviving processes and repairs the lock.
 The launcher has no stale-lock repair command and does not implement recommendation logic.
 
+The GitHub marketplace and explicit npm installer both install the prepared npm plugin.
+The npm installer registers a small host catalog without GitHub access or profile access.
+Setup installs the bundled engine into external profile storage after plugin installation.
+
 ## Project files
 
 ```text
 broader-vids/
-  README.md                    Purpose and source installation
+  README.md                    Purpose, remote installation, and first use
   LICENSE                      Broader Vids license
   plugin.json                  Portable plugin identity
   .agents/plugins/
-    marketplace.json           Local Codex marketplace for the clean build
+    marketplace.json           Remote catalog with a pinned npm plugin source
   bin/
     broader-vids.cjs            Node setup and process launcher
+    plugin-install.cjs         Explicit npm plugin registration through Codex
     runtime-lock.cjs            Shared runtime use and exclusive installation
     profile-data.cjs            Preview, reset, and complete data removal
   skills/

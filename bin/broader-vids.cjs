@@ -180,8 +180,7 @@ function validGroups(groups) {
     Array.isArray(groups) &&
     (JSON.stringify(groups) === JSON.stringify(["core"]) ||
       JSON.stringify(groups) === JSON.stringify(["core", "evidence"]) ||
-      JSON.stringify(groups) ===
-        JSON.stringify(["core", "evidence", "asr"]))
+      JSON.stringify(groups) === JSON.stringify(["core", "evidence", "asr"]))
   );
 }
 
@@ -197,7 +196,9 @@ function runtimeBuildMatches(runtime, digest, packageRoot) {
     )
       return false;
     const expected = requirementDigests(packageRoot, receipt.groups);
-    return JSON.stringify(receipt.requirements_sha256) === JSON.stringify(expected);
+    return (
+      JSON.stringify(receipt.requirements_sha256) === JSON.stringify(expected)
+    );
   } catch {
     return false;
   }
@@ -229,6 +230,29 @@ function main(args = process.argv.slice(2)) {
     fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
   );
   const index = commandIndex(args);
+  if (args[index] === "plugin") {
+    if (
+      index === 0 &&
+      args.length === 2 &&
+      ["--help", "-h"].includes(args[1])
+    ) {
+      console.log("Usage: broader-vids plugin install");
+      return;
+    }
+    if (index !== 0 || args.length !== 2 || args[1] !== "install")
+      throw new Error(
+        "Use broader-vids plugin install without profile arguments.",
+      );
+    const result = require("./plugin-install.cjs").installPlugin(
+      manifest.version,
+      invoke,
+    );
+    console.log(JSON.stringify(result, null, 2));
+    console.log(
+      "Start a new Codex conversation and invoke the Broader Vids setup skill.",
+    );
+    return;
+  }
   if (args[index] === "data") {
     const operation = args[index + 1] || "show";
     if (operation === "use" && args.length === index + 3)
