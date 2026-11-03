@@ -130,6 +130,10 @@ They do not rewrite saved recommendation state or reset resource use.
 ## Dashboard files and state
 
 The Python server serves local HTML, CSS, and JavaScript modules.
+HTTP/1.1 connections reuse sockets for asset and API requests.
+Idle connections wait at most one second for another request. Active requests use a thirty-second socket timeout.
+Shutdown disconnects clients and waits for request handlers to close their database connections before closing the account controller.
+The server rejects ambiguous request lengths and closes connections after error responses.
 It permits only explicit static asset paths.
 The dashboard uses native form controls and dialogs.
 

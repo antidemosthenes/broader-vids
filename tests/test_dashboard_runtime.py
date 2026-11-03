@@ -1,9 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import closing, contextmanager
 import http.client
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 import webbrowser
 from unittest.mock import patch
@@ -11,6 +12,27 @@ from unittest.mock import patch
 from broader_vids.evidence.service import atomic_json
 from broader_vids.storage import Store
 from broader_vids.web.runtime import active, dashboard, read_session, session_path
+from broader_vids.web.server import make_server
+
+
+@contextmanager
+def local_server():
+    with tempfile.TemporaryDirectory() as directory:
+        with closing(Store(directory)):
+            pass
+        server = make_server(directory, 0)
+        thread = threading.Thread(
+            target=lambda: server.serve_forever(poll_interval=0.01), daemon=True
+        )
+        thread.start()
+        try:
+            yield server, Path(directory)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=10)
+            if thread.is_alive():
+                raise AssertionError("The local server did not stop.")
 
 
 class DashboardRuntimeTests(unittest.TestCase):
@@ -121,3 +143,136 @@ class DashboardRuntimeTests(unittest.TestCase):
                 dashboard(root, "stop")
             with self.assertRaises(ValueError):
                 dashboard(root, port=-1)
+
+    def test_assets_reuse_one_connection_and_idle_clients_close_on_shutdown(self):
+        with local_server() as (server, _):
+            with patch.object(
+                server, "get_request", wraps=server.get_request
+            ) as accept:
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", server.server_port, timeout=10
+                )
+                try:
+                    original = None
+                    for _ in range(3):
+                        for asset in (
+                            "/",
+                            "/static/dashboard.js",
+                            "/static/review.js",
+                            "/static/preferences.js",
+                        ):
+                            connection.request("GET", asset)
+                            response = connection.getresponse()
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(response.version, 11)
+                            response.read()
+                            if original is None:
+                                original = connection.sock
+                            self.assertIs(connection.sock, original)
+                    self.assertEqual(accept.call_count, 1)
+                    server.shutdown()
+                    server.server_close()
+                    self.assertEqual(original.recv(1), b"")
+                    self.assertFalse(server._connections)
+                finally:
+                    connection.close()
+
+    def test_shutdown_waits_for_request_database_cleanup_before_account_close(self):
+        entered, release, store_closed, close_done = (
+            threading.Event() for _ in range(4)
+        )
+        errors = []
+
+        class ObservedStore(Store):
+            def close(self):
+                super().close()
+                store_closed.set()
+
+        def held_state(store):
+            entered.set()
+            if not release.wait(timeout=10):
+                raise AssertionError("The fixture request was not released.")
+            return {"fixture": True}
+
+        with local_server() as (server, root):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=10
+            )
+            original_close = server.account_switch.close
+
+            def close_account():
+                self.assertTrue(store_closed.is_set())
+                original_close()
+
+            def stop_server():
+                try:
+                    server.server_close()
+                except BaseException as error:
+                    errors.append(error)
+                finally:
+                    close_done.set()
+
+            closer = threading.Thread(target=stop_server)
+            with (
+                patch("broader_vids.web.server.Store", ObservedStore),
+                patch(
+                    "broader_vids.web.server.dashboard_state", side_effect=held_state
+                ),
+                patch.object(server.account_switch, "close", side_effect=close_account),
+            ):
+                try:
+                    connection.request("GET", "/api/state")
+                    self.assertTrue(entered.wait(timeout=10))
+                    server.shutdown()
+                    closer.start()
+                    self.assertEqual(connection.sock.recv(1), b"")
+                    self.assertFalse(close_done.is_set())
+                    self.assertFalse(store_closed.is_set())
+                finally:
+                    release.set()
+                    if closer.ident is not None:
+                        closer.join(timeout=10)
+                    connection.close()
+                self.assertFalse(closer.is_alive())
+                if errors:
+                    raise errors[0]
+                self.assertTrue(store_closed.is_set())
+                self.assertTrue(close_done.is_set())
+                self.assertFalse(server._connections)
+                database = root / "broader-vids.sqlite3"
+                renamed = database.with_suffix(".closed")
+                database.rename(renamed)
+                renamed.rename(database)
+
+    def test_rejected_post_framing_closes_connection_without_consuming_later_requests(
+        self,
+    ):
+        import re
+
+        with local_server() as (server, _):
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=10
+            )
+            try:
+                connection.request("GET", "/")
+                response = connection.getresponse()
+                page = response.read().decode()
+                token = re.search(r'name="broader-vids-token" content="([^"]+)"', page)[
+                    1
+                ]
+                for headers in (
+                    [("Content-Length", "2"), ("Content-Length", "3")],
+                    [("Content-Length", "2"), ("Transfer-Encoding", "chunked")],
+                ):
+                    connection.putrequest("POST", "/api/interests")
+                    connection.putheader("X-Broader-Vids-Token", token)
+                    for name, value in headers:
+                        connection.putheader(name, value)
+                    connection.endheaders(b"{}")
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 400)
+                    self.assertEqual(response.getheader("Connection"), "close")
+                    self.assertIn("Content-Length", response.read().decode())
+                    self.assertIsNone(connection.sock)
+            finally:
+                connection.close()

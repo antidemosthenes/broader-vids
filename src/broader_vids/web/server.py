@@ -195,6 +195,26 @@ def dashboard_state(store):
 
 class LocalServer(ThreadingHTTPServer):
     allow_reuse_address = False
+    daemon_threads = False
+    request_queue_size = 32
+
+    def __init__(self, *args, **kwargs):
+        self._connections = set()
+        self._connections_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        request, address = super().get_request()
+        with self._connections_lock:
+            self._connections.add(request)
+        return request, address
+
+    def shutdown_request(self, request):
+        try:
+            super().shutdown_request(request)
+        finally:
+            with self._connections_lock:
+                self._connections.discard(request)
 
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -202,9 +222,18 @@ class LocalServer(ThreadingHTTPServer):
         super().server_bind()
 
     def server_close(self):
-        if hasattr(self, "account_switch"):
-            self.account_switch.close()
-        super().server_close()
+        try:
+            with self._connections_lock:
+                connections = tuple(self._connections)
+            for request in connections:
+                try:
+                    request.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            super().server_close()
+        finally:
+            if hasattr(self, "account_switch"):
+                self.account_switch.close()
 
     def handle_error(self, request, client_address):
         import sys
@@ -224,6 +253,20 @@ def make_server(root, port=8765, *, control=None):
     account_switch = AccountSwitch(root)
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        timeout = 1
+        disable_nagle_algorithm = True
+
+        def handle_one_request(self):
+            self.connection.settimeout(self.timeout)
+            super().handle_one_request()
+
+        def parse_request(self):
+            parsed = super().parse_request()
+            if parsed:
+                self.connection.settimeout(30)
+            return parsed
+
         def log_message(self, *args):
             pass
 
@@ -239,6 +282,10 @@ def make_server(root, port=8765, *, control=None):
             self.send_header("Content-Type", mime + "; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
+            if status >= 400:
+                self.close_connection = True
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header(
                 "Content-Security-Policy",
@@ -248,6 +295,10 @@ def make_server(root, port=8765, *, control=None):
             self.wfile.write(raw)
 
         def do_GET(self):
+            if self.headers.get("Content-Length") or self.headers.get(
+                "Transfer-Encoding"
+            ):
+                self.close_connection = True
             if not self.valid_host():
                 return self.send(403, '{"error":"Invalid local host"}')
             if self.path == "/api/health" and control:
@@ -401,6 +452,13 @@ def make_server(root, port=8765, *, control=None):
                 return self.send(404, '{"error":"Not found"}')
             store = None
             try:
+                if (
+                    self.headers.get("Transfer-Encoding")
+                    or len(self.headers.get_all("Content-Length", [])) != 1
+                ):
+                    raise ValueError(
+                        "Supply one Content-Length without Transfer-Encoding."
+                    )
                 length = int(self.headers.get("Content-Length", "0"))
                 transfer = self.path.startswith("/api/preferences/")
                 if (
