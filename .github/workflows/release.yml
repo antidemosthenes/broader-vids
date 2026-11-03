@@ -208,7 +208,9 @@ jobs:
 
   publish:
     needs: prepare
-    if: needs.prepare.outputs.ready == 'true'
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      needs.prepare.outputs.ready == 'true'
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
@@ -253,7 +255,9 @@ jobs:
 
   github-release:
     needs: [prepare, publish]
-    if: needs.prepare.outputs.ready == 'true'
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      needs.publish.result == 'success' && needs.prepare.outputs.ready == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

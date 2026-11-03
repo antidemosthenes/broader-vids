@@ -41,6 +41,82 @@ class ReleaseAutomationTests(unittest.TestCase):
             ):
                 release_ci.choose_version(declared, public, sha)
 
+    def test_tagged_unpublished_versions_are_reserved_and_same_source_retries_reuse_them(
+        self,
+    ):
+        source = "a" * 40
+        for original, public, tags, expected in (
+            ("b" * 40, {"version": "0.1.0"}, "v0.1.0\nv0.1.1", "0.1.2"),
+            (source, {"version": "0.1.0"}, "v0.1.0\nv0.1.1", "0.1.1"),
+            ("b" * 40, {"version": "0.1.0"}, "v0.1.1\nv0.1.5\nv1.0.0-beta.1", "0.1.6"),
+            (
+                "b" * 40,
+                {"version": "0.1.1", "broaderVidsRelease": {"sourceCommit": source}},
+                "v0.1.1",
+                None,
+            ),
+        ):
+            with (
+                self.subTest(original=original, public=public, tags=tags),
+                patch.object(release_ci, "check", return_value={"version": "0.1.1"}),
+                patch.object(release_ci, "registry", return_value=public),
+                patch.object(release_ci, "git_value", side_effect=[tags, "c" * 40]),
+                patch.object(
+                    release_ci,
+                    "source_commit",
+                    return_value={"source_sha": original, "recovery": True},
+                ),
+            ):
+                if expected is None:
+                    with self.assertRaisesRegex(ValueError, "immutable release tag"):
+                        release_ci.plan(source)
+                else:
+                    result = release_ci.plan(source)
+                    self.assertEqual(result["version"], expected)
+                    self.assertEqual(result["reused"], original == source)
+
+    def test_publication_jobs_survive_skipped_ancestor_but_require_success_and_no_cancellation(
+        self,
+    ):
+        workflow = yaml.safe_load(
+            (release_ci.ROOT / ".github/workflows/release.yml").read_text()
+        )
+        for name in ("publish", "github-release"):
+            condition = workflow["jobs"][name]["if"]
+            self.assertIn("!cancelled()", condition)
+            for prepared, published, ready, cancelled, expected in (
+                ("success", "success", "true", False, True),
+                ("failure", "success", "true", False, False),
+                ("skipped", "success", "true", False, False),
+                ("success", "success", "false", False, False),
+                ("success", "success", "true", True, False),
+                ("success", "failure", "true", False, name == "publish"),
+                ("success", "skipped", "true", False, name == "publish"),
+            ):
+                with self.subTest(
+                    name=name,
+                    prepared=prepared,
+                    published=published,
+                    ready=ready,
+                    cancelled=cancelled,
+                ):
+                    expression = condition.replace("!cancelled()", repr(not cancelled))
+                    expression = expression.replace(
+                        "needs.prepare.result", repr(prepared)
+                    )
+                    expression = expression.replace(
+                        "needs.publish.result", repr(published)
+                    )
+                    expression = expression.replace(
+                        "needs.prepare.outputs.ready", repr(ready)
+                    )
+                    self.assertEqual(
+                        eval(
+                            expression.replace("&&", " and "), {"__builtins__": {}}, {}
+                        ),
+                        expected,
+                    )
+
     def test_published_versions_are_reused_only_when_archive_matches_and_never_downgrade_latest(
         self,
     ):

@@ -127,6 +127,27 @@ def choose_version(declared, latest, source_sha):
 def plan(source_sha):
     metadata = check()
     result = choose_version(metadata["version"], registry("latest"), source_sha)
+    tags = {}
+    for tag in git_value("tag", "--list", "v*").splitlines():
+        try:
+            tags[tag] = version_tuple(tag[1:])
+        except ValueError:
+            continue
+    tag = "v" + result["version"]
+    if tag in tags:
+        tagged = source_commit(git_value("rev-parse", "refs/tags/" + tag + "^{commit}"))
+        if tagged["recovery"] and tagged["source_sha"] == source_sha:
+            result["reused"] = True
+        elif result["reused"]:
+            raise ValueError(
+                "The published source conflicts with the immutable release tag."
+            )
+        else:
+            highest = max(tags.values())
+            result = {
+                "version": f"{highest[0]}.{highest[1]}.{highest[2] + 1}",
+                "reused": False,
+            }
     return {**result, "tag": "v" + result["version"], "source_sha": source_sha}
 
 

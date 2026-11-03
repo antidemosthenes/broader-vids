@@ -947,6 +947,8 @@ A newer main commit can supersede an earlier queued release.
 Automatic runs reuse the successful Windows and Ubuntu checks. A manual dispatch runs those checks again.
 
 Releases run in sequence. The next patch follows the latest stable npm version.
+An existing Git tag reserves its version, even when npm publication did not finish.
+A different source receives a later version. A retry of the same source can reuse its tag.
 A higher version declared in the source acts as a minimum for the release version.
 The workflow synchronizes Node, Python, plugin, lock-file, and wheel-whitelist versions in a temporary release checkout.
 It records the tested source commit in `package.json` under `broaderVidsRelease.sourceCommit`.
@@ -959,6 +961,8 @@ The workflow prepares the wheel, npm archive, plugin ZIP, manifest, and checksum
 It checks source inclusion, versions, private-data exclusions, and archive integrity before publication.
 The npm job uses OIDC through the `npm-release` environment.
 Only that job receives `id-token: write` permission.
+Publication jobs accept the intentionally skipped duplicate checks on automatic runs.
+They still require successful preparation and stop after cancellation. GitHub assets also require successful npm publication.
 Tag creation and GitHub release assets use separate jobs with `contents: write` permission.
 The workflow publishes the verified archive under `latest`, then checks public registry integrity.
 It creates a GitHub release with the archives, manifest, and checksums after npm publication succeeds.
@@ -1006,6 +1010,8 @@ See the [npm trusted-publisher guide](https://docs.npmjs.com/trusted-publishers/
 After these settings are complete, push the reviewed changes to main directly or merge a development pull request into main.
 Check both the ordinary CI run and the following Release run.
 Check the npm `latest` version and matching GitHub release before announcing the update.
+A Git tag can exist before npm publication finishes.
+Check the `publish` and `github-release` jobs, not only the tag or overall workflow status.
 The account settings and the first live OIDC publication require separate acceptance. Local fixtures cannot check them.
 
 ### Update an installed plugin
