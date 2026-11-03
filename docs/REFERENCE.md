@@ -824,9 +824,9 @@ The desktop app accepts the public GitHub repository directly through Add market
 The repository catalog points to the released npm package.
 GitHub provides the catalog, not an unbuilt engine checkout.
 
-`npx --yes broader-vids@0.1.0 plugin install` provides a separate npm entry point.
+`npx --yes broader-vids@latest plugin install` provides a separate npm entry point.
 It registers an npm-only marketplace named `broader-vids-npm` and installs `broader-vids@broader-vids-npm` through Codex.
-Its source pins the version of the running npm package.
+Its source pins the version of the running npm package. The `latest` selector retrieves the current public bootstrap.
 This route does not require the GitHub catalog.
 The package contains the engine wheel, launcher, skills, and dashboard assets.
 No npm lifecycle script registers plugins or installs the runtime.
@@ -932,37 +932,113 @@ npm run release:prepare
 It builds a Python wheel, packs and verifies the npm archive, builds a plugin ZIP and generated `dist/local-marketplace`, and writes `dist/release.json` and `dist/SHA256SUMS`.
 It does not upload artifacts.
 
-The public npm package is `broader-vids@0.1.0`.
-The GitHub marketplace catalog uses the name `broader-vids` and pins its npm source to version `0.1.0`.
+The public npm package is `broader-vids`.
+The GitHub marketplace catalog uses the name `broader-vids` and tracks the npm `latest` distribution tag.
 Users install the marketplace plugin from the README instructions.
 The npm `plugin install` command registers the full plugin. A plain global npm install provides only the launcher.
 
-### Publish a release
+### Automatic public releases
 
-The release workflow does not publish on push.
-An authorized maintainer must manually dispatch `.github/workflows/release.yml` with an existing `vX.Y.Z` tag.
-The tag must point to the intended release commit, and its version must match the package version.
-The `npm-release` protected environment uses GitHub OIDC and Node.js 24 with npm 11.5.1 or later.
-This workflow publishes the npm package only. It does not submit the marketplace catalog to a directory.
+After a push updates `main`, its successful `checks` run starts `.github/workflows/release.yml`.
+Direct commits and merged pull requests both qualify.
+Other branches and unmerged pull requests do not publish packages.
+The workflow checks the source repository, main branch, push event, and exact tested commit before privileged work.
+A newer main commit can supersede an earlier queued release.
+Automatic runs reuse the successful Windows and Ubuntu checks. A manual dispatch runs those checks again.
 
-For the first publish, prepare the artifacts and publish the tarball from a local npm session:
+Releases run in sequence. The next patch follows the latest stable npm version.
+A higher version declared in the source acts as a minimum for the release version.
+The workflow synchronizes Node, Python, plugin, lock-file, and wheel-whitelist versions in a temporary release checkout.
+It records the tested source commit in `package.json` under `broaderVidsRelease.sourceCommit`.
+It writes the version commit to main and creates its `vX.Y.Z` tag in one atomic push.
+The commit contains the tested functional source with synchronized release metadata.
+A guarded push refuses to overwrite a newer main update.
+The frozen starter preset remains unchanged.
+
+The workflow prepares the wheel, npm archive, plugin ZIP, manifest, and checksums.
+It checks source inclusion, versions, private-data exclusions, and archive integrity before publication.
+The npm job uses OIDC through the `npm-release` environment.
+Only that job receives `id-token: write` permission.
+Tag creation and GitHub release assets use separate jobs with `contents: write` permission.
+The workflow publishes the verified archive under `latest`, then checks public registry integrity.
+It creates a GitHub release with the archives, manifest, and checksums after npm publication succeeds.
+It retains workflow artifacts for seven days.
+
+Retries resolve a tagged version commit back to its tested merge source.
+They reuse a release when its recorded source commit matches that source.
+An existing tag must have the expected parent and exact release tree.
+The bot version commit does not allocate a second version.
+GitHub does not start another push workflow for a commit pushed with the workflow's `GITHUB_TOKEN`.
+See [GitHub's trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+An existing npm version must match the archive checksum. The workflow never replaces its contents.
+Existing GitHub assets must match their size and checksum.
+A conflict stops publication with an error.
+For recovery, rerun the failed workflow or manually dispatch Release from main.
+Manual dispatch uses the current main commit and requires passing checks.
+It does not require a manually created tag.
+
+### Configure automatic publication once
+
+Complete these account settings before the first automatic release:
+
+1. In GitHub, open this repository's **Settings → Environments**.
+2. Create an environment named `npm-release`.
+3. Restrict deployment to the `main` branch.
+4. Omit required reviewers and wait timers when releases must proceed automatically.
+5. Allow the release workflow to push version commits to main and create `v*` tags.
+6. In npm, open **broader-vids → Settings → Trusted Publisher**.
+7. Select **GitHub Actions** and enter the following values.
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `antidemosthenes` |
+| Repository | `broader-vids` |
+| Workflow filename | `release.yml` |
+| Environment | `npm-release` |
+| Allowed action | Enable direct `npm publish` |
+
+Staging alone does not provide automatic publication. Staged packages require a separate maintainer approval.
+The first successful trusted publication must complete within two days after configuration.
+Recreate an expired configuration before retrying.
+The workflow uses no permanent npm token.
+See the [npm trusted-publisher guide](https://docs.npmjs.com/trusted-publishers/) for account controls and validation requirements.
+
+After these settings are complete, push the reviewed changes to main directly or merge a development pull request into main.
+Check both the ordinary CI run and the following Release run.
+Check the npm `latest` version and matching GitHub release before announcing the update.
+The account settings and the first live OIDC publication require separate acceptance. Local fixtures cannot check them.
+
+### Update an installed plugin
+
+Finish active recommendations and stop the dashboard before updating.
+For a GitHub installation:
 
 ```powershell
-npm login
-npm run release:prepare
-uv run --no-sync scripts/release.py verify --artifacts-dir dist
-uv run --no-sync scripts/release.py available --tag v0.1.0
-npm publish ./dist/broader-vids-0.1.0.tgz --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org
+codex plugin marketplace upgrade broader-vids
+codex plugin add broader-vids@broader-vids
 ```
 
-Complete any required npm two-factor authentication during this manual publish.
-Configure npm trusted publishing when the first CI publication is ready.
-Set its publisher owner to `antidemosthenes`, repository to `broader-vids`, workflow filename to `release.yml`, and environment to `npm-release`.
-The first successful CI publish must complete within two days after you create the trusted publisher configuration.
-The npm package must allow direct `npm publish` from the trusted publisher.
-Configure `npm-release` as a GitHub environment and set its reviewers according to your release policy.
-Reviewers require manual configuration in GitHub.
-The workflow uses no permanent npm token.
+For an npm installation:
+
+```powershell
+npx --yes broader-vids@latest plugin install
+```
+
+Run npm acceptance commands outside this source checkout.
+Npm can treat a matching source project as an installed package and omit its executable shim.
+The npm bootstrap updates its existing catalog and asks Codex to install that exact package version.
+The GitHub catalog follows `latest` after refresh.
+The host has no separate `codex plugin update` command.
+A marketplace refresh updates catalog information. The following install action selects the current plugin package.
+Use the installation method that matches the existing marketplace to avoid duplicate plugin entries.
+
+In the desktop app, refresh the marketplace and select the current plugin release.
+If an update action is unavailable, use the terminal commands for that marketplace.
+Start a new conversation and run the setup skill after updating.
+Setup refreshes the matching runtime and preserves preferences, ratings, history, exclusions, and sign-in.
+An update does not run Reset or Clean.
+
+### Repair the installed runtime
 
 From an unpacked package, install its external engine:
 

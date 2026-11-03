@@ -1,52 +1,57 @@
 name: release
 
 on:
+  workflow_run:
+    workflows: [checks]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing stable release tag (vX.Y.Z)
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: npm-release-${{ inputs.tag }}
+  group: broader-vids-public-release
   cancel-in-progress: false
 
 jobs:
   resolve:
+    if: >-
+      github.repository == 'antidemosthenes/broader-vids' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     outputs:
-      sha: ${{ steps.resolve.outputs.sha }}
+      sha: ${{ steps.source.outputs.sha }}
+      manual: ${{ steps.source.outputs.manual }}
     steps:
-      - name: Check the trusted repository
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the trusted source commit
+        id: source
         env:
-          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "$REPOSITORY" != "antidemosthenes/broader-vids" ]]; then
-            echo "Unexpected repository: $REPOSITORY" >&2
-            exit 1
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          python3 scripts/release_ci.py source --commit "$SOURCE_SHA" > .cache-source.json
+          source="$(python3 -c 'import json; print(json.load(open(".cache-source.json"))["source_sha"])')"
+          printf 'sha=%s\n' "$source" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'manual=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'manual=false' >> "$GITHUB_OUTPUT"
           fi
-      - name: Validate and resolve the selected tag
-        id: resolve
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Release tag must use stable vX.Y.Z syntax." >&2
-            exit 1
-          fi
-          git init source
-          cd source
-          git remote add origin "https://github.com/antidemosthenes/broader-vids.git"
-          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          sha="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
-          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
 
   checks:
     needs: resolve
+    if: needs.resolve.outputs.manual == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -68,11 +73,10 @@ jobs:
       - name: Install Chromium headless shell and dependencies
         run: uv run --no-sync playwright install --with-deps --only-shell chromium
       - name: Check runtime dependency files are tracked
-        run: |
-          git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
+        run: git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
       - run: uv run --no-sync ruff check src tests scripts
       - run: uv run --no-sync ruff format --check src tests scripts
-      - name: Run isolated tests in parallel without a live Codex chat
+      - name: Run isolated tests
         run: uv run --no-sync scripts/test.py --jobs 3 --verbose
         timeout-minutes: 10
         env:
@@ -90,44 +94,121 @@ jobs:
 
   prepare:
     needs: [resolve, checks]
+    if: >-
+      always() && needs.resolve.result == 'success' &&
+      ((needs.resolve.outputs.manual == 'false' && needs.checks.result == 'skipped') ||
+       (needs.resolve.outputs.manual == 'true' && needs.checks.result == 'success'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      ready: ${{ steps.current.outputs.ready }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
-          persist-credentials: false
+          fetch-depth: 0
+      - name: Select the current main update
+        id: current
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          git fetch origin main
+          current="$(git rev-parse FETCH_HEAD)"
+          python3 scripts/release_ci.py readiness --source-sha "$SOURCE_SHA" --main-sha "$current" > .cache-readiness.json
+          eligible="$(python3 -c 'import json; print(str(json.load(open(".cache-readiness.json"))["eligible"]).lower())')"
+          printf 'ready=%s\n' "$eligible" >> "$GITHUB_OUTPUT"
+          if [[ "$eligible" != true ]]; then
+            echo 'Only the current main source or its version-commit recovery can release.'
+          fi
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        if: steps.current.outputs.ready == 'true'
         with:
           python-version: "3.13"
       - uses: actions/setup-node@v7
+        if: steps.current.outputs.ready == 'true'
         with:
           node-version: "24"
-      - name: Check release tag and package version
+      - name: Select the public patch version
+        if: steps.current.outputs.ready == 'true'
+        id: plan
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
         run: |
-          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RESOLVED_SHA"
-          uv sync --locked --extra evidence
-          uv run --no-sync scripts/release.py check --tag "$RELEASE_TAG"
-      - name: Check registry version is unused
+          uv sync --locked
+          mkdir -p .cache
+          uv run --no-sync scripts/release_ci.py plan --source-sha "$SOURCE_SHA" > .cache/release-plan.json
+          uv run --no-sync python -c 'import json,os; p=json.load(open(".cache/release-plan.json")); out=open(os.environ["GITHUB_OUTPUT"],"a"); out.write("version="+p["version"]+"\ntag="+p["tag"]+"\n")'
+      - name: Build a versioned copy of the tested source
+        if: steps.current.outputs.ready == 'true'
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: uv run --no-sync scripts/release.py available --tag "$RELEASE_TAG"
-      - run: npm ci --ignore-scripts
-      - run: npm run release:prepare
-      - name: Verify prepared artifacts
-        run: uv run --no-sync scripts/release.py verify --artifacts-dir dist
+          RELEASE_VERSION: ${{ steps.plan.outputs.version }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          uv run --no-sync scripts/release.py set-version --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"
+          git add package.json package-lock.json plugin.json pyproject.toml uv.lock src/broader_vids/__init__.py
+          git write-tree > .cache/expected-release-tree
+          npm ci --ignore-scripts
+          npm run release:prepare
+          uv run --no-sync scripts/release.py verify --artifacts-dir dist
+      - name: Create or verify the immutable release tag
+        if: steps.current.outputs.ready == 'true'
+        id: tag
+        env:
+          RELEASE_TAG: ${{ steps.plan.outputs.tag }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          remote="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+          if [[ -n "$remote" ]]; then
+            git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-parse "$RELEASE_TAG^{tree}")" = "$(cat .cache/expected-release-tree)"
+            test "$(git rev-parse "$RELEASE_TAG^1")" = "$SOURCE_SHA"
+            sha="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            export GIT_AUTHOR_DATE="$(git show -s --format=%cI "$SOURCE_SHA")"
+            export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+            git commit -m "Release ${RELEASE_TAG#v}" -m "Source: $SOURCE_SHA"
+            git tag "$RELEASE_TAG"
+            sha="$(git rev-parse HEAD)"
+          fi
+          current="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [[ "$current" == "$SOURCE_SHA" ]]; then
+            git push --atomic --force-with-lease="refs/heads/main:$SOURCE_SHA" origin "$sha:refs/heads/main" "refs/tags/$RELEASE_TAG"
+          elif [[ "$current" != "$sha" ]]; then
+            echo 'Main advanced before the version update. Refuse to overwrite it.' >&2
+            exit 1
+          fi
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
+        if: steps.current.outputs.ready == 'true'
         with:
-          name: npm-release-${{ inputs.tag }}
-          path: dist/
+          name: public-release-${{ github.run_id }}
+          path: |
+            dist/*.tgz
+            dist/*.zip
+            dist/*.whl
+            dist/release.json
+            dist/SHA256SUMS
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
 
   publish:
-    needs: [resolve, prepare]
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
     runs-on: ubuntu-latest
     environment: npm-release
     permissions:
@@ -136,7 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve.outputs.sha }}
+          ref: ${{ needs.prepare.outputs.sha }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
@@ -145,29 +226,55 @@ jobs:
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
-      - name: Confirm npm supports trusted publishing
+      - name: Prepare verification tools
         run: |
-          node -e "const [major, minor, patch] = process.argv[1].split('.').map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) process.exit(1)" "$(npm --version)"
-      - name: Confirm tag still resolves to the tested source
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RESOLVED_SHA"
           uv sync --locked
-          uv run --no-sync scripts/release.py check --tag "$RELEASE_TAG"
-          uv run --no-sync scripts/release.py available --tag "$RELEASE_TAG"
+          node -e "const [a,b,c]=process.argv[1].split('.').map(Number); if(a<11||(a===11&&(b<5||(b===5&&c<1))))process.exit(1)" "$(npm --version)"
       - uses: actions/download-artifact@v4
         with:
-          name: npm-release-${{ inputs.tag }}
+          name: public-release-${{ github.run_id }}
           path: dist
-      - name: Verify exact artifacts before publishing
-        run: uv run --no-sync scripts/release.py verify --artifacts-dir dist
-      - name: Publish the verified tarball through npm trusted publishing
+      - name: Verify and publish the exact archive
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          archive="dist/broader-vids-${RELEASE_TAG#v}.tgz"
-          test -f "$archive"
-          npm publish "$archive" --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org
+          git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$RELEASE_SHA"
+          uv run --no-sync scripts/release.py verify --artifacts-dir dist
+          archive="dist/broader-vids-$RELEASE_VERSION.tgz"
+          uv run --no-sync scripts/release_ci.py publication --version "$RELEASE_VERSION" --archive "$archive" > .cache-publication.json
+          action="$(uv run --no-sync python -c 'import json; print(json.load(open(".cache-publication.json"))["action"])')"
+          if [[ "$action" == publish ]]; then
+            npm publish "$archive" --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org
+          fi
+          uv run --no-sync scripts/release_ci.py verify-published --version "$RELEASE_VERSION" --archive "$archive"
+
+  github-release:
+    needs: [prepare, publish]
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: public-release-${{ github.run_id }}
+          path: dist
+      - name: Verify and publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          uv sync --locked
+          uv run --no-sync scripts/release.py verify --artifacts-dir dist
+          uv run --no-sync scripts/release_ci.py github-release --version "$RELEASE_VERSION" --artifacts-dir dist

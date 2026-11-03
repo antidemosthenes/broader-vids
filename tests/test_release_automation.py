@@ -1,0 +1,257 @@
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import urllib.error
+import urllib.parse
+
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import release_ci
+
+
+class ReleaseAutomationTests(unittest.TestCase):
+    def test_patch_allocation_and_source_retries(self):
+        source = "a" * 40
+        latest = {"version": "0.1.9"}
+        self.assertEqual(
+            release_ci.choose_version("0.1.0", latest, source),
+            {"version": "0.1.10", "reused": False},
+        )
+        self.assertEqual(
+            release_ci.choose_version("0.2.0", latest, source)["version"], "0.2.0"
+        )
+        latest["broaderVidsRelease"] = {"sourceCommit": source}
+        self.assertTrue(release_ci.choose_version("0.1.0", latest, source)["reused"])
+        for declared, public, sha in (
+            ("0.2.0", latest, source),
+            ("0.1.0", None, source),
+            ("0.1.0", {"version": "0.0.0-stage"}, source),
+            ("0.1.0", latest, "bad"),
+        ):
+            with (
+                self.subTest(declared=declared, public=public),
+                self.assertRaises(ValueError),
+            ):
+                release_ci.choose_version(declared, public, sha)
+
+    def test_published_versions_are_reused_only_when_archive_matches_and_never_downgrade_latest(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "release.tgz"
+            archive.write_bytes(b"verified")
+            existing = {"dist": {"integrity": release_ci.integrity(archive)}}
+            with patch.object(release_ci, "registry", return_value=existing):
+                self.assertEqual(
+                    release_ci.publication("0.1.1", archive)["action"], "reuse"
+                )
+                archive.write_bytes(b"changed")
+                with self.assertRaisesRegex(ValueError, "immutable"):
+                    release_ci.publication("0.1.1", archive)
+            for latest, succeeds in (
+                ({"version": "0.1.0"}, True),
+                ({"version": "0.2.0"}, False),
+            ):
+                with patch.object(release_ci, "registry", side_effect=[None, latest]):
+                    if succeeds:
+                        self.assertEqual(
+                            release_ci.publication("0.1.1", archive)["action"],
+                            "publish",
+                        )
+                    else:
+                        with self.assertRaisesRegex(ValueError, "backwards"):
+                            release_ci.publication("0.1.1", archive)
+
+    def test_registry_propagation_is_bounded_and_wrong_integrity_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "release.tgz"
+            archive.write_bytes(b"verified")
+            existing = {"dist": {"integrity": release_ci.integrity(archive)}}
+            with (
+                patch.object(
+                    release_ci,
+                    "registry",
+                    side_effect=[None, existing, {"version": "0.1.1"}],
+                ),
+                patch.object(release_ci.time, "sleep"),
+            ):
+                self.assertTrue(
+                    release_ci.verify_published("0.1.1", archive)["verified"]
+                )
+            with (
+                patch.object(release_ci, "registry", return_value=None) as read,
+                patch.object(release_ci.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(ValueError, "allowance"):
+                    release_ci.verify_published("0.1.1", archive)
+                self.assertEqual(read.call_count, 20)
+            with patch.object(
+                release_ci, "registry", return_value={"dist": {"integrity": "wrong"}}
+            ):
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    release_ci.verify_published("0.1.1", archive)
+
+    def test_metadata_http_errors_close_their_bodies(self):
+        for code in (404, 403, 503):
+            body = io.BytesIO(b"fixture")
+            error = urllib.error.HTTPError(
+                "https://registry.npmjs.org", code, "fixture", {}, body
+            )
+            with patch("urllib.request.urlopen", side_effect=error):
+                if code == 404:
+                    self.assertIsNone(release_ci.registry("0.1.1"))
+                else:
+                    with self.assertRaises(ValueError):
+                        release_ci.registry("0.1.1")
+            self.assertTrue(body.closed)
+
+    def test_github_assets_upload_once_and_reject_existing_differences(self):
+        with tempfile.TemporaryDirectory() as directory:
+            names = [*release_ci.filenames("0.1.1"), "release.json", "SHA256SUMS"]
+            for name in names:
+                (Path(directory) / name).write_bytes(name.encode())
+            source = "a" * 40
+            release = {
+                "assets": [],
+                "upload_url": "https://uploads.github.com/repos/antidemosthenes/broader-vids/releases/1/assets{?name}",
+                "html_url": "https://github.com/antidemosthenes/broader-vids/releases/tag/v0.1.1",
+            }
+            assets = []
+
+            def upload(request, **kwargs):
+                name = urllib.parse.parse_qs(
+                    urllib.parse.urlsplit(request.full_url).query
+                )["name"][0]
+                asset = {
+                    "name": name,
+                    "size": len(request.data),
+                    "digest": "sha256:" + hashlib.sha256(request.data).hexdigest(),
+                }
+                assets.append(asset)
+                return io.BytesIO(json.dumps(asset).encode())
+
+            with (
+                patch.dict(
+                    os.environ, {"GH_TOKEN": "fixture-token", "RELEASE_SHA": source}
+                ),
+                patch.object(release_ci, "verify_artifacts"),
+                patch.object(release_ci, "registry", return_value={"version": "0.1.1"}),
+            ):
+                with (
+                    patch.object(
+                        release_ci,
+                        "request_json",
+                        side_effect=[{"sha": source}, None, release],
+                    ),
+                    patch("urllib.request.urlopen", side_effect=upload),
+                ):
+                    self.assertTrue(
+                        release_ci.github_release("0.1.1", directory)["verified"]
+                    )
+                self.assertEqual(len(assets), 5)
+                release["assets"] = assets
+                with (
+                    patch.object(
+                        release_ci,
+                        "request_json",
+                        side_effect=[{"sha": source}, release],
+                    ),
+                    patch(
+                        "urllib.request.urlopen",
+                        side_effect=AssertionError("Unexpected repeated upload"),
+                    ),
+                ):
+                    self.assertTrue(
+                        release_ci.github_release("0.1.1", directory)["verified"]
+                    )
+                assets[0]["digest"] = "wrong"
+                with patch.object(
+                    release_ci, "request_json", side_effect=[{"sha": source}, release]
+                ):
+                    with self.assertRaisesRegex(ValueError, "existing GitHub"):
+                        release_ci.github_release("0.1.1", directory)
+                with patch.object(
+                    release_ci, "request_json", return_value={"sha": "b" * 40}
+                ):
+                    with self.assertRaisesRegex(ValueError, "tag"):
+                        release_ci.github_release("0.1.1", directory)
+
+    def test_current_main_updates_qualify_without_a_pull_request_lookup(self):
+        for source in ("a" * 40, "b" * 40):
+            with (
+                self.subTest(source=source),
+                patch.object(
+                    release_ci,
+                    "source_commit",
+                    return_value={"source_sha": source, "recovery": False},
+                ),
+                patch.object(
+                    release_ci,
+                    "request_json",
+                    side_effect=AssertionError(
+                        "Readiness does not need a service call"
+                    ),
+                ),
+            ):
+                self.assertTrue(release_ci.readiness(source, source)["eligible"])
+
+    def test_workflow_releases_only_successful_push_checks_on_main(self):
+        workflow = yaml.safe_load(
+            (release_ci.ROOT / ".github/workflows/release.yml").read_text()
+        )
+        trigger = workflow[True]["workflow_run"]
+        self.assertEqual(trigger["branches"], ["main"])
+        self.assertEqual(trigger["workflows"], ["checks"])
+        self.assertEqual(trigger["types"], ["completed"])
+        condition = workflow["jobs"]["resolve"]["if"]
+        for guard in (
+            "github.event.workflow_run.conclusion == 'success'",
+            "github.event.workflow_run.event == 'push'",
+            "github.event.workflow_run.head_branch == 'main'",
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+            "github.ref == 'refs/heads/main'",
+        ):
+            self.assertIn(guard, condition)
+
+    def test_version_commits_resolve_to_their_source_and_do_not_release_newer_main(
+        self,
+    ):
+        source, commit, newer = "a" * 40, "b" * 40, "c" * 40
+        package = {"version": "0.1.1", "broaderVidsRelease": {"sourceCommit": source}}
+        with patch.object(
+            release_ci, "git_value", side_effect=[json.dumps(package), commit, source]
+        ):
+            self.assertEqual(
+                release_ci.source_commit(commit),
+                {"source_sha": source, "recovery": True},
+            )
+        with patch.object(
+            release_ci, "git_value", side_effect=[json.dumps(package), commit, newer]
+        ):
+            self.assertEqual(
+                release_ci.source_commit(newer),
+                {"source_sha": newer, "recovery": False},
+            )
+        with (
+            patch.object(
+                release_ci,
+                "source_commit",
+                return_value={"source_sha": source, "recovery": True},
+            ),
+        ):
+            self.assertTrue(release_ci.readiness(source, commit)["eligible"])
+        with (
+            patch.object(
+                release_ci,
+                "source_commit",
+                return_value={"source_sha": newer, "recovery": False},
+            ),
+        ):
+            self.assertFalse(release_ci.readiness(source, newer)["eligible"])

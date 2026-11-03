@@ -61,13 +61,11 @@ def check(tag=None):
     expected = {
         "source": "npm",
         "package": "broader-vids",
-        "version": version,
+        "version": "latest",
         "registry": REGISTRY,
     }
     if catalog["name"] != "broader-vids" or catalog["plugins"][0]["source"] != expected:
-        raise ValueError(
-            "The public catalog must pin the released npm package version."
-        )
+        raise ValueError("The public catalog must track the latest public npm release.")
     return {
         "package": "broader-vids",
         "version": version,
@@ -237,10 +235,30 @@ def main():
     for operation in ("check", "available"):
         command = commands.add_parser(operation)
         command.add_argument("--tag")
+    command = commands.add_parser("set-version")
+    command.add_argument("--version", required=True)
+    command.add_argument("--source-sha")
     command = commands.add_parser("verify")
     command.add_argument("--artifacts-dir", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
-    if args.operation == "prepare":
+    if args.operation == "set-version":
+        from versioning import set_version
+
+        if (
+            args.source_sha is not None
+            and re.fullmatch(r"[a-f0-9]{40}", args.source_sha) is None
+        ):
+            raise ValueError(
+                "The source commit must contain forty lowercase hexadecimal characters."
+            )
+        result = set_version(ROOT, args.version)
+        if args.source_sha:
+            package = read_json(ROOT / "package.json")
+            package["broaderVidsRelease"] = {"sourceCommit": args.source_sha}
+            write_output(
+                ROOT / "package.json", text=json.dumps(package, indent=2) + "\n"
+            )
+    elif args.operation == "prepare":
         result = prepare()
     elif args.operation == "verify":
         result = verify(args.artifacts_dir)

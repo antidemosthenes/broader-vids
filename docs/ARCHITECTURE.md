@@ -22,7 +22,7 @@ broader-vids/
   LICENSE                      Broader Vids license
   plugin.json                  Portable plugin identity
   .agents/plugins/
-    marketplace.json           Remote catalog with a pinned npm plugin source
+    marketplace.json           Remote catalog tracking the latest public npm release
   bin/
     broader-vids.cjs            Node setup and process launcher
     plugin-install.cjs         Explicit npm plugin registration through Codex
@@ -68,6 +68,8 @@ broader-vids/
     asr-requirements.txt        Locked transcription dependencies
     *.whl                      Generated engine package, excluded from Git
   scripts/
+    release_ci.py              Patch planning, publication checks, and GitHub assets
+    versioning.py              Validated release metadata synchronization
     test.py                    Isolated parallel regression runner
     verify_package.py          Distribution checks
     build_plugin.py            Clean marketplace payload and plugin ZIP
@@ -357,7 +359,7 @@ The transcription process releases its model when it exits.
 ## Installation boundary
 
 The portable manifest points to five skills for recommendations, setup, the dashboard, Reset, and Clean.
-The GitHub marketplace catalog uses the name `broader-vids` and pins its npm source to version `0.1.0`.
+The GitHub marketplace catalog uses the name `broader-vids` and follows the npm `latest` distribution tag.
 The npm archive and plugin ZIP carry the same engine and public assets.
 The host installs a cache copy and does not need the working checkout's private files.
 Guided setup installs an external runtime through the Node launcher.

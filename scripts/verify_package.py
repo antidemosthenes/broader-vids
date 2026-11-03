@@ -118,7 +118,7 @@ def main(archive_path):
         assert entry["source"] == {
             "source": "npm",
             "package": "broader-vids",
-            "version": manifest["version"],
+            "version": "latest",
             "registry": "https://registry.npmjs.org",
         }
         assert entry["policy"] == {

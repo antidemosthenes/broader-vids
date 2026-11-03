@@ -6,6 +6,10 @@ See the [terminal reference](REFERENCE.md) for commands.
 
 ## 1. Complete setup and check readiness
 
+Use the [README](../README.md#update-the-plugin) to update an installed plugin.
+Finish active work before updating. Start a new conversation and run setup to prepare the matching engine.
+Setup preserves the existing profile unless you explicitly request Reset or Clean.
+
 First-time setup introduces chat recommendations and the local dashboard.
 Choose the included starter preset, enter interests manually, or import preferences.
 The starter preset uses sanitized interests, model parameters, and uncertainty from the owner's export.

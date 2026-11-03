@@ -9,7 +9,7 @@
       "source": {
         "source": "npm",
         "package": "broader-vids",
-        "version": "0.1.0",
+        "version": "latest",
         "registry": "https://registry.npmjs.org"
       },
       "policy": {

@@ -43,7 +43,7 @@ Start a new conversation after installation.
 Run this command in PowerShell:
 
 ```powershell
-npx --yes broader-vids@0.1.0 plugin install
+npx --yes broader-vids@latest plugin install
 ```
 
 This command registers an npm-backed marketplace and installs the plugin through Codex.
@@ -54,6 +54,27 @@ Restart the desktop app or start a new Codex CLI conversation after installation
 The app's Add marketplace field accepts repository URLs, not npm package names.
 Use the npm command above for that installation route.
 See the [official packaging guide](https://developers.openai.com/plugins/build/plugins) for supported plugin sources.
+
+## Update the plugin
+
+For a GitHub installation, refresh its marketplace and install the current release:
+
+```powershell
+codex plugin marketplace upgrade broader-vids
+codex plugin add broader-vids@broader-vids
+```
+
+For an npm installation, repeat the installation command:
+
+```powershell
+npx --yes broader-vids@latest plugin install
+```
+
+In the desktop app, refresh the marketplace and select the current Broader Vids release.
+If the app provides no update action, use the terminal commands for your installation method.
+Start a new conversation and run setup after an update.
+Setup installs the matching engine and preserves your saved profile.
+Finish active recommendations and close the dashboard before updating.
 
 ## Set up and request recommendations
 
@@ -104,8 +125,6 @@ Bilibili imports your account blacklist after verified sign-in and before new ro
 Imported creator exclusions combine with your manual exclusions.
 A failed sync preserves the last complete copy.
 Use **Sync blacklist** in the dashboard to retry.
-
-The default 视频翻译 tag exclusion can be removed in the dashboard.
 
 See the [workflow](docs/WORKFLOW.md) for recommendation steps and the [scoring guide](docs/SCORING.md) for ranking and learning.
 The [reference](docs/REFERENCE.md) covers terminal commands, troubleshooting, local builds, and maintenance.
