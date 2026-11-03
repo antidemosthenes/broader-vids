@@ -12,7 +12,11 @@ from unittest.mock import patch
 
 from broader_vids.evidence.assessment import assess_evidence
 from broader_vids.evidence.media import file_hash
-from broader_vids.evidence.retention import compact_evidence, owned_file
+from broader_vids.evidence.retention import (
+    compact_evidence,
+    owned_file,
+    discard_failed_media,
+)
 from broader_vids.evidence.service import (
     atomic_json,
     create_evidence,
@@ -27,6 +31,32 @@ from test_evidence import card
 
 
 class RetentionTests(unittest.TestCase):
+    def test_exhausted_candidate_removes_partial_media_but_retains_evidence_and_usage(
+        self,
+    ):
+        root = self.store.root / "evidence" / self.identifier
+        run = self.store.get(self.identifier)
+        for category, removed in (("access", False), ("media_size", True)):
+            run["state"].update(
+                media=None,
+                phase="prepare",
+                failure={"scope": "candidate", "category": category},
+            )
+            run["state"]["resources"]["media_download_bytes"] = 123
+            self.store.save(run)
+            discard_failed_media(self.store, self.identifier)
+            self.assertEqual((root / "media.mp4").exists(), not removed)
+            self.assertTrue((root / "captions.json").is_file())
+            self.assertTrue((root / "frame-1.jpg").is_file())
+        saved = self.store.get(self.identifier)
+        self.assertEqual(saved["state"]["resources"]["media_download_bytes"], 123)
+        self.assertGreater(saved["state"]["partial_media_cleanup"]["removed_bytes"], 0)
+        discard_failed_media(self.store, self.identifier)
+        self.assertEqual(
+            self.store.get(self.identifier)["state"]["partial_media_cleanup"],
+            saved["state"]["partial_media_cleanup"],
+        )
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
@@ -345,6 +375,93 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(copied["state"]["resources"]["media_download_bytes"], 0)
         self.assertFalse(Path(copied["state"]["media"]["path"]).exists())
         self.assertTrue(Path(copied["state"]["frames"][0]["path"]).exists())
+
+    def test_retired_rubric_assets_are_not_reused_or_mutated(self):
+        source = self.store.get(self.identifier)
+        source["settings"].update(
+            rubric_version=4,
+            acquisition_policy=3,
+            captionless_policy=1,
+            cache_key="retired-cache",
+        )
+        source["state"]["assessments"] = {
+            "augmented": {
+                "rubric_version": 4,
+                "overall_quality": 72,
+                "card": {"summary": "Retained historical quality data"},
+            }
+        }
+        before = copy.deepcopy(source)
+        with self.store.db:
+            self.store.db.execute(
+                "UPDATE runs SET settings=?,state=? WHERE id=?",
+                (
+                    json.dumps(source["settings"]),
+                    json.dumps(source["state"]),
+                    self.identifier,
+                ),
+            )
+        fresh = create_evidence(
+            self.store,
+            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        run = self.store.get(fresh)
+        self.assertEqual(run["state"]["phase"], "prepare")
+        self.assertNotIn("inherited_from", run["state"])
+        self.assertEqual(self.store.get(self.identifier)["state"], before["state"])
+        self.assertEqual(
+            self.store.get(self.identifier)["state"]["assessments"]["augmented"][
+                "overall_quality"
+            ],
+            72,
+        )
+
+    def test_interrupted_bundle_reuse_resumes_without_partial_copies(self):
+        import os
+
+        real_link = os.link
+        linked = []
+
+        def interrupted(source, destination):
+            linked.append(destination)
+            if len(linked) > 1:
+                raise OSError("Injected copy interruption")
+            return real_link(source, destination)
+
+        def partial_copy(source, destination):
+            Path(destination).write_bytes(b"Partial copy")
+            raise OSError("Injected copy interruption")
+
+        options = {"reasoning_effort": "medium", "assessment_model": "fixture-model"}
+        url = "https://www.youtube.com/watch?v=imYQJOgUx7Y"
+        with (
+            patch("os.link", side_effect=interrupted),
+            patch("shutil.copyfile", side_effect=partial_copy),
+            self.assertRaises(OSError),
+        ):
+            create_evidence(self.store, url, **options)
+        pending = [
+            run
+            for run in self.store.iter_runs(kind="evidence")
+            if run["id"] != self.identifier
+        ]
+        self.assertEqual(len(pending), 1)
+        identifier = pending[0]["id"]
+        root = self.store.root / "evidence" / identifier
+        self.assertFalse(list(root.glob("*.tmp")))
+        self.assertFalse((root / "captions.json").exists())
+        (root / ".inherit-interrupted.tmp").write_bytes(b"Interrupted process copy")
+        result = create_evidence(self.store, url, **options)
+        self.assertEqual(result, identifier)
+        verify_bundle(self.store, self.store.get(result))
+        self.assertEqual(self.store.get(result)["state"]["phase"], "prepared")
+        self.assertEqual(
+            self.store.get(result)["state"]["resources"]["media_download_bytes"], 0
+        )
+        self.assertFalse(list(root.glob("*.tmp")))
+        self.assertTrue(self.media.exists())
 
     def test_busy_source_does_not_leave_a_new_unprepared_review(self):
         self.assess()

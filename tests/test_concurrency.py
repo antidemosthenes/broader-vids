@@ -47,7 +47,9 @@ class ConcurrencyTests(unittest.TestCase):
                 self.assertNotIn("active_attempt", saved["state"])
 
     def test_killed_preparation_retains_elapsed_time_and_releases_its_lease(self):
-        identifier = self.store.create("youtube", {"kind": "evidence"}, {})
+        identifier = self.store.create(
+            "youtube", {"kind": "evidence", "rubric_version": 5}, {}
+        )
 
         def sleeping(command, **kwargs):
             return start_owned(

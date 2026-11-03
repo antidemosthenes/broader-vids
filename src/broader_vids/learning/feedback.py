@@ -3,6 +3,7 @@ import json
 from broader_vids.exploration.domains import normalized
 from broader_vids.preferences import canonical_identity, video_states, video_payload
 from broader_vids.storage import utc_now
+from broader_vids.learning.topic_labels import readable_labels
 
 
 CHOICES = {
@@ -44,8 +45,8 @@ def details(store, identifiers=None):
 
 def context_from_features(features):
     return {
-        "topics": [topic for topic in features.get("content_topics", [])],
-        "domains": features.get("content_domains", []),
+        "topics": readable_labels(features.get("content_topics", []), 3),
+        "domains": readable_labels(features.get("content_domains", []), 4),
         "audience_level": features.get("audience_level") or "unknown",
         "audience_assessment": features.get("audience_assessment"),
         "topic_source": features.get("topic_source", "unlabeled"),

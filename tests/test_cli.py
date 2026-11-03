@@ -16,7 +16,6 @@ class CliTests(unittest.TestCase):
             for command, expected in [
                 (["profile", "set", "--interest", "math"], "interests"),
                 (["profile", "show"], "interests"),
-                (["gate"], "current_phase"),
                 (["cleanup"], "dry_run"),
                 (["cleanup", "--apply"], "files"),
             ]:
@@ -39,7 +38,14 @@ class CliTests(unittest.TestCase):
                     "obsolete",
                 ]
             )
-        for command in ("catalog", "experiment", "simulate", "probe", "search-control"):
+        for command in (
+            "catalog",
+            "experiment",
+            "simulate",
+            "probe",
+            "search-control",
+            "gate",
+        ):
             with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parser().parse_args([command])
         with tempfile.TemporaryDirectory() as directory:

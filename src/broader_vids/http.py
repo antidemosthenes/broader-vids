@@ -9,6 +9,8 @@ import urllib.parse
 import urllib.request
 import threading
 
+from broader_vids.time_budget import effective_limit
+
 
 class RequestGate:
     def __init__(self):
@@ -28,6 +30,8 @@ class BudgetExhausted(Exception):
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
+        if fp is not None:
+            fp.close()
         raise AccessPaused(
             "Platform redirected the request; access configuration needs review."
         )
@@ -73,7 +77,7 @@ class PublicHttp:
     def check(self):
         if getattr(self, "cancelled", None) is not None and self.cancelled.is_set():
             raise BudgetExhausted("The parent cancelled platform retrieval.")
-        if self.elapsed() >= self.run["settings"]["max_seconds"]:
+        if self.elapsed() >= effective_limit(self.run["settings"]):
             raise BudgetExhausted("Session time budget exhausted.")
         if (
             self.store.request_count(self.run["id"])
@@ -119,7 +123,7 @@ class PublicHttp:
         self.last_receipt = None
         self.last_request = self.clock()
         headers = {
-            "User-Agent": "Broader Vids/0.1 sampling-feasibility",
+            "User-Agent": "Broader Vids/0.1",
             "Accept-Encoding": "identity",
         }
         if self.anonymous_session:
@@ -135,7 +139,7 @@ class PublicHttp:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers)
         try:
-            timeout = min(20.0, self.run["settings"]["max_seconds"] - self.elapsed())
+            timeout = min(20.0, effective_limit(self.run["settings"]) - self.elapsed())
             if timeout <= 0:
                 raise BudgetExhausted("Session time budget exhausted.")
             with self.opener.open(request, timeout=timeout) as response:
@@ -181,6 +185,8 @@ class PublicHttp:
                 if isinstance(error, urllib.error.HTTPError)
                 else type(error).__name__
             )
+            if isinstance(error, urllib.error.HTTPError):
+                error.close()
             self.store.end_request(request_id, "unresolved", detail)
             if (
                 isinstance(error, urllib.error.HTTPError)
@@ -205,7 +211,7 @@ class PublicHttp:
     def pace(self, previous, interval):
         if previous is not None:
             delay = max(0, interval - (self.clock() - previous))
-            available = max(0, self.run["settings"]["max_seconds"] - self.elapsed())
+            available = max(0, effective_limit(self.run["settings"]) - self.elapsed())
             if delay:
                 self.sleeper(min(delay, available))
         self.check()
@@ -228,7 +234,7 @@ class PublicHttp:
     def decode_json(body):
         try:
             result = json.loads(body)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             raise AccessPaused(
                 "Expected JSON metadata; received an unrecognized response."
             ) from None

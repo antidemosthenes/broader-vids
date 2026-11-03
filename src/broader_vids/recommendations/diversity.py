@@ -3,6 +3,7 @@ import re
 import unicodedata
 
 from broader_vids.exploration.domains import normalized
+from broader_vids.learning.topic_labels import readable_topics
 
 
 SECONDARY_SCHOOL = re.compile(r"高考|高中|\b(?:gaokao|high[- ]school)\b", re.IGNORECASE)
@@ -37,7 +38,7 @@ def balanced_inspection(ordered, limit):
 
 
 def signature(item, observation):
-    topics = observation.get("topics") or {}
+    topics = readable_topics(observation.get("topics") or {})
     labels = topics.get("specific", []) if topics.get("confidence") != "low" else []
     primary = labels[0] if labels and isinstance(labels[0], str) else ""
     primary = unicodedata.normalize("NFKC", primary).casefold()

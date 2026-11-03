@@ -5,6 +5,26 @@ description: Set up an installed Broader Vids plugin, its external Python runtim
 
 # Set up Broader Vids
 
+## Completion output
+
+After the setup steps below, make `onboarding complete --format chat` the final setup tool call.
+Use the invoking chat's model and effort as described below.
+When the host exposes names such as `$broader-vids:broader-vids-dashboard`, include `--skill-namespace broader-vids`.
+Otherwise omit the namespace. Use the names exposed by the current host, not the plugin's display name.
+
+For a successful explicit setup request, copy the complete returned guide into the final chat response.
+Keep its platform, self-check result, data directory, warnings, and all four action descriptions, requests, and skill commands.
+The guide must appear in the reply, not only in tool output.
+Do not replace it with a short readiness summary or an offer to open the dashboard or recommend videos.
+This applies after sign-in and even when setup already introduced these features.
+The successful call exits with code zero.
+It includes the text `Self-check: passed.`
+If it returns a blocked JSON report or exits unsuccessfully, explain the failed checks without claiming readiness.
+
+When a recommendation request requires setup, include the guide.
+Then continue the authorized request.
+Do not execute Reset or Clean while presenting their descriptions.
+
 Keep launcher commands internal.
 In user-facing replies, use chat requests, host-supported skill invocations, and relevant results or dashboard links.
 Do not include raw launcher or PowerShell command lines.
@@ -33,7 +53,7 @@ Do not change modes just to get a question box.
 If no suitable tool exists, ask the same question in chat and wait for a reply.
 
 Ask one question at a time. Pass the returned title and option labels to the tool.
-For text questions, show a free-text input without invented choices.
+For text questions, provide a free-text input without invented choices.
 Map a selected label to its returned value.
 Do not treat a preselected option, silence, or elapsed time as an answer.
 With an asynchronous question tool, wait for the user's submitted reply before dependent work.
@@ -47,7 +67,7 @@ Use the questions in this order:
 1. `platform`: YouTube, Bilibili, or Both.
 2. `preference_source`: Type interests or Import preferences. Existing profiles can also keep saved preferences.
 3. `interests` for manual entry, or `import_path` for an import. Ask for the full file path in a text box.
-4. `bilibili_signin` after opening a sign-in window, when Bilibili is selected.
+4. Ask `bilibili_signin` after opening a sign-in window when the user selects Bilibili.
 
 Keep paths and interests as literal data when calling the launcher.
 Never execute user input as shell code.
@@ -61,9 +81,9 @@ For an incomplete profile, explain these features once during guided setup:
 - Recommendations appear directly in chat.
 - The dashboard provides ratings, exclusions, and optional calibration.
 - Ratings improve later recommendations.
-- Preferences transfers interests and learned weights without video history.
+- Format 4 preferences transfer interests, learned weights, watched video IDs, compact topic coverage, and manual creator exclusions. Other video history, tag rules, and account-specific blacklists stay local.
 
-Show the host's available dashboard invocation name.
+Use the dashboard skill name that the host provides.
 For first-time setup or explicit configuration, ask `platform` unless the user already chose for this setup.
 An installation repair can retain an already completed profile without repeating configuration questions.
 Preserve a saved platform choice during interrupted setup unless the user changes it.
@@ -77,6 +97,9 @@ Report exact repair steps for missing system tools.
 Run `setup --evidence` to install the external runtime and evidence dependencies when needed.
 Install optional transcription with `setup --asr` only when requested.
 Do not reinstall a working runtime during normal recommendation requests.
+If the launcher reports a missing or mismatched build receipt, refresh the runtime with `setup --evidence`.
+Stop the dashboard first. The refresh preserves preferences, ratings, and sign-in.
+Do not bypass this check or remove the receipt.
 Before runtime repair, finish active recommendation and browser operations.
 Stop this profile's verified dashboard with `dashboard stop` before changing the runtime.
 A busy installation does not authorize removal of a live or uncertain lock.
@@ -104,12 +127,13 @@ Never infer the choice from a saved or recently exported file.
 - **Type interests:** ask `interests` in a text box. Use `profile set` with one `--interest TOPIC` per supplied interest.
 - **Import preferences:** ask `import_path` in a text box before reading a file.
   Preview with `profile import FILE`, then apply the requested restore with `profile import FILE --apply`.
-  Import replaces learned parameters and creates a recovery file without importing video history.
+  Import accepts format 4 with learning model version 8 and feature version 1. It replaces learned parameters and both manual creator lists, and merges watched video IDs. It creates a recovery file.
+  It does not import ratings, recommendation history, or other video history.
   Do not ask for manual interests after a successful import.
 - **Keep saved preferences:** preserve interests and learned weights. Skip both text questions.
 
 If a file is missing or invalid, explain the error and ask `import_path` again.
-If host permissions block access, preserve the supplied path while access is resolved.
+If host permissions block access, keep the supplied path and ask the host to grant access.
 Do not select another file or switch to manual interests without the user's answer.
 
 Calibration remains optional.
@@ -134,7 +158,7 @@ The confirmation request alone does not prove successful sign-in.
 Do not request passwords or cookie text.
 A failed blacklist import preserves saved rules and does not undo successful sign-in.
 
-Run `onboarding complete` after configuration, interests, tools, and access are ready.
+Run `onboarding complete --format chat` after configuration, interests, tools, and access are ready.
 This command checks the selected platforms before recording completion.
 If the user requested transcription, include `--asr-model base` or their chosen supported model.
 This verifies the requested transcription dependency without downloading a model or analyzing audio.
@@ -144,42 +168,18 @@ Report missing, unusable, unverified, and busy checks separately.
 Required failures block completion.
 Optional warnings do not block completion.
 Repair the reported requirement and repeat completion without resetting preferences.
+If the runtime rejects `--format` or `--skill-namespace`, it predates this plugin.
+Stop the verified dashboard and run `setup --evidence` once to install the bundled runtime, then repeat completion.
 
-## Report the final check and next actions
+## Finish setup
 
-Completion is the final self-check after installation, profile configuration, and sign-in.
-Do not report success unless `onboarding complete` returns `self_check: passed`.
-Do not repeat the same checks solely to produce another report.
-Show the actual absolute `data_directory`, selected platforms, required-check result, and optional warnings.
-Use the returned `next_steps` to explain these four actions:
-
-1. Explain the dashboard as the local place for broader interests, ratings, exclusions, optional calibration, and preference transfer.
-   Show the request: "Use Broader Vids to open my dashboard."
-   Show the dashboard skill invocation exposed by the host.
-   Tell the user to select **Preferences** to import preferences and learned weights.
-2. Explain that recommendations appear in chat and use the saved platform choice.
-   Show the request: "Use Broader Vids to recommend videos for my saved platforms."
-   Show the recommendation skill invocation exposed by the host.
-
-3. Show **Reset**, its request, and the host's invocation for `broader-vids-reset`.
-   Explain that it removes learned preferences, ratings, exclusions, histories, results, evidence, and recovery files.
-   Installed tools and Bilibili sign-in remain.
-4. Show **Clean**, its request, and the host's invocation for `broader-vids-clean`.
-   Explain that it removes the complete managed data directory, including tools and sign-in.
-   The plugin stays installed. Run setup before reuse.
-
-Do not execute Reset or Clean while explaining first-time setup.
-A later explicit request authorizes the selected destructive action after its preview.
-Explain that active recommendations and sign-in must finish before either action.
-The dashboard must stop before either action.
-
-The returned skill names identify skills, but the host determines their invocation syntax.
-Use a qualified invocation when the host exposes one.
-Explain that the selected data directory stays separate from the plugin bundle.
+Return the canonical guide as specified in Completion output.
+Do not repeat the checks just to generate another report.
+Resolve incomplete setup instead of using a separate success template.
+The selected data directory stays separate from the plugin bundle.
 Broader Vids preserves this directory after you uninstall the plugin.
 If the path is inside a host sandbox, explain that another environment can resolve a different default.
 Do not silently move an existing profile or substitute an empty profile at another path.
 
 An explicit setup request ends after this guidance.
 If setup interrupted a recommendation request, return to the recommendation skill and continue that request.
-Installation does not enable a schedule.

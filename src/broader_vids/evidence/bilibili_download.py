@@ -29,11 +29,6 @@ class ReliableBilibiliIE(BiliBiliIE):
                 )
             ]
             if urls:
-                urls.sort(
-                    key=lambda url: not (urlsplit(url).hostname or "").endswith(
-                        ".akamaized.net"
-                    )
-                )
                 entry["url"] = urls[0]
                 entry["backup_urls"] = urls[1:]
         return formats

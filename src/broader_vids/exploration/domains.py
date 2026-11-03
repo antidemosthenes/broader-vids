@@ -72,13 +72,20 @@ def is_related(node, profile):
 
 def select_existing(store, profile, seed, limit=12):
     current = nodes(store)
-    history = list(
-        store.db.execute(
-            "SELECT node_id,payload FROM domain_observations ORDER BY created_at DESC,rowid DESC"
-        )
+    usage = Counter(
+        {
+            row[0]: row[1]
+            for row in store.db.execute(
+                "SELECT node_id,COUNT(*) FROM domain_observations GROUP BY node_id"
+            )
+        }
     )
-    usage = Counter(row["node_id"] for row in history)
-    recent = {row["node_id"] for row in history[:24]}
+    recent = {
+        row[0]
+        for row in store.db.execute(
+            "SELECT node_id FROM domain_observations ORDER BY created_at DESC,rowid DESC LIMIT 24"
+        )
+    }
     retired = {
         n["id"]
         for n in current.values()

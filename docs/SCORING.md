@@ -26,7 +26,8 @@ For new assessments without a usable transcript, subtract ten points from qualit
 The same deduction applies to the learned quality component during ranking.
 Audio quality is not a criterion.
 Captions and frames support the four existing content criteria.
-Stored older scorecards retain their recorded policy.
+Only rubric-5 evidence is eligible for reuse or new recommendation work.
+Unsupported evidence remains unchanged. It requires a new evidence run.
 By default, the exact Bilibili tag `视频翻译` excludes a video from final selection.
 Watched and dismissed videos cannot enter a new final list.
 
@@ -74,13 +75,24 @@ Each batch fills only the remaining slots in its own group, using the highest sc
 Later batches target deficient groups and preserve source attribution through search continuations.
 Duplicates and rejected candidates do not fill slots.
 This balance applies to collection, before inspection selection.
-Screening policy 4 balances query coverage across thirty-five inspection slots.
+Screening policy 5 combines 80% of the metadata screening score with 20% learned interest.
+The metadata score retains its 70% community-response and 30% title-anchor weights.
+The learned term uses topic-specific interest when verified title or tag context names that topic.
+Otherwise, it uses a broad-subject estimate when available.
+Unknown context receives a neutral value of 50.
+Repeated mentions of one topic count once, including mentions shared by the title and tags.
+Each topic also counts once when averaging verified depth estimates.
+The screening model uses verified video context and does not infer quality.
+It uses audience depth only when evidence or the user verifies the video level.
+It does not use speculative quality estimates.
+Screening policy 5 retains the 71 familiar and 29 exploratory eligible-pool targets.
+It also retains thirty-five inspection slots and balances query coverage.
+Inspection selection balances query coverage across thirty-five slots.
 Each slot favors the candidate whose retrieval queries have the fewest existing slots.
 For several query origins, the largest query count applies.
-The metadata screening score and canonical ID resolve ties.
+The applicable screening score and canonical ID resolve ties.
 A missing query uses its retrieval family when available. Unknown sources share no invented group.
 This rule permits repeats when fewer queries can supply candidates.
-Screening policy 3 retains its global ranking by metadata score.
 Pending entries compete on the same score without guaranteed slots.
 A creator exclusion removes eligibility without creating negative feedback.
 Creator IDs determine these exclusions.
@@ -89,6 +101,10 @@ Unresolved creators remain eligible.
 Each round retains a fixed creator-rule snapshot for screening, assessment scheduling, and final selection.
 Rule changes apply to later rounds rather than changing an active or resumed round.
 Manual and account-specific imported rules remain separate from learning parameters.
+Policy 5 saves one learning-model reference when the round first executes.
+Screening, resumed work, previews, and final selection use that reference.
+Feedback saved during a round changes the model used by a later round.
+Unsupported round policies cannot resume. Current rounds retain their saved settings.
 
 ## 3. Initial quality and interest
 
@@ -101,16 +117,27 @@ The assessment uses four content criteria:
 | Original contribution | 25% | Evidence of the uploader's own contribution |
 | Purposeful visuals | 10% | Visual material that supports the content |
 
-Rubric 4 distinguishes an explained method from a software demonstration.
-Substance includes explanations needed to understand the selected video.
+Rubric 5 judges substance and sampled focus against the video's purpose.
+Travel films can provide substance through concrete places, activities, and distinctive visual detail.
+Crafts and games can provide substance through visible execution, development, or outcomes.
+Instructional videos still need evidence of their explanations.
+A software demonstration does not establish that it teaches the underlying algorithm.
+Substance includes explanations needed to understand an instructional video.
+For other video types, judge substantial content against the video's purpose.
+A visual demonstration or performance does not need to teach a lesson.
+Silent frames cannot establish musical performance quality.
+Temporal gaps reduce confidence and widen the interval.
+They do not automatically prevent assessment of sampled relevance and focus.
+A title card alone or unrelated scenes can still leave the overall score unknown.
+Unknown sound, factual accuracy, and full-video pacing remain explicit limitations.
+This outcome is an assessment limitation, not a download failure or a low quality rating.
 A course label alone does not reduce quality.
 A short, complete explanation can have high quality.
 Visual assessment includes text readability, useful contrast, framing, and legible diagrams.
 Simple slides and phone recordings can satisfy these checks.
 Caption evidence cannot establish visual quality or AI generation.
 Creator reputation does not guarantee a high grade.
-Historical scorecards retain their original rubric and scores.
-New assessments use the clarified rubric.
+Existing scorecards remain stored. New work and cache reuse require rubric 5.
 
 An assessed criterion has an integer grade from zero to four.
 Its normalized value is \(u_j=\mathrm{grade}_j/4\).
@@ -133,6 +160,13 @@ The initial interest probability \(I_0\) is 0.75 for a domain related to the use
 It is 0.35 for a known unrelated domain and 0.50 when domains are unknown.
 Search-domain labels describe retrieval context.
 They do not prove the video's semantic topic.
+
+New AI topic labels must be short subject names, with at most 120 characters and 12 words.
+The validator rejects obvious citations, instructions, control characters, and editing notes in labels.
+Invalid new output uses the existing bounded assessment fix workflow.
+Read operations omit unusable labels from older scorecards and annotations.
+They preserve raw evidence, numeric quality scores, saved ratings, and explicit user targets.
+This check detects common formatting errors. It does not prove that a topic correctly describes the video.
 
 Source links, repost declarations, `中配`, and YouDub disclosures inform originality assessment.
 A source link alone does not prove copying.
@@ -162,11 +196,9 @@ They do not create duplicate observations.
 The engine rebuilds models from current training labels.
 An edit replaces one effective observation.
 
-The current interface omits binary upvote and downvote controls.
-Migration maps interest votes to topic High or Low after content labeling.
-It maps quality votes to quality High or Low.
-An overall vote does not identify a current dimension, so its fields remain empty.
-Migration removes binary ratings from active storage and training after it creates a private recovery backup.
+The current interface uses four independent structured ratings.
+Binary upvote and downvote commands and migration tools are not available.
+Model version 8 retains its portable parameter groups for exact preference transfer.
 
 ## 5. Full ranking
 
@@ -188,7 +220,7 @@ Here, \(n\) counts this creator in the developing list.
 The value \(h\) counts the creator in recent recommendation exposures.
 Randomness enters discovery rather than adding a random final-score bonus.
 This score component measures creator diversity.
-Screening policy 4 also applies a separate diversity rule when it constructs each platform list.
+Screening policy 5 also applies a separate diversity rule when it constructs each platform list.
 For each remaining candidate, count earlier picks that share a retrieval query, primary narrow topic, or secondary-school course format.
 Choose the lowest count first, then the highest full score.
 Primary labels match after normalization, including possessives and multiword phrase containment.
@@ -202,7 +234,7 @@ It adds no model calls. It cannot guarantee semantic uniqueness when labels or q
 Different videos about the same subject can therefore recur.
 A subject match alone does not establish repeated content or equal explanatory depth.
 
-Current migrated profiles rank with \(B\), using learned structured quality and interest.
+Current profiles rank with \(B\), using learned structured quality and interest.
 The initial component weights remain a ranking policy.
 An empty internal overall model does not change this score.
 Historical snapshots can retain an older overall adjustment.
@@ -287,6 +319,7 @@ Its fixed noise width cannot represent every possible response distribution.
 The exact categorical consistency result applies to directly observed topic-level groups.
 No unconditional convergence claim applies to transferred scores at an unobserved level.
 
+The engine clips depth suitability to \(10^{-12}\) through \(1-10^{-12}\) before conversion to log odds.
 Depth does not change quality or domain interest.
 Unknown audience levels retain feedback but do not adjust future scores.
 The model supplies a cited level when the evidence supports one.
@@ -361,12 +394,21 @@ Maintenance uses retained frames and captions without downloading replacement me
 
 ## 8. Transfer of learned parameters
 
-Preference format 1 transfers interests and model version 8 parameters without individual video records.
+Preference format 4 transfers interests, model version 8 parameters, watched video IDs, a bounded exploration summary, and manual creator exclusions.
+The engine rejects other preference formats before import changes the profile.
+Import replaces manual creator lists independently of learned parameters. These rules never create negative ratings.
+Blacklist sync combines the account-specific blacklist with the current manual rules.
+The exploration summary contains at most 1,024 hierarchy nodes, aggregate counts, and relative round ages.
+It contains no individual video history.
 Logistic channels retain parameter names, posterior means, and the full covariance or precision matrix.
 Sparse fits aggregate their precision matrix before export. They do not export per-observation feature rows.
 Categorical groups retain Dirichlet concentration parameters and aggregate observation counts.
 Depth models retain their posterior summaries and a three-by-three table of level/response counts per topic.
 These counts are sufficient statistics for the implemented depth likelihood. They contain no video identities or chronology.
+The watched-video ID list contains no titles, ratings, or recommendation records.
+The exploration summary preserves portable topic coverage without video identities or per-video history.
+Import merges those IDs into the target profile's watched state to prevent exact repeats.
+The target profile keeps its local ratings, video lists, tag rules, and account-specific blacklist copies.
 Quality calibration retains both continuation-stage models.
 Transfers exclude per-video topic and level corrections, test cohorts, and validation claims.
 Local saved corrections remain visible in the dashboard.
@@ -390,6 +432,7 @@ Per-video corrections and local exclusion rules are outside this comparison.
 
 For each categorical group, new counts add to the imported concentration vector.
 Depth fitting combines imported aggregate counts with new counts and repeats its numerical integration.
+Each topic uses at most nine level-response counts. This is the same likelihood as separate response rows.
 Local ratings saved before import do not enter these likelihoods again.
 Editing an older rating supplies one new post-import observation. Later edits replace that post-import observation.
 Clearing it removes its post-import contribution.

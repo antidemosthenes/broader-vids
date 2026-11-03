@@ -15,4 +15,9 @@ node_modules/
 .env.*
 !.env.example
 
-/PROJECT_PLAN.md
+/AGENTS.md
+.agents/skills/
+.codex/
+/my-plan.md
+
+.test-tmp/

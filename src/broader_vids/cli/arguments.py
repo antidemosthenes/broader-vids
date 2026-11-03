@@ -72,6 +72,16 @@ def parser():
     )
     complete = onboarding_commands.add_parser("complete")
     complete.add_argument("--asr-model", choices=("tiny", "base", "small"))
+    complete.add_argument(
+        "--format",
+        choices=("json", "chat"),
+        default="json",
+        help="Return structured diagnostics or the complete user-facing setup guide",
+    )
+    complete.add_argument(
+        "--skill-namespace",
+        help="Use the plugin namespace exposed by the chat host for skill commands",
+    )
     worker_arguments(complete)
     usage = commands.add_parser(
         "usage", help="Report saved recommendation token usage by stage"
@@ -79,9 +89,6 @@ def parser():
     usage.add_argument("run_id", nargs="?")
     commands.add_parser(
         "status", help="List discovery, evidence and recommendation checkpoints"
-    )
-    commands.add_parser(
-        "gate", help="Inspect development validation, separate from normal onboarding"
     )
     exclusions = commands.add_parser(
         "exclusions", help="Manage platform creator and tag exclusion rules"
@@ -112,7 +119,6 @@ def parser():
             "evaluate",
             "repair-evidence",
             "label-videos",
-            "migrate-feedback",
         ),
         default="status",
         nargs="?",
@@ -189,7 +195,11 @@ def parser():
         help="Reuse a saved live discovery buffer instead of collecting a fresh round",
     )
     recommend.add_argument("--use-browser", action="store_true")
-    recommend.add_argument("--max-seconds", type=float, default=1800)
+    recommend.add_argument(
+        "--max-seconds",
+        type=float,
+        help="Optional total time allowance in seconds; no overall deadline by default",
+    )
     recommend.add_argument("--workers", type=int, default=4)
     worker_arguments(recommend)
     recommend.add_argument(
@@ -210,7 +220,8 @@ def parser():
     profile_commands = profile.add_subparsers(dest="profile_command", required=True)
     profile_commands.add_parser("show")
     profile_export = profile_commands.add_parser(
-        "export", help="Export learned parameters and interests without video history"
+        "export",
+        help="Export learned preferences, watched video IDs, and manual creator exclusions",
     )
     profile_export.add_argument("file", help="Destination JSON file")
     profile_export.add_argument("--overwrite", action="store_true")
@@ -312,10 +323,6 @@ def parser():
         help="Refresh native captions while preserving already-assessed inputs",
     )
     captions.add_argument("run_id")
-    evidence_commands.add_parser(
-        "pilot-report",
-        help="Compare paired evidence assessments and report actual resource usage",
-    )
     discover = commands.add_parser(
         "discover",
         help="Collect curated live search, creator and Bilibili Home candidates",

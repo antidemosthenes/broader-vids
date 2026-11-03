@@ -22,6 +22,7 @@ from broader_vids.evidence.media import (
     parse_captions,
     probe_media,
 )
+from broader_vids.evidence.scoring import RUBRIC_VERSION
 from broader_vids.storage import utc_now
 from broader_vids.processes import run_bounded
 from broader_vids.identity import identify
@@ -33,6 +34,13 @@ from broader_vids.worker_context import resolve_worker_settings
 
 EVIDENCE_VERSION = 1
 _JSON_REPLACE_LOCK = threading.Lock()
+
+
+def _require_current_rubric(settings):
+    if settings.get("rubric_version") != RUBRIC_VERSION:
+        raise ValueError(
+            "This evidence uses an unsupported quality rubric. Start a new evidence run."
+        )
 
 
 def atomic_json(path, value):
@@ -94,15 +102,16 @@ def create_evidence(
         "local_media": str(Path(media).resolve()) if media else None,
         "local_captions": str(Path(captions).resolve()) if captions else None,
         "initial_fractions": [0.1, 0.35, 0.65, 0.9],
-        "max_images": 8,
+        "captionless_fractions": [(index + 0.5) / 8 for index in range(8)],
+        "max_images": 16,
         "max_model_calls": 2,
         "caption_character_limit": 12000,
-        "rubric_version": 4,
+        "rubric_version": RUBRIC_VERSION,
         "originality_context": originality_context,
         "reasoning_effort": reasoning_effort,
         "assessment_model": assessment_model,
-        "captionless_policy": 1,
-        "acquisition_policy": 2,
+        "captionless_policy": 2,
+        "acquisition_policy": 4,
     }
     for key in ("local_media", "local_captions"):
         if settings[key] and (
@@ -123,8 +132,9 @@ def create_evidence(
                 "files": fingerprints,
                 "version": EVIDENCE_VERSION,
                 "assessment_model": assessment_model,
-                "captionless_policy": 1,
-                "acquisition_policy": 2,
+                "captionless_policy": settings["captionless_policy"],
+                "rubric_version": settings["rubric_version"],
+                "acquisition_policy": settings["acquisition_policy"],
                 **(
                     {"originality_context": originality_context}
                     if originality_context
@@ -146,6 +156,8 @@ def create_evidence(
         (cache_key, identity["platform"]),
     ):
         previous = store.get(row[0])
+        if previous["settings"].get("rubric_version") != RUBRIC_VERSION:
+            continue
         if (
             use_browser
             and identity["platform"] == "bilibili"
@@ -154,17 +166,22 @@ def create_evidence(
             continue
         if (
             not media
-            and (originality_context or reasoning_effort != "low")
             and previous["state"]["phase"] == "prepare"
             and not previous["state"].get("media")
         ):
             existing = previous
             break
         return previous["id"]
-    if not media and (originality_context or reasoning_effort != "low"):
+    if not media:
         row = store.db.execute(
-            "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='evidence' AND json_extract(settings,'$.identity.canonical_id')=? AND platform=? AND json_extract(settings,'$.local_media') IS NULL AND json_extract(state,'$.media') IS NOT NULL AND json_extract(state,'$.caption_excerpt') IS NOT NULL AND json_extract(state,'$.phase') IN ('prepared','completed') ORDER BY created_at DESC LIMIT 1",
-            (identity["canonical_id"], identity["platform"]),
+            "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='evidence' AND json_extract(settings,'$.identity.canonical_id')=? AND platform=? AND json_extract(settings,'$.local_media') IS NULL AND json_extract(state,'$.media') IS NOT NULL AND json_extract(state,'$.caption_excerpt') IS NOT NULL AND json_extract(state,'$.phase') IN ('prepared','completed') AND json_extract(settings,'$.rubric_version')=? AND json_extract(settings,'$.acquisition_policy')=? AND json_extract(settings,'$.captionless_policy')=? ORDER BY created_at DESC LIMIT 1",
+            (
+                identity["canonical_id"],
+                identity["platform"],
+                settings["rubric_version"],
+                settings["acquisition_policy"],
+                settings["captionless_policy"],
+            ),
         ).fetchone()
         reusable = store.get(row[0]) if row else None
     if existing and not reusable:
@@ -233,7 +250,9 @@ def _local_captions(path, duration, target):
     }
 
 
-def transcribe_media(media, target, model_name, model_directory, deadline):
+def transcribe_media(
+    media, target, model_name, model_directory, deadline, *, cancelled=None
+):
     if importlib.util.find_spec("faster_whisper") is None:
         raise EvidencePending(
             "Captions are unavailable; install the optional asr extra or provide timestamped local captions."
@@ -254,6 +273,7 @@ def transcribe_media(media, target, model_name, model_directory, deadline):
             str(model_directory),
         ],
         timeout=remaining,
+        cancelled=cancelled,
     )
     if process.returncode or not target.is_file():
         raise EvidencePending(
@@ -295,10 +315,11 @@ def prepare_evidence(
         raise ValueError(
             "The remaining download allowance must be a nonnegative integer."
         )
-    with store.lease(identifier, owner=lease_owner):
+    with store.lease(identifier, owner=lease_owner) as owner:
         run = store.get(identifier)
         if run["settings"].get("kind") != "evidence":
             raise ValueError("Not an evidence run.")
+        _require_current_rubric(run["settings"])
         if run["state"]["phase"] in {"prepared", "completed"}:
             verify_bundle(store, run)
             return run
@@ -376,11 +397,11 @@ def prepare_evidence(
                     if remaining_bytes <= 0:
                         raise EvidencePending(
                             "The cumulative media-download byte budget is exhausted.",
-                            retryable=True,
+                            category="media_size",
                         )
                     fetcher = fetcher_type(
                         remaining_bytes,
-                        deadline,
+                        deadline - min(30, remaining * 0.1),
                         browser_cookie_jar(context) if context else cookie_jar,
                     )
                     fetcher.cancelled = cancel_event
@@ -392,6 +413,10 @@ def prepare_evidence(
                     info = fetcher.metadata(settings["identity"])
                     streams = info.get("requested_formats") or [info]
                     sizes = [s.get("filesize") for s in streams]
+                    estimates = [
+                        stream.get("filesize") or stream.get("filesize_approx")
+                        for stream in streams
+                    ]
                     state["metadata"] = {
                         "title": info.get("title", ""),
                         "duration_seconds": info["duration"],
@@ -400,6 +425,28 @@ def prepare_evidence(
                         "source": "yt_dlp_playable_unit",
                         "resolved_at": utc_now(),
                         "audio_requested": bool(asr_model),
+                        "selected_streams": [
+                            {
+                                key: stream.get(key)
+                                for key in (
+                                    "format_id",
+                                    "width",
+                                    "height",
+                                    "vcodec",
+                                    "acodec",
+                                    "tbr",
+                                )
+                            }
+                            for stream in streams
+                        ],
+                        "selected_stream_bytes_estimate": sum(estimates)
+                        if all(
+                            type(size) in {int, float}
+                            and math.isfinite(size)
+                            and size > 0
+                            for size in estimates
+                        )
+                        else None,
                         "selected_stream_bytes": sum(sizes)
                         if all(type(n) is int and n > 0 for n in sizes)
                         else None,
@@ -476,9 +523,57 @@ def prepare_evidence(
                     root / "captions.json",
                 )
                 save()
+            if not state["captions"]:
+                if asr_model:
+                    stage("transcription")
+                    asr_started = time.monotonic()
+                    try:
+                        state["captions"] = transcribe_media(
+                            state["media"]["path"],
+                            root / "captions.json",
+                            asr_model,
+                            store.root / "models",
+                            deadline,
+                            cancelled=cancel_event,
+                        )
+                    except (
+                        EvidencePending,
+                        OSError,
+                        ValueError,
+                        subprocess.TimeoutExpired,
+                    ) as error:
+                        state["caption_access_issue"] = str(error)
+                    finally:
+                        state["resources"]["transcription_seconds"] += (
+                            time.monotonic() - asr_started
+                        )
+                if not state["captions"]:
+                    target = root / "captions.json"
+                    atomic_json(target, [])
+                    state["captions"] = {
+                        "source": "unavailable",
+                        "path": str(target),
+                        "sha256": file_hash(target),
+                        "cue_count": 0,
+                        "download_bytes": 0,
+                        "reason": state.get("caption_access_issue")
+                        or "No separate subtitle track was exposed.",
+                    }
+                save()
+            cues = json.loads(
+                Path(state["captions"]["path"]).read_text(encoding="utf-8")
+            )
+            if not cues:
+                state["captions"] = {**state["captions"], "source": "unavailable"}
             fingerprints = [int(frame["fingerprint"]) for frame in state["frames"]]
             stage("frames")
-            for fraction in settings["initial_fractions"]:
+            fractions = state.setdefault(
+                "frame_fractions",
+                settings.get("captionless_fractions", settings["initial_fractions"])
+                if not cues
+                else settings["initial_fractions"],
+            )
+            for fraction in fractions:
                 if fraction in state["frame_positions_done"]:
                     continue
                 if time.monotonic() > deadline:
@@ -514,47 +609,6 @@ def prepare_evidence(
                 )
                 state["frame_positions_done"].append(fraction)
                 save(("evidence_frames", {"frame_count": len(state["frames"])}))
-            if not state["captions"]:
-                if asr_model:
-                    stage("transcription")
-                    asr_started = time.monotonic()
-                    try:
-                        state["captions"] = transcribe_media(
-                            state["media"]["path"],
-                            root / "captions.json",
-                            asr_model,
-                            store.root / "models",
-                            deadline,
-                        )
-                    except (
-                        EvidencePending,
-                        OSError,
-                        ValueError,
-                        subprocess.TimeoutExpired,
-                    ) as error:
-                        state["caption_access_issue"] = str(error)
-                    finally:
-                        state["resources"]["transcription_seconds"] += (
-                            time.monotonic() - asr_started
-                        )
-                if not state["captions"]:
-                    target = root / "captions.json"
-                    atomic_json(target, [])
-                    state["captions"] = {
-                        "source": "unavailable",
-                        "path": str(target),
-                        "sha256": file_hash(target),
-                        "cue_count": 0,
-                        "download_bytes": 0,
-                        "reason": state.get("caption_access_issue")
-                        or "No separate subtitle track was exposed.",
-                    }
-                save()
-            cues = json.loads(
-                Path(state["captions"]["path"]).read_text(encoding="utf-8")
-            )
-            if not cues:
-                state["captions"] = {**state["captions"], "source": "unavailable"}
             compact = compact_captions(cues, settings["caption_character_limit"])
             atomic_json(root / "caption-excerpts.json", compact)
             state["caption_excerpt"] = {
@@ -587,7 +641,7 @@ def prepare_evidence(
             from broader_vids.evidence.failures import save_failure
 
             failure = save_failure(run, error, state.get("stage", "preparation"))
-            state["retryable_failure"] = True
+            state["retryable_failure"] = failure["retryable"]
             run.update(
                 status="pending",
                 reason=failure["reason"],
@@ -605,6 +659,10 @@ def prepare_evidence(
                 if fetcher is not None and hasattr(fetcher, "close"):
                     if getattr(fetcher, "logger", None) is not None:
                         state["download_diagnostics"] = list(fetcher.logger.messages)
+                    if getattr(fetcher, "metadata_attempts", None):
+                        state.setdefault("metadata_attempts", []).extend(
+                            fetcher.metadata_attempts
+                        )
                     if getattr(fetcher, "download_attempts", None):
                         state.setdefault("download_attempts", []).extend(
                             fetcher.download_attempts
@@ -613,6 +671,9 @@ def prepare_evidence(
             finally:
                 state["resources"]["preparation_seconds"] += time.monotonic() - started
                 save()
+                from broader_vids.evidence.retention import discard_failed_media
+
+                discard_failed_media(store, identifier, lease_owner=owner)
         return store.get(identifier)
 
 
@@ -662,6 +723,7 @@ def add_evidence_frame(store, identifier, timestamp, reason, long_edge=768):
         )
     with store.lease(identifier):
         run = store.get(identifier)
+        _require_current_rubric(run["settings"])
         verify_bundle(store, run)
         state = run["state"]
         if "augmented" in state["assessments"]:
@@ -712,6 +774,7 @@ def add_evidence_frame(store, identifier, timestamp, reason, long_edge=768):
 def refresh_native_captions(store, identifier):
     with store.lease(identifier):
         run = store.get(identifier)
+        _require_current_rubric(run["settings"])
         verify_bundle(store, run)
         state, settings = run["state"], run["settings"]
         remaining = settings["max_seconds"] - run["elapsed"]

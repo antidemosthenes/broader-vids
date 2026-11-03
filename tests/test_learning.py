@@ -528,35 +528,6 @@ class LearningStorageTests(unittest.TestCase):
         self.assertEqual(model["models"]["quality"]["observations"], 0)
         self.assertEqual(model["excluded"]["missing_quality_evidence"], 1)
 
-    def test_legacy_migration_keeps_only_the_latest_active_vote(self):
-        key = example()["canonical_id"]
-        for kind, vote in (("interest", "up"), ("quality", "down"), ("overall", None)):
-            self.store.db.execute(
-                "INSERT INTO user_actions(canonical_id,created_at,action,payload) VALUES(?,?,?,?)",
-                (
-                    key,
-                    "fixture",
-                    "feedback",
-                    json.dumps(
-                        {"kind": kind, "vote": vote, "reason": "Legacy semantics"}
-                    ),
-                ),
-            )
-        self.store.db.executescript(
-            "DROP TABLE feedback_ratings; DROP TABLE calibration_items; DROP TABLE learning_models; DROP TABLE learning_evaluations; PRAGMA user_version=7;"
-        )
-        self.store.close()
-        self.store = Store(self.directory.name)
-        self.assertEqual(
-            self.store.db.execute("SELECT COUNT(*) FROM feedback_ratings").fetchone()[
-                0
-            ],
-            0,
-        )
-        self.assertEqual(
-            self.store.db.execute("SELECT COUNT(*) FROM user_actions").fetchone()[0], 3
-        )
-
     def test_feedback_features_are_frozen_and_fitting_is_idempotent(self):
         key = example()["canonical_id"]
         user_action(self.store, key, "down", kind="quality")

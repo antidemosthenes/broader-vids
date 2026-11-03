@@ -3,12 +3,12 @@
 Broader Vids has one Python engine.
 The terminal, Codex skill, and local dashboard use that engine.
 The Node launcher installs and starts the engine.
-A per-profile gate coordinates launcher commands and installation.
-Ordinary commands can run together, but setup requires exclusive runtime access.
-Active engine operations and dashboard servers also block installation.
-Normal completion and command failures release their runtime leases.
-An uncertain lock remains available for explicit recovery.
-It does not implement recommendation logic.
+Per-profile locks coordinate launcher commands and setup.
+Ordinary commands can share the runtime. Setup requires exclusive access.
+Active engine operations and dashboard servers block setup.
+The launcher releases locks after normal completion or command failure.
+A stale or unreadable lock blocks later work until the operator checks for surviving processes and repairs the lock.
+The launcher has no stale-lock repair command and does not implement recommendation logic.
 
 ## Project files
 
@@ -36,6 +36,7 @@ broader-vids/
     evidence/                  Captions, frames, transcription, and assessment
       account_switch.py        Staged sign-in, verified replacement, and recovery
     recommendations/           Screening, ranking, batches, and reports
+      retries.py               Shared candidate retry counts and cancellation recovery
     learning/                  Feedback models and calibration
     web/                       Local server and browser assets
     data/queries.json          Curated search terms
@@ -50,10 +51,10 @@ broader-vids/
     parsing.py                Platform response parsing
     http.py                    Request limits and request records
     processes.py               Process deadlines and cleanup
+    time_budget.py             Optional round time limits and JSON representation
     windows_job.py             Windows process ownership
     owned_process.py           Worker startup gate
-    storage.py                Database, migrations, and exclusive locks
-    readiness.py               Development readiness checks
+    storage.py                Schema 12 database and exclusive locks
     maintenance.py            Evidence cleanup
     token_usage.py             Durable model-attempt receipts and stage reports
   python/
@@ -76,10 +77,6 @@ broader-vids/
   package.json                 Node launcher and package file list
   package-lock.json            Locked Node development dependencies
 ```
-
-`PROJECT_PLAN.md` contains internal implementation milestones.
-Git ignores that file.
-Public documents do not link to it.
 
 ## Processing flow
 
@@ -110,20 +107,17 @@ The skill directs the host to call the engine.
 `worker_context.py` resolves the invoking thread's model and reasoning effort from local turn metadata.
 New runs save that pair and pass it to planning and assessment CLI workers.
 `recommendations/collection.py` continues candidate collection until 100 pass `screening.py` duration and raw engagement floors, or a saved limit stops collection.
-Screening policy 4 balances search-query coverage across thirty-five content-assessment slots.
+Screening policy 5 combines metadata screening with learned interest and balances query coverage across thirty-five content-assessment slots.
 Final selection favors distinct narrow topics and queries before it compares full scores.
 `recommendations/diversity.py` implements these deterministic selection rules.
 An insufficient range of assessed topics permits repeats and records the relaxation in each affected selection.
-Older rounds retain their saved policy, including policy 3 global metadata ranking.
+Each new round saves one learning-model reference for screening, preview, and final selection.
+Resumed rounds retain their saved plan, policies, and remaining allowances.
 Refill records retain query origins and anchors even when the discovery cache reaches its separate limit.
-`recommendations/legacy.py` preserves screening rules for rounds created before screening policy 3.
-Those rounds retain guaranteed pending slots, creator caps, and topic quotas.
-Their discovery and final ranking also use the saved policy version.
-It does not replace engine checks with model instructions.
 
 The recommendation collector uses `collection_policy.py` for retrieval groups and saved targets.
 `collection_batches.py` scans bounded batches, fills group deficits, and preserves unfinished batch progress.
-`collection.py` supplies targeted search continuations and retains the older sequential collector for saved checkpoints.
+`collection.py` supplies targeted search continuations and resumes unfinished collection batches.
 `budgets.py` defines request defaults and applies explicit request-cap increases under run and platform locks.
 Request-cap changes update settings and add an audit event in one transaction.
 They do not rewrite saved recommendation state or reset resource use.
@@ -191,15 +185,15 @@ Preference import and export do not transfer usage history.
 | Area | Main files | Responsibility |
 | --- | --- | --- |
 | Discovery | `queries.py`, `languages.py`, `sources.py`, `state.py`, `service.py` | Build searches, check keyword scripts, parse results, and retain discovery progress |
-| Exploration | `domains.py`, `proposals.py`, `planning.py` | Select existing topics and assess proposed topics |
-| Evidence | `service.py`, `media.py`, `captions.py`, `browser.py` | Resolve playable videos and collect bounded evidence |
+| Exploration | `domains.py`, `coverage.py`, `rotation.py`, `proposals.py`, `planning.py` | Select underused leaf topics, coordinate reservations, and plan queries |
+| Evidence | `service.py`, `media.py`, `downloader.py`, `captions.py`, `browser.py` | Resolve playable videos and collect bounded evidence |
 | Evidence workers | `preparation_worker.py`, `asr_worker.py` | Separate media preparation and optional transcription processes |
 | Assessment | `assessment.py`, `worker_instructions.txt`, `reports.py`, `retention.py` | Check model output, report evidence limits, and remove completed media |
 | Recommendations | `service.py`, `batch.py`, `parallel.py`, `timing.py` | Coordinate platform jobs, worker limits, and recovery |
-| Ranking | `engagement.py`, `metadata.py`, `originality.py`, `quality.py`, `ranking.py`, `diversity.py` | Screen candidates and select the final list |
-| Learning | `features.py`, `inference.py`, `scoped.py`, `depth.py`, `service.py` | Capture predictors, fit models, and calculate predictions |
+| Ranking | `engagement.py`, `metadata.py`, `originality.py`, `quality.py`, `ranking.py`, `diversity.py`, `personalization.py` | Screen candidates and select the final list |
+| Learning | `features.py`, `topic_labels.py`, `inference.py`, `scoped.py`, `depth.py`, `service.py` | Capture predictors, fit models, and calculate predictions |
 | Preference transfer | `learning/transfer.py`, `learning/posterior.py`, `learning/baseline.py`, `web/static/preferences.js` | Transfer learned parameters without video records |
-| Feedback | `feedback.py`, `calibration.py`, `evaluation.py`, `evidence.py`, `annotations.py`, `migration.py` | Store judgments, reserve test videos, and record evidence corrections |
+| Feedback | `feedback.py`, `calibration.py`, `evaluation.py`, `evidence.py`, `annotations.py` | Store judgments, reserve test videos, and record evidence corrections |
 
 File names in this table are relative to their area under `src/broader_vids/`.
 
@@ -235,24 +229,28 @@ After verification, a file journal and database receipt coordinate session activ
 Recovery restores the previous files before a database commit or removes the old session after a commit.
 Completed and cancelled workers remove their temporary profiles and staged blacklist database.
 Failed cleanup retains the journal and blocks browser use until recovery succeeds.
-New and resumed recommendation commands charge automated checks to their existing time allowance.
+New and resumed recommendation commands record automated-check time.
+That time counts toward an explicit total allowance when one exists.
 
-SQLite schema 12 stores current structured ratings and action records.
-Migration replaces retired binary records with mapped ratings.
-A private backup preserves recovery data.
-The schema update removes active comment text and retires comment interpretation records.
+This release supports fresh empty databases (schema 0) and existing schema 12 profiles.
+The engine rejects other database schemas without changing them.
+Schema 12 stores current structured ratings and action records.
 Explicit tag rules reside in the user profile.
 Creator rules reside in creator_exclusions.
 Creator_policy stores their revision and active Bilibili account ID.
 Creator_sync stores each account's import status and last successful sync.
 Creator rules have a separate revision from the learning profile.
-Round state stores a fixed creator-rule snapshot.
+Round state stores versioned creator-rule and learning-model references.
 Public recommendation reports expose rule counts rather than imported creator IDs.
 Topic anchors remain stable across rating edits and clears.
 Model snapshots retain the identities of their training inputs.
 Frozen evaluation records retain the tested model identity.
 
-Preference transfer uses format 1 and learning model version 8.
+Preference transfer accepts format 4 with learning model version 8 and feature version 1.
+Manual creator rules transfer separately from learning parameters and replace the manual lists transactionally on import.
+The export omits account-specific blacklist copies and sign-in data.
+It includes a bounded exploration summary with at most 1,024 nodes and aggregate counts and round ages.
+It excludes individual video history.
 It does not change SQLite schema 12.
 A completed `preference_import` job stores the imported parameter baseline and local feedback cutoff.
 Fitting combines that baseline with active ratings saved after the cutoff.
@@ -270,7 +268,6 @@ Parameter-only recovery files reside in `backups/`.
 The dashboard uses authenticated local POST operations for export, preview, and import.
 The transfer dialog preserves rating drafts and blocks stale polling responses during an operation.
 
-Database upgrades create a backup before they change an older schema.
 Evidence corrections add derived records.
 They do not overwrite original scorecards or user ratings.
 
@@ -289,19 +286,21 @@ Interest writes hold both platform locks and preserve learned parameters and his
 ## Concurrency and recovery
 
 One batch coordinates both platforms.
-The batch shares its time limit and worker limits.
+The batch shares worker limits and an optional total time limit.
+New rounds have no overall deadline by default.
+The time policy keeps internal unlimited values out of saved JSON.
 It allows four preparation workers in total, with at most two per platform.
 It allows up to four model workers.
 Prepared evidence bypasses the preparation queue.
 Preparation allows up to five minutes after its worker slot becomes available.
 Assessment allows up to three minutes after its model slot becomes available.
-Queue waits remain inside the parent time allowance.
+Queue waits count toward an explicit parent time allowance when one exists.
 They do not consume those separate stage allowances.
 Metadata workers use separate database connections, a shared cookie jar, and a shared request gate.
 YouTube serializes metadata retrieval so each response can update the visitor session before the next request.
 Bilibili retains two concurrent metadata workers.
 Metadata request starts use a one-second interval.
-Pacing waits remain inside the saved deadline.
+Pacing waits count toward an optional saved deadline.
 Access failures cancel queued retrieval before another YouTube collector starts.
 The gate preserves request pacing and prevents concurrent reservation of the last request slot.
 Platform locks prevent conflicting recommendation jobs.
@@ -315,15 +314,19 @@ A conflicting change requires another ranking calculation.
 An interrupted job retains its candidate position and remaining allowances.
 Continuation does not reset those allowances.
 New rounds save an inspection limit of 35 videos per platform.
-Older rounds retain their saved limit, or 50 when no limit field exists.
+Resumed rounds retain their saved inspection limit.
 
 Each worker belongs to an owned process group.
 Windows uses a Job Object to stop the worker's child processes.
-Cancellation checks prevent new work after the deadline.
+Cancellation checks prevent new work after cancellation or an explicit deadline.
 The engine retains unfinished work when access or assessment fails.
 Candidate failures remain local to that candidate.
+YouTube and Bilibili share the same limit of three retries for recoverable candidate exceptions.
+The engine saves attempt counts before worker dispatch. Continuation cannot grant an extra attempt.
+Manual cancellation preserves that allowance.
+Exhausted candidates become unavailable while other candidates continue.
 Caption access challenges stop acquisition for the affected platform.
-Already prepared assessments finish within the shared deadline.
+Already prepared assessments retain their individual timeouts and any explicit shared deadline.
 Other platform access challenges and shared model failures stop the applicable workers.
 Reports preserve the first failure separately from later cancellation messages.
 Preparation checkpoints record transfer progress for interrupted-byte accounting.
@@ -344,14 +347,18 @@ The transcription process releases its model when it exits.
 
 ## Installation boundary
 
-The portable manifest declares recommendation, setup, and dashboard skills.
+The portable manifest points to five skills for recommendations, setup, the dashboard, Reset, and Clean.
 The repository marketplace points to a clean generated payload under `dist/`.
 The npm archive and plugin ZIP carry the same engine and public assets.
 The host installs a cache copy and does not need the working checkout's private files.
 Guided setup installs an external runtime through the Node launcher.
+A receipt stores the installed wheel digest, installed dependency groups, and their requirement-file digests after setup.
+The launcher checks this receipt under the runtime lease before normal commands.
+A mismatch or an older receipt requires setup, including after a package rebuild with the same version.
+Setup removes the old receipt before installation and writes the new one atomically after all tools succeed.
+Failed setup leaves the runtime unverified. `dashboard stop` bypasses the digest check so repair can proceed.
 The launcher's saved profile selection also applies to source commands.
 Profile data remains separate from installed copies and their upgrades.
-Automatic daily scheduling is not implemented.
 
 Dashboard lifecycle operations use a per-profile operating-system lock.
 They do not hold a database write transaction while stopping the server.
@@ -359,9 +366,7 @@ A private token and public instance identity authenticate shutdown and server re
 The loopback listener uses exclusive binding on Windows.
 An occupied preferred port causes a free-port fallback.
 
-The intended plugin runs on the user's computer.
-A future desktop schedule will invoke the same engine.
-Package installation will not create a schedule automatically.
+The plugin runs on the user's computer. Recommendation rounds start on request.
 The current project does not provide a hosted dashboard or remote MCP service.
 
 ## Profile lifecycle

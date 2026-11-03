@@ -27,20 +27,29 @@ from broader_vids.storage import utc_now
 POLICY_ID = hashlib.sha256(b"broader-vids-hierarchical-exploration-v1").hexdigest()
 
 
-def new_plan(store, seed=None):
+def new_plan(store, seed=None, *, policy_version=2):
+    if policy_version != 2:
+        raise ValueError("Unsupported exploration policy; start a new discovery round.")
     profile = seed_interests(store)
     seed = random.SystemRandom().getrandbits(63) if seed is None else seed
     if type(seed) is not int or not 0 <= seed < 2**63:
         raise ValueError("Exploration seed must be an integer from zero to 2^63-1.")
     selected = select_existing(store, profile, seed)
     recent = [
-        {"node_id": row["node_id"], **json.loads(row["payload"])}
+        {
+            "node_id": row["node_id"],
+            **{
+                key: value
+                for key, value in json.loads(row["payload"]).items()
+                if key in {"platform", "query", "new_topic", "returned", "matched"}
+            },
+        }
         for row in store.db.execute(
             "SELECT node_id,payload FROM domain_observations ORDER BY created_at DESC,rowid DESC LIMIT 24"
         )
     ]
     return {
-        "policy_version": 1,
+        "policy_version": policy_version,
         "seed": seed,
         "profile": profile,
         "selected": selected,
@@ -59,10 +68,17 @@ def prepare_plan(
     store, run, save, remaining, model_runner=run_codex, *, usage_owner=None
 ):
     state = run["state"]["exploration"]
+    if state.get("policy_version") != 2:
+        raise ValueError("Unsupported exploration policy; start a new discovery round.")
     if state["profile"]["revision"] != get_profile(store)["revision"]:
         raise EvidencePending("Interests changed; create a new exploration round.")
     if state["ready"]:
         return
+    if remaining() <= 0:
+        raise BudgetExhausted("Exploration time budget exhausted.")
+    from broader_vids.exploration.rotation import prepare_rotation
+
+    prepare_rotation(store, run, save, remaining, model_runner, usage_owner)
     root = store.root / "discovery" / run["id"] / "planning"
     root.mkdir(parents=True, exist_ok=True)
     current = nodes(store)
@@ -80,7 +96,8 @@ def prepare_plan(
         refine = (
             state["attempts"][-1]["allow_refinements"]
             if state["attempts"] and state["attempts"][-1].get("language_error")
-            else number > 1 or recent_empty >= 5
+            else any(a.get("stage") != "subdivision" for a in state["attempts"])
+            or recent_empty >= 5
         )
         prompt = proposal_prompt(
             current,
@@ -89,6 +106,7 @@ def prepare_plan(
             state["profile"],
             5 - len(state["new_nodes"]),
             refine,
+            policy_version=state["policy_version"],
             language_errors=[
                 a["reason"] for a in state["attempts"] if a.get("language_error")
             ],
@@ -98,7 +116,10 @@ def prepare_plan(
                 "The domain-map planning context exceeds 192 KiB; review the map before continuing."
             )
         schema = root / "schema.json"
-        schema.write_text(json.dumps(proposal_schema()), encoding="utf-8")
+        schema.write_text(
+            json.dumps(proposal_schema(state["policy_version"])),
+            encoding="utf-8",
+        )
         prompt_path = root / f"attempt-{number}-prompt.txt"
         prompt_path.write_text(prompt, encoding="utf-8")
         attempt = {
@@ -143,19 +164,38 @@ def prepare_plan(
                     refine,
                     5 - len(state["new_nodes"]),
                 )
-                state["queries"].update(
-                    {
+                previous = {
+                    key: state[key] for key in ("queries", "new_nodes", "rejections")
+                }
+                queries = {
+                    **state["queries"],
+                    **{
                         key: {"queries": pair, "anchors": anchors}
                         for key, (pair, anchors) in updates.items()
+                    },
+                }
+                from broader_vids.exploration.proposals import fallback_queries
+
+                for query in response.get("existing_queries", []):
+                    key = query["node_id"]
+                    queries[key] = {
+                        **queries[key],
+                        "fallback_queries": fallback_queries(query, query["queries"]),
                     }
-                )
-                state["rejections"].extend(rejected)
                 for node in additions:
                     put_node(store, node)
                     current[node["id"]] = node
-                    state["new_nodes"].append(node)
-                attempt["status"] = "completed"
-                save()
+                state.update(
+                    queries=queries,
+                    new_nodes=[*state["new_nodes"], *additions],
+                    rejections=[*state["rejections"], *rejected],
+                )
+                try:
+                    attempt["status"] = "completed"
+                    save()
+                except Exception:
+                    state.update(previous)
+                    raise
         except (
             ValueError,
             OSError,
@@ -206,6 +246,9 @@ def prepare_plan(
                 ),
                 "anchors": [[a] for a in query["anchors"]],
                 "query": query["queries"][run["platform"]],
+                "fallback_query": query.get("fallback_queries", query["queries"])[
+                    run["platform"]
+                ],
             }
         )
     existing = [t for t in tasks if not t["new_topic"]]
@@ -266,6 +309,14 @@ def observe_query(store, run, task, items, receipt):
         node["status"] = "unconfirmed"
     node.setdefault("queries", {})[run["platform"]] = task["query"]
     with store.db:
+        from broader_vids.exploration.coverage import record_search
+
+        record_search(
+            store,
+            run["state"]["exploration"]["coverage_owner"],
+            node["id"],
+            run["state"]["exploration"].get("coverage_round"),
+        )
         put_node(store, node)
         store.db.execute(
             "INSERT OR REPLACE INTO domain_observations VALUES(?,?,?,?)",

@@ -1,45 +1,194 @@
 import html
+import json
+
+from broader_vids.time_budget import report_limit
+from broader_vids.evidence.media import MAX_VIDEO_RETRIES
 
 from broader_vids.evidence.service import atomic_json
 from broader_vids.preferences import pending_videos
-from broader_vids.recommendations.quality import cached_quality
 from broader_vids.creators import policy_summary
 from broader_vids.recommendations.timing import live_elapsed
-from broader_vids.recommendations.screening import inspection_limit
 from broader_vids.recommendations.budgets import request_budget
 
 
-def recommendation_readiness(store):
-    result = {"youtube": [], "bilibili": []}
-    for run in store.iter_runs(kind="recommendation"):
+def candidate_failures(store, run):
+    state = run["state"]
+    observations = state.get("evidence", {})
+    identifiers = {
+        value["evidence_run"]
+        for value in observations.values()
+        if value.get("evidence_run")
+    }
+    if not identifiers:
+        return []
+    details = {
+        identifier: (
+            json.loads(attempts or "[]"),
+            json.loads(metadata or "[]"),
+            json.loads(failure or "null"),
+            json.loads(assessment or "null"),
+            json.loads(captions or "null"),
+            frame_count or 0,
+            phase,
+            media_present,
+        )
+        for identifier, attempts, metadata, failure, assessment, captions, frame_count, phase, media_present in store.db.execute(
+            "SELECT id,json_extract(state,'$.download_attempts'),json_extract(state,'$.metadata_attempts'),json_extract(state,'$.failure'),json_extract(state,'$.assessments.augmented.card'),json_extract(state,'$.captions'),json_array_length(state,'$.frames'),json_extract(state,'$.phase'),json_type(state,'$.media') FROM runs WHERE id IN ("
+            + ",".join("?" for _ in identifiers)
+            + ")",
+            tuple(identifiers),
+        )
+    }
+    result = []
+    cache_hits = set(state.get("cache_hit_ids", []))
+    last_issues = {
+        issue["canonical_id"]: issue
+        for issue in state.get("issues", [])
+        if issue.get("canonical_id") and issue.get("category") != "cancelled"
+    }
+    for item in state.get("shortlist", []):
+        key = item["canonical_id"]
+        observation = observations.get(key, {})
+        (
+            attempts,
+            metadata,
+            saved_failure,
+            card,
+            captions,
+            frame_count,
+            phase,
+            media_present,
+        ) = details.get(
+            observation.get("evidence_run"), ([], [], None, None, None, 0, None, None)
+        )
+        failed_attempts = [
+            attempt for attempt in attempts if attempt.get("status") == "failed"
+        ]
+        failed_metadata = [
+            attempt for attempt in metadata if attempt.get("status") == "failed"
+        ]
+        retries = state.get("candidate_retry_counts", {}).get(key, 0)
+        failure = observation.get("failure") or saved_failure or last_issues.get(key)
+        recovered = observation.get("quality") is not None
+        if recovered and key in cache_hits:
+            continue
         if (
-            run["settings"].get("kind") != "recommendation"
-            or run["status"] != "completed"
+            not failed_attempts
+            and not failed_metadata
+            and not retries
+            and (recovered or not failure)
         ):
             continue
-        state = run["state"]
-        if (
-            len(state.get("shortlist", [])) != inspection_limit(run["settings"])
-            or len({i["canonical_id"] for i in state["shortlist"]})
-            != inspection_limit(run["settings"])
-            or len(state.get("selected", [])) != 10
-            or len({i["canonical_id"] for i in state["selected"]}) != 10
+        last_transfer = (failed_attempts or failed_metadata or [None])[-1]
+        completed_downloads = sum(
+            attempt.get("status") == "completed" for attempt in attempts
+        )
+        if completed_downloads:
+            download_outcome = "completed"
+        elif failed_attempts:
+            download_outcome = "failed"
+        elif attempts:
+            download_outcome = "unknown"
+        elif media_present == "object":
+            download_outcome = "completed"
+        elif phase in {"prepare", "metadata"}:
+            download_outcome = "not_attempted"
+        else:
+            download_outcome = "unknown"
+        category = (failure or {}).get("category")
+        if recovered:
+            stop_reason = "recovered"
+        elif category == "insufficient_evidence":
+            stop_reason = "assessment_insufficient_evidence"
+        elif category in {"media_size", "media_timeout", "attempt_limit"}:
+            stop_reason = "resource_bound"
+        elif state.get("candidate_attempt_counts", {}).get(
+            key, 0
+        ) >= 1 + MAX_VIDEO_RETRIES or (
+            failed_attempts
+            and attempts[-1].get("status") == "failed"
+            and attempts[-1].get("number", 0) >= 1 + MAX_VIDEO_RETRIES
         ):
-            continue
-        try:
-            observations = [
-                (i, cached_quality(store, i["quality_evidence"]["evidence_run"]))
-                for i in state["selected"]
-            ]
-            valid = all(
-                o and o["canonical_id"] == i["canonical_id"] and o["quality"] >= 60
-                for i, o in observations
-            )
-        except (ValueError, OSError, KeyError):
-            valid = False
-        if valid and state.get("assessment_complete"):
-            result[run["platform"]].append(run["id"])
-    return {"phase_three_complete": all(result.values()), "verified_runs": result}
+            stop_reason = "retry_exhausted"
+        elif failure and (
+            failure.get("retryable") is False
+            or not observation.get("status") == "pending"
+        ):
+            stop_reason = "non_retryable_failure"
+        else:
+            stop_reason = "unknown"
+        criteria = (card or {}).get("criteria", {})
+        if not isinstance(criteria, dict):
+            criteria = {}
+        unknown_criteria = [
+            name[:80]
+            for name, details in criteria.items()
+            if isinstance(details, dict) and details.get("status") == "unknown"
+        ][:16]
+        unknowns = [
+            value[:300]
+            for value in (card or {}).get("unknowns", [])[:8]
+            if isinstance(value, str)
+        ]
+        captions = captions if isinstance(captions, dict) else {}
+        result.append(
+            {
+                "canonical_id": key,
+                "platform": run["platform"],
+                "title": item["title"],
+                "url": item["url"],
+                "status": "recovered"
+                if recovered
+                else "skipped"
+                if observation.get("status") == "unavailable"
+                else "pending",
+                "stage": (failure or {}).get("stage")
+                or (
+                    "download"
+                    if failed_attempts
+                    else "metadata"
+                    if failed_metadata
+                    else "worker"
+                ),
+                "reason": (last_transfer or {}).get("error")
+                or (failure or {}).get(
+                    "reason", "Candidate step recovered after retry."
+                )
+                if recovered
+                else observation.get("reason")
+                or (failure or {}).get("reason", "Evidence unavailable."),
+                "download_attempts": len(attempts),
+                "download_retries": max(
+                    0,
+                    len(attempts)
+                    - max(1, sum(attempt.get("number") == 1 for attempt in attempts)),
+                ),
+                "failed_download_attempts": len(failed_attempts),
+                "completed_download_attempts": completed_downloads,
+                "download_outcome": download_outcome,
+                "metadata_attempts": len(metadata),
+                "metadata_retries": max(
+                    0,
+                    len(metadata)
+                    - max(1, sum(attempt.get("number") == 1 for attempt in metadata)),
+                ),
+                "candidate_retries": retries,
+                "stop_reason": stop_reason,
+                "assessment_summary": {
+                    "overall_rationale": (card or {}).get("overall_rationale", "")[
+                        :1000
+                    ],
+                    "unknowns": unknowns,
+                    "unknown_criteria": unknown_criteria,
+                    "caption_source": captions.get("source", "unknown"),
+                    "caption_reason": (captions.get("reason") or "")[:500],
+                    "frame_count": frame_count,
+                }
+                if category == "insufficient_evidence" and isinstance(card, dict)
+                else None,
+            }
+        )
+    return result
 
 
 def recommendation_report(store, identifier):
@@ -52,8 +201,9 @@ def recommendation_report(store, identifier):
         "platform": run["platform"],
         "status": run["status"],
         "reason": run["reason"],
-        "settings": run["settings"],
+        "settings": {**run["settings"], "max_seconds": report_limit(run["settings"])},
         "request_budget": request_budget(store, run),
+        "candidate_failures": candidate_failures(store, run),
         "elapsed_seconds": live_elapsed(run),
         **state,
         "creator_rules": policy_summary(state.get("creator_rules", {})),
@@ -80,9 +230,7 @@ def recommendation_report(store, identifier):
             "quality_assessed": sum(
                 v.get("quality") is not None for v in state["evidence"].values()
             ),
-            "pending_reserved": 0
-            if run["settings"].get("screening_policy_version", 2) >= 3
-            else sum(i.get("carryover", False) for i in state["shortlist"]),
+            "pending_reserved": 0,
             "pending_carryover": sum(
                 i.get("carryover", False) for i in state["shortlist"]
             ),
@@ -176,7 +324,42 @@ def write_recommendation_report(store, identifier):
                 f"{position}. [{title}]({item['url']}) — score {item['score']:.1f} · quality {item['quality_evidence']['quality']:.1f}"
             )
         lines.append("")
-    if report.get("first_failure"):
+    if report["candidate_failures"]:
+        lines.extend(["## Candidate failures and retries", ""])
+        for failure in report["candidate_failures"]:
+            title = (
+                html.escape(failure["title"]).replace("[", "\\[").replace("]", "\\]")
+            )
+            attempts = failure["download_attempts"]
+            counts = []
+            if attempts:
+                counts.append(f"{attempts} download attempts")
+            if failure["metadata_attempts"]:
+                counts.append(f"{failure['metadata_attempts']} metadata attempts")
+            if failure["candidate_retries"]:
+                counts.append(f"{failure['candidate_retries']} candidate retries")
+            counts.append(f"download {failure['download_outcome']}")
+            transfers = " · " + ", ".join(counts) if counts else ""
+            assessment = failure.get("assessment_summary")
+            assessment_note = ""
+            if assessment:
+                assessment_note = (
+                    f" Captions: {html.escape(assessment['caption_source'])}"
+                    f"; {assessment['frame_count']} frames."
+                )
+                if assessment["unknown_criteria"]:
+                    assessment_note += (
+                        " Unknown criteria: "
+                        + html.escape(", ".join(assessment["unknown_criteria"]))
+                        + "."
+                    )
+                if assessment["caption_reason"]:
+                    assessment_note += " " + html.escape(assessment["caption_reason"])
+            lines.append(
+                f"- **{failure['status'].capitalize()}**: [{title}]({failure['url']}){transfers} · {html.escape(failure['reason'])} · Stop: {failure['stop_reason']}.{assessment_note}"
+            )
+        lines.append("")
+    elif report.get("first_failure"):
         failure = report["first_failure"]
         lines.extend(["First recorded failure: " + html.escape(failure["reason"]), ""])
     lines.extend(

@@ -141,6 +141,88 @@ function cacheWheel(source, root) {
   return destination;
 }
 
+function bundledWheel(packageRoot, version) {
+  const prefix = `broader_vids-${version.replace("-alpha.", "a")}-`;
+  const folder = path.join(packageRoot, "python");
+  const wheels = fs.existsSync(folder)
+    ? fs
+        .readdirSync(folder)
+        .filter((name) => name.startsWith(prefix) && name.endsWith(".whl"))
+    : [];
+  if (wheels.length !== 1)
+    throw new Error(
+      "The package needs exactly one matching bundled wheel; in a checkout run: uv build --out-dir python",
+    );
+  return path.join(folder, wheels[0]);
+}
+
+function wheelDigest(wheel) {
+  return createHash("sha256").update(fs.readFileSync(wheel)).digest("hex");
+}
+
+function requirementDigests(packageRoot, groups) {
+  return Object.fromEntries(
+    groups.map((group) => [
+      group,
+      createHash("sha256")
+        .update(
+          fs.readFileSync(
+            path.join(packageRoot, "python", `${group}-requirements.txt`),
+          ),
+        )
+        .digest("hex"),
+    ]),
+  );
+}
+
+function validGroups(groups) {
+  return (
+    Array.isArray(groups) &&
+    (JSON.stringify(groups) === JSON.stringify(["core"]) ||
+      JSON.stringify(groups) === JSON.stringify(["core", "evidence"]) ||
+      JSON.stringify(groups) ===
+        JSON.stringify(["core", "evidence", "asr"]))
+  );
+}
+
+function runtimeBuildMatches(runtime, digest, packageRoot) {
+  const file = path.join(runtime, "broader-vids-build.json");
+  try {
+    if (fs.statSync(file).size > 4096) return false;
+    const receipt = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (
+      receipt?.version !== 2 ||
+      receipt.wheel_sha256 !== digest ||
+      !validGroups(receipt.groups)
+    )
+      return false;
+    const expected = requirementDigests(packageRoot, receipt.groups);
+    return JSON.stringify(receipt.requirements_sha256) === JSON.stringify(expected);
+  } catch {
+    return false;
+  }
+}
+
+function recordRuntimeBuild(runtime, digest, packageRoot, groups) {
+  const target = path.join(runtime, "broader-vids-build.json");
+  const temporary = path.join(runtime, `.build-${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({
+        version: 2,
+        wheel_sha256: digest,
+        groups,
+        requirements_sha256: requirementDigests(packageRoot, groups),
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+    fs.renameSync(temporary, target);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
+
 function main(args = process.argv.slice(2)) {
   const packageRoot = path.resolve(__dirname, "..");
   const manifest = JSON.parse(
@@ -201,23 +283,12 @@ function main(args = process.argv.slice(2)) {
     return;
   }
   if (args[commandIndex(args)] === "setup") {
-    const pythonVersion = manifest.version.replace("-alpha.", "a");
-    const wheelRoot = path.join(packageRoot, "python");
-    const wheels = fs.existsSync(wheelRoot)
-      ? fs
-          .readdirSync(wheelRoot)
-          .filter(
-            (name) =>
-              name.startsWith(`broader_vids-${pythonVersion}-`) &&
-              name.endsWith(".whl"),
-          )
-      : [];
-    if (wheels.length !== 1)
-      throw new Error(
-        "The package needs exactly one matching bundled wheel; in a checkout run: uv build --out-dir python",
-      );
+    const sourceWheel = bundledWheel(packageRoot, manifest.version);
+    const wheelRoot = path.dirname(sourceWheel);
     return withSetup(root, () => {
       require("./profile-data.cjs").ensureMarker(root);
+      const receipt = path.join(runtime, "broader-vids-build.json");
+      if (fs.existsSync(receipt)) fs.unlinkSync(receipt);
       if (!fs.existsSync(executable))
         invoke("uv", [
           "venv",
@@ -226,7 +297,7 @@ function main(args = process.argv.slice(2)) {
           ">=3.12",
           runtime,
         ]);
-      const wheel = cacheWheel(path.join(wheelRoot, wheels[0]), root);
+      const wheel = cacheWheel(sourceWheel, root);
       invoke("uv", [
         "pip",
         "install",
@@ -242,7 +313,8 @@ function main(args = process.argv.slice(2)) {
         : args.includes("--evidence")
           ? ["evidence"]
           : [];
-      for (const extra of ["core", ...extras]) {
+      const groups = ["core", ...extras];
+      for (const extra of groups) {
         invoke("uv", [
           "pip",
           "install",
@@ -253,6 +325,7 @@ function main(args = process.argv.slice(2)) {
           path.join(wheelRoot, `${extra}-requirements.txt`),
         ]);
       }
+      recordRuntimeBuild(runtime, wheelDigest(wheel), packageRoot, groups);
       console.log(
         JSON.stringify(
           {
@@ -309,9 +382,32 @@ function main(args = process.argv.slice(2)) {
       "Broader Vids runtime is missing; run broader-vids setup --evidence with the same --data-dir first.",
     );
   }
-  return withRuntimeUse(root, () =>
-    invoke(executable, ["-m", "broader_vids", "--data-dir", root, ...args]),
-  );
+  return withRuntimeUse(root, () => {
+    const stopDashboard =
+      args[index] === "dashboard" && args[index + 1] === "stop";
+    if (
+      !stopDashboard &&
+      !runtimeBuildMatches(
+        runtime,
+        wheelDigest(bundledWheel(packageRoot, manifest.version)),
+        packageRoot,
+      )
+    ) {
+      const error = new Error(
+        "The installed Python engine does not match the bundled build, or its build receipt is missing. Stop the dashboard, then run setup --evidence with this same --data-dir to refresh it. Existing preferences and sign-in stay intact.",
+      );
+      error.code = "RUNTIME_BUILD_MISMATCH";
+      error.data_directory = root;
+      throw error;
+    }
+    return invoke(executable, [
+      "-m",
+      "broader_vids",
+      "--data-dir",
+      root,
+      ...args,
+    ]);
+  });
 }
 
 module.exports = {
@@ -321,6 +417,11 @@ module.exports = {
   cacheWheel,
   selectedRoot,
   selectRoot,
+  bundledWheel,
+  wheelDigest,
+  runtimeBuildMatches,
+  recordRuntimeBuild,
+  requirementDigests,
 };
 if (require.main === module) {
   try {
@@ -332,6 +433,20 @@ if (require.main === module) {
           {
             status: "blocked",
             checks: { runtime: { status: "busy", remedy: error.message } },
+          },
+          null,
+          2,
+        ),
+      );
+    else if (error.code === "RUNTIME_BUILD_MISMATCH")
+      console.log(
+        JSON.stringify(
+          {
+            status: "setup_required",
+            data_directory: error.data_directory,
+            checks: {
+              runtime: { status: "unverified", remedy: error.message },
+            },
           },
           null,
           2,

@@ -1,3 +1,4 @@
+from broader_vids.learning.topic_labels import readable_card_topics
 import copy
 import json
 from pathlib import Path
@@ -34,6 +35,46 @@ def owned_file(store, identifier, path):
     return candidate
 
 
+def discard_failed_media(store, identifier, *, lease_owner=None):
+    from broader_vids.evidence.failures import terminal_media_failure
+
+    with store.lease(identifier, owner=lease_owner):
+        run = store.get(identifier)
+        state = run["state"]
+        if (
+            run["settings"].get("kind") != "evidence"
+            or state.get("media")
+            or not terminal_media_failure(state.get("failure", {}))
+        ):
+            return
+        root = store.root / "evidence" / identifier
+        files = [owned_file(store, identifier, path) for path in root.glob("media.*")]
+        if not files:
+            return
+        removed = 0
+        cleanup_failed = False
+        try:
+            for path in files:
+                if path.is_file():
+                    size = path.stat().st_size
+                    path.unlink()
+                    removed += size
+        except OSError as error:
+            cleanup_failed = True
+            state["cleanup_issue"] = type(error).__name__
+        if not cleanup_failed:
+            state.pop("cleanup_issue", None)
+        state["partial_media_cleanup"] = {
+            "removed_bytes": state.get("partial_media_cleanup", {}).get(
+                "removed_bytes", 0
+            )
+            + removed,
+            "status": "pending" if cleanup_failed else "removed",
+            "updated_at": utc_now(),
+        }
+        store.save(run)
+
+
 def _validated_augmented(store, run):
     from broader_vids.evidence.assessment import validate_card
     from broader_vids.evidence.service import verify_bundle
@@ -58,7 +99,7 @@ def _validated_augmented(store, run):
     )
     signals = (run["settings"].get("originality_context") or {}).get("signals", [])
     validate_card(
-        assessment["card"],
+        readable_card_topics(assessment["card"]),
         {cue["id"] for cue in cues}
         | {frame["id"] for frame in frames}
         | {signal["id"] for signal in signals},
@@ -69,10 +110,13 @@ def _validated_augmented(store, run):
 
 
 def compact_evidence(store, identifier, *, dry_run=False, lease_owner=None):
+    from broader_vids.evidence.service import _require_current_rubric
+
     with store.lease(identifier, owner=lease_owner):
         run = store.get(identifier)
         if run["settings"].get("kind") != "evidence":
             raise ValueError("Cleanup requires an evidence run.")
+        _require_current_rubric(run["settings"])
         if not _validated_augmented(store, run):
             return {
                 "run_id": identifier,
@@ -135,9 +179,29 @@ def compact_evidence(store, identifier, *, dry_run=False, lease_owner=None):
         return result
 
 
-def inherit_bundle(store, source, target, *, source_owner=None):
+def _inherit_asset(store, identifier, source, destination, expected_hash):
     import os
     import shutil
+    import uuid
+    from broader_vids.evidence.media import file_hash
+
+    destination = owned_file(store, identifier, destination)
+    if destination.is_file() and file_hash(destination) == expected_hash:
+        return
+    temporary = owned_file(
+        store, identifier, destination.with_name(f".inherit-{uuid.uuid4().hex}.tmp")
+    )
+    try:
+        try:
+            os.link(source, temporary)
+        except OSError:
+            shutil.copyfile(source, temporary)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def inherit_bundle(store, source, target, *, source_owner=None):
     from broader_vids.evidence.service import evidence_root, verify_bundle
 
     with store.lease(source["id"], owner=source_owner), store.lease(target["id"]):
@@ -145,6 +209,10 @@ def inherit_bundle(store, source, target, *, source_owner=None):
         verify_bundle(store, source)
         linked = {}
         target_root = evidence_root(store, target["id"])
+        for temporary in target_root.glob(".inherit-*.tmp"):
+            temporary = owned_file(store, target["id"], temporary)
+            if temporary.is_file():
+                temporary.unlink()
         for key in (
             "metadata",
             "media",
@@ -152,6 +220,7 @@ def inherit_bundle(store, source, target, *, source_owner=None):
             "captions",
             "frames",
             "frame_positions_done",
+            "frame_fractions",
             "caption_excerpt",
         ):
             if key not in source["state"]:
@@ -164,10 +233,9 @@ def inherit_bundle(store, source, target, *, source_owner=None):
                 if str(path) not in linked:
                     destination = target_root / path.name
                     if key != "media" or not released_media(source["state"]):
-                        try:
-                            os.link(path, destination)
-                        except OSError:
-                            shutil.copyfile(path, destination)
+                        _inherit_asset(
+                            store, target["id"], path, destination, record["sha256"]
+                        )
                     linked[str(path)] = str(destination)
                 record["path"] = linked[str(path)]
             target["state"][key] = value

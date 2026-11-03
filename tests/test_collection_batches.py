@@ -109,10 +109,7 @@ class CollectionBatchTests(unittest.TestCase):
         )
         shortlisted, _ = screen(state["buffer"], [], {}, self.profile)
         self.assertEqual(len(shortlisted), 35)
-        self.assertEqual(
-            [v["screening_score"] for v in shortlisted],
-            sorted([v["screening_score"] for v in shortlisted], reverse=True),
-        )
+        self.assertEqual(len({v["canonical_id"] for v in shortlisted}), 35)
 
     def test_refill_requests_only_the_missing_lane_and_duplicates_do_not_fill_slots(
         self,

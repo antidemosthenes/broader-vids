@@ -73,20 +73,14 @@ class RequestBudgetTests(unittest.TestCase):
         for child in self.store.get(batch)["state"]["children"].values():
             self.assertEqual(self.store.get(child)["settings"]["max_requests"], 320)
 
-    def test_live_shape_pauses_at_98_and_explicit_extension_reuses_work_to_reach_100(
+    def test_budget_extension_reuses_current_balanced_collection_work(
         self,
     ):
         identifier = self.run_id(max_requests=160)
         run = self.store.get(identifier)
-        run["settings"].pop("collection_policy")
-        with self.store.db:
-            self.store.db.execute(
-                "UPDATE runs SET settings=? WHERE id=?",
-                (json.dumps(run["settings"]), identifier),
-            )
         alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
         pool = []
-        for index in range(160):
+        for index in range(240):
             item = candidate(index + 1, "bilibili")
             item.update(
                 identify(
@@ -95,6 +89,12 @@ class RequestBudgetTests(unittest.TestCase):
                     + alphabet[index % 58]
                 )
             )
+            item["origins"] = [
+                {
+                    "domains": ["mathematics" if index % 4 else "ecology"],
+                    "new_topic": index % 4 == 0,
+                }
+            ]
             item["creator_id"] = str(index + 1000)
             item["engagement"] = {
                 "views": 1000,
@@ -134,9 +134,8 @@ class RequestBudgetTests(unittest.TestCase):
                 lambda: self.store.save(run),
                 snapshot_collector=snapshot,
             )
-        self.assertEqual(
-            (len(run["state"]["buffer"]), run["state"]["pool_index"]), (98, 155)
-        )
+        self.assertLess(len(run["state"]["buffer"]), 100)
+        partial = len(run["state"]["buffer"])
         self.assertEqual(self.store.request_count(identifier), 160)
         with patch(
             "broader_vids.recommendations.service.collect_snapshot",
@@ -150,7 +149,7 @@ class RequestBudgetTests(unittest.TestCase):
             )
         self.assertEqual(paused["status"], "paused")
         self.assertIn("160/160", paused["reason"])
-        self.assertIn("98/100", paused["reason"])
+        self.assertIn(f"{partial}/100", paused["reason"])
         self.assertEqual(paused["state"]["shortlist"], [])
         before = copy.deepcopy(paused)
         changes = increase_request_limit(self.store, identifier, 320)
@@ -172,14 +171,14 @@ class RequestBudgetTests(unittest.TestCase):
         self.assertEqual(len(resumed["state"]["buffer"]), 100)
         self.assertEqual(len(resumed["state"]["shortlist"]), 35)
         self.assertEqual(resumed["state"]["phase"], "assess")
-        self.assertEqual(len(fetched), 157)
-        self.assertEqual(len(set(fetched)), 157)
+        self.assertEqual(len(set(fetched)), len(fetched))
         self.assertEqual(
             request_budget(self.store, resumed),
-            {"used": 162, "limit": 320, "remaining": 158},
+            {"used": len(fetched) + 5, "limit": 320, "remaining": 315 - len(fetched)},
         )
         self.assertEqual(
-            recommendation_report(self.store, identifier)["request_budget"]["used"], 162
+            recommendation_report(self.store, identifier)["request_budget"]["used"],
+            len(fetched) + 5,
         )
         self.assertEqual(len(self.store.events(identifier)), 1)
 

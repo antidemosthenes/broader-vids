@@ -32,10 +32,12 @@ def start_owned(command, **options):
         process._broader_vids_job = scope
         return process
     except BaseException as error:
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        scope.close()
+        try:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        finally:
+            scope.close()
         raise ProcessCleanupError(
             "Could not isolate a worker in its owned Windows job before execution."
         ) from error

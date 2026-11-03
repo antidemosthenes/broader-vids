@@ -95,44 +95,47 @@ PRIOR = integrate([])
 
 def fit_depth(rows, baseline=None):
     grouped = {}
-    for row in rows:
+    for index, row in enumerate(rows):
+        if index % 64 == 0:
+            check_work()
         if (
             row["dimension"] == "depth"
             and row["split"] == "train"
             and row.get("level") in LEVELS
         ):
-            grouped.setdefault(row["target"], []).append((row["level"], row["value"]))
+            counts = grouped.setdefault(row["target"], [[0] * 3 for _ in LEVELS])
+            counts[LEVELS.index(row["level"])][RESPONSES.index(row["value"])] += 1
     result = {}
     for target in grouped.keys() | (baseline or {}).keys():
+        check_work()
         previous = (baseline or {}).get(target)
-        values = grouped.get(target, [])
-        if previous and not values:
+        added = grouped.get(target)
+        if previous and added is None:
             result[target] = copy.deepcopy(previous)
             continue
         counts = (
             copy.deepcopy(previous["counts"]) if previous else [[0] * 3 for _ in LEVELS]
         )
-        for level, response in values:
-            counts[LEVELS.index(level)][RESPONSES.index(response)] += 1
-        samples = (
-            [
-                (level, response, counts[i][j])
-                for i, level in enumerate(LEVELS)
-                for j, response in enumerate(RESPONSES)
-                if counts[i][j]
-            ]
-            if previous
-            else values
-        )
+        if added is not None:
+            for i in range(len(LEVELS)):
+                for j in range(len(RESPONSES)):
+                    counts[i][j] += added[i][j]
+        samples = [
+            (level, response, counts[i][j])
+            for i, level in enumerate(LEVELS)
+            for j, response in enumerate(RESPONSES)
+            if counts[i][j]
+        ]
         result[target] = {**integrate(samples), "counts": counts}
     return result
 
 
 def suitability(models, topics, level):
-    matches = [models[topic] for topic in topics if topic in models]
+    matches = [models[topic] for topic in dict.fromkeys(topics) if topic in models]
     if not matches or level not in LEVELS:
         return None
     p = sum(model["predictions"][level][1] for model in matches) / len(matches)
+    p = min(1 - 1e-12, max(1e-12, p))
     prior = PRIOR["predictions"][level][1]
     adjustment = math.log(p / (1 - p)) - math.log(prior / (1 - prior))
     return {

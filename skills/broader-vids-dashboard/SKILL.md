@@ -57,7 +57,11 @@ Do not start a new recommendation round to show existing results.
 If a recommendation request stops for feedback, open this dashboard and end that request.
 Do not resume when the user saves ratings.
 The user must invoke recommendations again.
-Preferences transfers interests and learned weights without video history.
+Format 4 preferences transfer interests, learned weights, watched video IDs, compact topic coverage, and manual creator exclusions.
+Import replaces both local manual creator lists with the lists in the file. An empty list clears that platform's manual rules.
+Bilibili blacklist sync preserves manual rules and combines them with the active account's imported blacklist.
+It does not transfer full recommendation or calibration history.
+Imports accept format 4 with learning model version 8 and feature version 1.
 Token usage reports saved recommendation rounds, including paused or failed rounds.
 The user can select a round to see stage percentages, input, output, cached input, and reporting coverage.
 Unreported usage stays unknown. The report does not start model calls.

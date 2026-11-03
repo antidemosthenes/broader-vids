@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const vm = require('node:vm');
+const { createRequire } = require('node:module');
 const { dataRoot, commandIndex, cacheWheel } = require('../bin/broader-vids.cjs');
 
 test('explicit state location survives spaces and shell metacharacters', () => {
@@ -45,6 +47,156 @@ test('same-version rebuilds use different immutable wheel cache paths', () => {
   } finally {
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
     assert.ok(path.basename(directory).startsWith('broader-vids-wheel-'));
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('setup receipts gate stale engines and refresh atomically across same-version rebuilds', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-build-lifecycle-'));
+  const packageRoot = path.join(directory, 'plugin');
+  const bin = path.join(packageRoot, 'bin');
+  const python = path.join(packageRoot, 'python');
+  const manifest = require('../package.json');
+  const entrypoint = path.join(bin, 'broader-vids.cjs');
+  const runtime = path.join(directory, 'profile', 'runtimes', manifest.version);
+  const executable = path.join(runtime, process.platform === 'win32' ? 'Scripts' : 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
+  const receipt = path.join(runtime, 'broader-vids-build.json');
+  const profile = path.join(directory, 'profile');
+  const calls = [];
+  let failNextPip = false;
+  const uv = (args) => {
+    calls.push({ command: 'uv', args });
+    if (args[0] === 'venv') {
+      fs.mkdirSync(path.dirname(executable), { recursive: true });
+      fs.writeFileSync(executable, 'fake python executable');
+      return { status: 0 };
+    }
+    if (args[0] === 'pip' && failNextPip) {
+      failNextPip = false;
+      return { status: 1 };
+    }
+    return { status: 0 };
+  };
+  const spawnSync = (command, args) => {
+    if (command === 'uv') return uv(args);
+    if (command === executable && args.includes('dashboard') && args.includes('stop')) {
+      const leases = fs.readdirSync(path.join(profile, '.launcher')).filter((name) => name.endsWith('.use.json'));
+      assert.equal(leases.length, 1);
+    }
+    calls.push({ command, args });
+    return { status: 0 };
+  };
+  const output = [];
+  const stderr = [];
+  const fakeRequire = (file) => {
+    if (file === 'node:child_process') return { spawnSync };
+    return createRequire(entrypoint)(file);
+  };
+  const source = fs.readFileSync(path.resolve(__dirname, '../bin/broader-vids.cjs'), 'utf8');
+  const loadMain = (args, { cli = false } = {}) => {
+    const module = { exports: {} };
+    const localRequire = (file) => {
+      if (file === 'node:child_process') return { spawnSync };
+      return fakeRequire(file);
+    };
+    if (cli) localRequire.main = module;
+    const childProcess = { env: process.env, platform: process.platform, pid: process.pid, argv: ['node', entrypoint, ...args], exitCode: 0 };
+    vm.runInNewContext(`${source}\nmodule.exports.main = main;`, {
+      module,
+      exports: module.exports,
+      require: localRequire,
+      __dirname: bin,
+      __filename: entrypoint,
+      process: childProcess,
+      console: {
+        log: (value) => output.push(String(value)),
+        error: (value) => stderr.push(String(value)),
+      },
+      Buffer,
+    }, { filename: entrypoint });
+    return { main: module.exports.main, process: childProcess };
+  };
+
+  try {
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(python, { recursive: true });
+    for (const name of ['runtime-lock.cjs', 'profile-data.cjs']) {
+      fs.copyFileSync(path.resolve(__dirname, '../bin', name), path.join(bin, name));
+    }
+    fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify(manifest));
+    const wheel = path.join(python, `broader_vids-${manifest.version.replace('-alpha.', 'a')}-py3-none-any.whl`);
+    fs.writeFileSync(wheel, 'first same-version wheel');
+    fs.writeFileSync(path.join(python, 'core-requirements.txt'), '');
+    fs.writeFileSync(path.join(python, 'evidence-requirements.txt'), '');
+    fs.writeFileSync(path.join(python, 'asr-requirements.txt'), '');
+    const { main } = loadMain([]);
+
+    main(['--data-dir', profile, 'setup', '--evidence']);
+    const firstReceipt = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    const firstDigest = require('../bin/broader-vids.cjs').wheelDigest(wheel);
+    assert.equal(firstReceipt.version, 2);
+    assert.equal(firstReceipt.wheel_sha256, firstDigest);
+    assert.deepEqual(firstReceipt.groups, ['core', 'evidence']);
+    assert.deepEqual(Object.keys(firstReceipt.requirements_sha256), ['core', 'evidence']);
+    assert.equal(fs.existsSync(path.join(profile, '.launcher', 'setup.json')), false);
+
+    const evidenceRequirements = path.join(python, 'evidence-requirements.txt');
+    fs.writeFileSync(evidenceRequirements, 'changed dependency lock');
+    assert.throws(() => main(['--data-dir', profile, 'onboarding', 'status']), (error) => error.code === 'RUNTIME_BUILD_MISMATCH');
+    fs.writeFileSync(evidenceRequirements, '');
+
+    calls.length = 0;
+    main(['--data-dir', profile, 'onboarding', 'complete', '--format', 'chat']);
+    const completion = calls.find((call) => call.command === executable);
+    assert.deepEqual([...completion.args], ['-m', 'broader_vids', '--data-dir', profile, '--data-dir', profile, 'onboarding', 'complete', '--format', 'chat']);
+
+    fs.unlinkSync(receipt);
+    assert.throws(() => main(['--data-dir', profile, 'onboarding', 'status']), (error) => error.code === 'RUNTIME_BUILD_MISMATCH');
+    fs.writeFileSync(receipt, 'malformed receipt');
+    calls.length = 0;
+    const malformed = loadMain(['--data-dir', profile, 'onboarding', 'status'], { cli: true });
+    assert.equal(malformed.process.exitCode, 2);
+    assert.equal(JSON.parse(output.pop()).status, 'setup_required');
+    assert.deepEqual(calls, []);
+
+    calls.length = 0;
+    main(['--data-dir', profile, 'dashboard', 'stop']);
+    assert.equal(calls.filter((call) => call.command === executable).length, 1);
+
+    fs.writeFileSync(wheel, 'second same-version wheel');
+    calls.length = 0;
+    assert.throws(() => main(['--data-dir', profile, 'onboarding', 'status']), (error) => error.code === 'RUNTIME_BUILD_MISMATCH');
+    assert.equal(calls.some((call) => call.command === executable), false);
+    main(['--data-dir', profile, 'setup', '--evidence']);
+    const secondReceipt = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    const secondDigest = require('../bin/broader-vids.cjs').wheelDigest(wheel);
+    assert.notEqual(secondDigest, firstDigest);
+    assert.equal(secondReceipt.wheel_sha256, secondDigest);
+
+    main(['--data-dir', profile, 'setup']);
+    const coreOnlyReceipt = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+    assert.deepEqual(coreOnlyReceipt.groups, ['core']);
+    assert.deepEqual(Object.keys(coreOnlyReceipt.requirements_sha256), ['core']);
+
+    failNextPip = true;
+    assert.throws(() => main(['--data-dir', profile, 'setup', '--evidence']), /did not complete successfully/);
+    assert.equal(fs.existsSync(receipt), false);
+    assert.equal(fs.existsSync(path.join(profile, '.launcher', 'setup.json')), false);
+    assert.equal(fs.existsSync(path.join(profile, '.launcher', 'gate.lock')), false);
+    const temporaryFiles = [];
+    const findTemporaryFiles = (root) => {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        const target = path.join(root, entry.name);
+        if (entry.isDirectory()) findTemporaryFiles(target);
+        else if (entry.name.endsWith('.tmp')) temporaryFiles.push(target);
+      }
+    };
+    findTemporaryFiles(profile);
+    assert.deepEqual(temporaryFiles, []);
+    assert.deepEqual(stderr, []);
+  } finally {
+    assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(directory).startsWith('broader-vids-build-lifecycle-'));
     fs.rmSync(directory, { recursive: true });
   }
 });
@@ -132,8 +284,13 @@ test('failed UV launch releases the installation lock', () => {
     const manifest = require('../package.json');
     fs.writeFileSync(path.join(fakePlugin, 'package.json'), JSON.stringify(manifest));
     fs.writeFileSync(path.join(fakePlugin, 'python', `broader_vids-${manifest.version.replace('-alpha.', 'a')}-py3-none-any.whl`), 'fixture');
+    const runtime = path.join(directory, 'runtimes', manifest.version);
+    fs.mkdirSync(runtime, { recursive: true });
+    const receipt = path.join(runtime, 'broader-vids-build.json');
+    fs.writeFileSync(receipt, JSON.stringify({ version: 1, wheel_sha256: 'old receipt' }));
     const result = spawnSync(process.execPath, [path.join(fakePlugin, 'bin', 'broader-vids.cjs'), '--data-dir', directory, 'setup'], { encoding: 'utf8', env });
     assert.match(result.stderr, /Could not launch uv/);
+    assert.equal(fs.existsSync(receipt), false);
     assert.notEqual(result.status, 0);
     assert.equal(fs.existsSync(path.join(directory, '.launcher', 'setup.json')), false);
     assert.equal(fs.existsSync(path.join(directory, '.launcher', 'gate.lock')), false);

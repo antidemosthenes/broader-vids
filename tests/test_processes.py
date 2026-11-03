@@ -4,11 +4,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 import threading
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from broader_vids.processes import ProcessCleanupError, run_bounded
+from broader_vids.processes import ProcessCleanupError, run_bounded, start_owned
 
 
 class ProcessTests(unittest.TestCase):
@@ -152,3 +153,17 @@ class ProcessTests(unittest.TestCase):
             self.assertTrue(started.exists())
             time.sleep(2)
             self.assertFalse(finished.exists())
+
+    def test_startup_failure_closes_job_even_if_process_cleanup_fails(self):
+        process = Mock()
+        process.poll.return_value = None
+        process.kill.side_effect = OSError("fixture cleanup failure")
+        with (
+            patch("broader_vids.processes.os.name", "nt"),
+            patch("broader_vids.windows_job.WindowsJob") as job,
+            patch("broader_vids.processes.subprocess.Popen", return_value=process),
+        ):
+            job.return_value.start.side_effect = OSError("fixture ownership failure")
+            with self.assertRaisesRegex(OSError, "fixture cleanup failure"):
+                start_owned(["fixture"])
+            job.return_value.close.assert_called_once()

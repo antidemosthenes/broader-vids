@@ -168,16 +168,31 @@ Files must use the `.json` extension and fit within 8 MiB.
 Import checks the scoring version, checksum, and parameter uncertainty.
 It rejects incompatible or invalid files before changing preferences.
 
-Transfers contain interests, learned parameters, and their uncertainty.
-They exclude individual ratings, video records, calibration examples, and recommendation history.
-They also exclude exclusions, account data, cookies, media, and dashboard settings.
-Local lists, ratings, watch states, and exclusions remain unchanged.
+Format 4 uses learning model version 8 and feature version 1.
+It transfers interests, learned parameters and their uncertainty, watched video IDs, a bounded exploration summary, and manual creator exclusions.
+Imports mark matching IDs as watched to prevent exact video repeats.
+Imports of other formats or model versions fail before they change preferences.
+The exploration summary contains at most 1,024 hierarchy nodes, aggregate counts, and relative round ages.
+It contains no individual video history.
+Files exclude titles, individual ratings, calibration examples, and recommendation history.
+They exclude tag rules, account-specific blacklist copies, account data, cookies, media, and dashboard settings.
+Manual creator rules use platform-specific stable IDs and names, with at most 10,000 rules per file.
+Import replaces both local manual creator lists with the lists in the file.
+An empty imported list clears that platform's manual rules.
+Account-specific blacklist entries remain unchanged.
+Blacklist sync updates only the verified account's imported copy. It preserves manual rules.
+Coverage imports keep local parent relationships and adjust new child depths to match.
+Imports reject topic conflicts and a merged hierarchy above 1,024 topics.
+Repeated imports retain coverage age instead of restarting its cooldown.
+Imports preserve local video lists, ratings, watch states, tag rules, and account-specific blacklist entries.
+They add watched status for imported IDs without clearing local states.
 Existing local ratings stay visible but do not enter the imported model again.
 New or edited ratings continue learning from the imported parameters.
 
 Import saves the current parameters in `backups/preferences-<identifier>.json` under the data directory.
 Use that file with the same import operation to restore the earlier parameters.
-This recovery file contains no video history.
+This recovery file contains watched video IDs and prior manual creator rules, but no titles or full video history.
+Restoring it also restores the prior manual creator lists. Account-specific blacklist copies remain unchanged.
 Import does not reconstruct or replace a dashboard list.
 
 Exports use atomic file publication and leave existing files intact unless overwrite is explicit.
@@ -252,9 +267,16 @@ Its interests, ratings, and learned weights remain intact.
 uv run --no-sync broader-vids onboarding status
 uv run --no-sync broader-vids onboarding questions
 uv run --no-sync broader-vids onboarding configure --platform both
-uv run --no-sync broader-vids onboarding complete
+uv run --no-sync broader-vids onboarding complete --format chat --skill-namespace broader-vids
 uv run --no-sync broader-vids preflight
 ```
+
+`onboarding complete --format chat` returns the complete setup guide after a successful check.
+Its output includes the selected platforms, data directory, optional warnings, and four next actions.
+Omit `--format chat` for the existing JSON report.
+Use `--skill-namespace broader-vids` when the host exposes commands such as `$broader-vids:broader-vids-dashboard`.
+Omit the namespace for standalone skills.
+Blocked completion still returns structured diagnostics and a nonzero exit code.
 
 `onboarding questions` returns the shared question titles, input types, and choice values for the chat host.
 It does not change preferences, configure platforms, open a browser, or run access checks.
@@ -306,7 +328,8 @@ Required failures always block work, including when that flag is present.
 For both platforms, a failure does not silently switch to one platform.
 Existing blacklist-sync failures remain nonblocking under the saved-copy policy.
 Resuming uses saved settings and checks readiness without the feedback prompt.
-Automated checks consume the new or resumed round's existing time allowance.
+Automated checks count toward an explicit total allowance when one exists.
+Crash recovery and preflight count the same elapsed time only once.
 Setup, manual repairs, and user decisions occur outside that allowance.
 
 ## Request recommendations
@@ -320,12 +343,13 @@ Omit the platform to use the saved onboarding choice.
 An explicit platform applies to this request without changing the saved default.
 A new command requests a new round.
 It retains existing feedback and pending recommendations.
+`pending_now` counts published recommendations that are still unwatched and undismissed, including entries in the current list.
 
 | Argument | Meaning | Default |
 | --- | --- | --- |
 | `--use-browser` | Use the separate Bilibili login for metadata and evidence | Automatic for new Bilibili rounds |
 | `--allow-missing-feedback` | Continue this round after accepting the feedback reminder | Disabled |
-| `--max-seconds` | Time allowance for the recommendation invocation | 1800 seconds |
+| `--max-seconds` | Optional total time allowance in seconds | No overall deadline |
 | `--workers` | Maximum shared model-worker count | 4 |
 | `--model` | Explicit host bridge for the invoking chat's model | Inherit current chat |
 | `--effort` | Explicit host bridge for its reasoning effort | Inherit current chat |
@@ -335,9 +359,14 @@ It retains existing feedback and pending recommendations.
 | `--asr-model` | Local transcription model, `tiny`, `base`, or `small` | No transcription fallback |
 | `--discovery-run` | Reuse a saved discovery buffer for a single platform | Collect fresh candidates |
 
-The combined batch shares one thirty-minute allowance and its worker slots.
+The combined batch shares worker slots and has no overall time limit by default.
+You can set an optional shared limit with `--max-seconds`.
+The limit can exceed 1,800 seconds.
 Its platform jobs retain separate request, media, and model allowances.
-Discovery requests use a separate bounded counter within the shared time allowance.
+Discovery requests use a separate bounded counter and a ten-minute stage timeout.
+Legacy checkpoints with the former default 1800-second cap continue without that cap.
+Explicit limits saved by this version remain effective during continuation.
+Stored elapsed time and completed work remain intact.
 Planning and assessment workers inherit the invoking Codex chat's model and reasoning effort through the authenticated Codex CLI.
 The engine resolves only the active thread's `turn_context` model and effort, then saves the pair for the run.
 Resuming retains that pair.
@@ -485,7 +514,8 @@ uv run --no-sync broader-vids exclusions sync-bilibili
 Replace CHANNEL_ID with the complete YouTube channel ID that starts with UC.
 Replace ACCOUNT_ID with the creator's positive numeric Bilibili ID.
 Replace TAG with an exact tag name.
-The 视频翻译 exclusion is built in but removable.
+The engine includes the 视频翻译 exclusion by default.
+You can remove this exclusion.
 Remove it under Exclusions → Bilibili → Tags, or use the terminal remove command.
 Use Add tag or the terminal add command to restore it.
 A removal persists across restarts, interest changes, and preference imports.
@@ -507,9 +537,8 @@ These tags differ from visible #hashtags.
 Repeated tag entries with different letter case do not create duplicate rules.
 The Exclusions view shows rule sources and sync status.
 
-The local dashboard remains available through serve in this preview.
-Phase 5 will expose its opening action through the host's supported skill command.
-Recommendations will appear directly in chat.
+The packaged dashboard skill opens the local dashboard through the host's native skill invocation.
+Recommendations appear directly in chat.
 The dashboard order is Recommendations, Exclusions, then optional Calibration.
 
 ### Use the dashboard
@@ -626,7 +655,7 @@ It preserves ratings and original scorecards.
 It starts no new media download.
 Its limits are one to three videos and at most 600 seconds.
 
-Label older videos from retained captions:
+Label saved videos from retained captions:
 
 ```powershell
 uv run --no-sync broader-vids learn label-videos --max-videos 60 --max-seconds 900
@@ -636,19 +665,6 @@ This operation generates content topics and audience levels.
 It downloads no new videos.
 Existing cached labels avoid repeated model calls.
 New quality assessments include these descriptors in their normal response.
-
-Migrate an older profile after content labeling:
-
-```powershell
-uv run --no-sync broader-vids learn migrate-feedback
-```
-
-Migration maps binary interest and quality to High or Low in their current dimensions.
-It leaves ambiguous overall ratings empty.
-It creates a recovery backup before removing active binary data.
-The engine retrains from the mapped ratings.
-Mapped fields remain marked for user review until the user saves them.
-Repeating migration does not duplicate ratings.
 
 ## Inspect discovery and evidence
 
@@ -701,9 +717,17 @@ uv run --no-sync broader-vids evidence frame RUN_ID --at 120 --reason 'Check the
 Use `--use-browser` for Bilibili access.
 Include the requested Bilibili part as `?p=1` or its actual part number.
 Standalone preparation defaults to 128 MiB and 1200 seconds.
-An evidence job allows two model calls and eight submitted images.
+New evidence jobs allow two model calls and sixteen submitted images in total.
+The initial frame sample has at most four images with captions, or eight without captions.
+A failed model response can use the second call within these limits.
+Older jobs retain their saved limits.
+New assessment jobs can reuse compatible saved captions and frames at any reasoning effort.
+A newer incompatible bundle does not hide an older compatible bundle.
+Bundle reuse copies evidence, not scorecards.
+The new job performs its own assessment. It does not change the source bundle.
+Interrupted copies resume from verified files.
+The engine removes temporary copies after failure or before the next reuse attempt.
 Add a frame before the augmented assessment, within that limit.
-`evidence pilot-report` compares saved caption-only and frame-assisted assessments.
 
 ## Clean temporary evidence
 
@@ -774,10 +798,9 @@ uv run --no-sync playwright install --with-deps chromium
 The Ubuntu GitHub Actions workflow performs this installation before the test step.
 Dashboard tests check drafts, failed writes, duplicate feedback, dialogs, platform navigation, and responsive themes.
 Keep screenshots and other visual checks under the ignored `.cache/` directory.
-`gate` reports development readiness from saved local records.
-It does not replace a clean installed-plugin test.
+Browser tests reuse a browser process within each worker and create a fresh context for each test.
 
-## Build and distribute
+## Build and install locally
 
 ### Install the local Codex plugin
 
@@ -799,7 +822,7 @@ The installed cache never needs the private working checkout.
 These operations install locally and do not publish anything.
 
 Open a new desktop or CLI conversation after installation.
-For installation through the ChatGPT desktop app, follow [the README](../README.md#option-2-install-in-the-chatgpt-desktop-app).
+For installation through the ChatGPT desktop app, follow [the README](../README.md#install-in-the-chatgpt-desktop-app).
 Use the installed Broader Vids setup skill for guided setup.
 The host exposes the recommendation, setup, and dashboard skills through its skill menu.
 Their skill names include `broader-vids`, `broader-vids-setup`, `broader-vids-dashboard`, `broader-vids-reset`, and `broader-vids-clean`.
@@ -872,40 +895,26 @@ node bin/broader-vids.cjs doctor
 ```
 
 Stop the profile's dashboard with `dashboard stop` before changing its runtime.
+The launcher checks the installed engine against the bundled wheel and the requirements for installed dependency groups before normal commands.
+A missing, older, or mismatched build receipt requires one `setup --evidence` refresh.
+This also applies to a rebuilt package with the same version.
+The refresh preserves profile data and sign-in. `dashboard stop` remains available during repair.
+Normal commands do not reinstall dependencies.
 Finish active recommendations and Bilibili browser operations before setup.
 Concurrent setup or runtime use returns a busy result instead of changing active files.
 A failed child command releases its installation lock.
 If a launcher exits unexpectedly, check for surviving children before repairing its lock.
 The launcher does not remove uncertain locks automatically.
+The launcher provides no stale-lock repair command.
 
 `setup` installs the engine and its locked core dependencies, including OpenCC.
 Its `installed` status does not mean onboarding is complete.
 Use the guided setup skill to configure interests, choose platforms, and check access.
 `setup --evidence` also installs browser and media tools.
 `setup --asr` includes those tools and transcription dependencies.
+The receipt records `core`, `evidence`, and `asr` only when setup installed those groups, with each group's requirements-file digest.
 Setup requires Node.js 20 or later and UV.
 It does not use an npm postinstall script.
-
-Daily scheduling also remains unimplemented.
-
-Public release has three separate destinations:
-
-| Destination | Artifact | Release action |
-| --- | --- | --- |
-| GitHub | Reviewed source, skills, manifests, documentation, and synthetic examples | Push the approved commit or release |
-| npm | Tested launcher, wheel, plugin files, and dependency locks | Publish the approved package version |
-| OpenAI Plugins Directory | Desktop-only skill package ZIP and listing material | Submit, resolve review findings, and publish after approval |
-
-Approve the exact destination and files before any public upload.
-Use synthetic state for examples and screenshots.
-Exclude real preferences, ratings, history, sessions, media, captions, frames, logs, and backups.
-Git ignores the internal plan, local environments, state, and build archives.
-The npm file list includes only the selected public files.
-
-A public listing does not host the dashboard or upload user recommendations.
-OpenAI acceptance and account eligibility require external review.
-See [desktop-only submission](https://developers.openai.com/plugins/deploy/desktop-only) and [publication steps](https://developers.openai.com/plugins/deploy/submission).
-No npm release or public-directory listing exists for this preview.
 
 ## Tools, dependencies, and copyright
 
@@ -914,14 +923,6 @@ The project notice names copyright holder **antidemosthenes**, year **2026**.
 Keep that notice with redistributed Broader Vids code.
 
 Third-party authors retain their own copyright.
-Search keywords use English for YouTube and Simplified Chinese for Bilibili.
-The existing AI topic plan stores both variants for each selected keyword.
-The hierarchy and interest labels retain their existing forms.
-The AI supplies English wording. Script checks reject incompatible writing systems before keyword requests.
-OpenCC converts Traditional Chinese to Simplified Chinese locally. It does not translate between languages.
-Creator-name lookups retain the exact observed name, including Latin names.
-A language repair uses the remaining planning-call allowance and retains the current hierarchy refinement setting.
-
 The following table identifies the main tools and their upstream license information.
 It is not a complete list of optional transitive packages.
 
@@ -966,41 +967,90 @@ The caller subtracts ten quality points separately from the model score and from
 Caption-only mode requires a transcript.
 Visual-only jobs use augmented mode.
 Downloadable captions differ from text burned into the picture.
-Bilibili downloads retain platform-offered CDN alternatives and prefer the Akamai route observed to perform better on this installation.
+Bilibili downloads preserve the platform's offered CDN order and retain its backup routes.
+The engine does not assume that Akamai or Bilivideo always provides the faster transfer.
+At most two Bilibili evidence preparations run concurrently.
+The engine does not delay Bilibili download starts by a set interval.
+Slow transfers can switch to an offered backup within the existing retry and resource limits.
+Retries cycle through the offered routes, so a failed backup does not receive every remaining attempt.
+The engine keeps a slow connection when its recent rate predicts completion within the remaining allowance.
+Rate tracking uses bounded samples and stops when the stream finishes or no transfer decision needs it.
+At the same resolution, Bilibili selects lower bitrates before codec preferences.
+This avoids a larger H.264 stream when a smaller AV1 or HEVC stream is available.
+The size check uses exact sizes or estimates before transfer.
+The preferred low-resolution range accepts heights from 200 to 480 pixels.
+This includes nominal 240p streams whose actual height is 238 pixels.
+The existing 720-pixel fallback remains available.
 Transfers use 2 MiB chunks and 64 KiB buffers of constant size.
-They allow up to three bounded attempts, resume support and a slow-route cutoff.
+YouTube and Bilibili use the same retry policy.
+Video metadata and downloads allow one initial attempt and up to three retries for recoverable exceptions.
+Downloads can use up to four total attempts.
+Byte or time limits can stop retries earlier.
+Do not claim four attempts when a saved limit stops them.
+Other recoverable candidate exceptions use a persistent limit of three retries before the engine skips that video.
+Continuation does not reset this retry count. Exhausted videos do not block the remaining candidates.
+Manual cancellation preserves the candidate checkpoint and does not consume a retry.
+Existing request, media, image, and model-call limits can stop retries earlier.
+Retries use offered routes and resume partial files.
+If a server rejects resume, the replacement transfer counts against the same byte allowance.
+Already completed streams do not count again when a later stream requires a retry.
+Permanent media errors, such as HTTP 404, make that candidate unavailable without blocking other assessments.
+Interrupted fragment downloads close their owned files before a retry starts.
+The final rename retries in place without downloading completed fragments again.
+A temporary file-in-use error receives at most three retries within the same allowance.
+If the lock remains, the engine skips that video and reports the failure after the lists.
+Permission or disk-space failures stop shared work so the user can repair local storage.
+A transfer with an alternative route receives a share of the remaining transfer time.
+The engine does not interrupt that share when recent progress predicts completion within the candidate allowance.
+A single-route transfer has no artificial time slice. Socket and cumulative time limits still apply.
+Media transfer reserves up to thirty seconds for duration checks and frame extraction.
 Retries share the existing time and byte allowance.
+A size limit, cancellation, or access challenge stops retries early.
 The engine does not retry access challenges.
+A candidate that exhausts its download size, time, or CDN attempts becomes unavailable for that round.
+The round can finish if enough other videos pass quality checks.
+This failure does not assign a quality score or a negative preference rating.
+The engine removes unusable partial media and retains diagnostics, captions, and cumulative byte charges.
+Platform access failures and shared run limits still pause work.
+Parallel workers wait for existing reservations before assigning a reduced byte allowance to another video.
 
 ### Failure recovery and progress
 
 Candidate failures do not cancel unrelated inspections.
-An invalid scorecard can receive one repair attempt within the saved allowances.
+An invalid scorecard can receive a repair within the same candidate retry limit and saved model-call allowance.
 The repair prompt includes the validation failure.
 Exhausted per-video attempts produce an unavailable result instead of an endless retry.
 Access challenges pause the affected platform.
 Model authentication failures or provider limits stop shared model work.
 The report preserves the first failure and separate later issues.
+The final response shows all requested recommendation lists before its candidate-failure summary.
+The summary lists skipped videos, recovered downloads, actual attempt counts, and brief reasons.
+The structured report exposes these records as `candidate_failures`.
+Retry counts respect separate transfer sequences across continuation.
+The report retains recovered downloads from the current round after continuation.
+Reused evidence from an earlier round does not create a new recovery report.
 
 Preparation time starts after a preparation slot becomes available.
 Its stage allowance is at most 300 seconds.
 Model assessment time starts after a model slot becomes available.
 Its call allowance is at most 180 seconds.
-The parent deadline includes queue waits and all work.
-Continuation preserves that deadline and all cumulative allowances.
+An optional parent deadline includes queue waits and all work.
+Without an explicit total allowance, only individual operations have timeouts.
+Continuation preserves an explicit deadline and all cumulative request, media, and model allowances.
 
 YouTube metadata retrieval uses one active watch-page request and starts at least one second apart.
 Bilibili metadata retrieval uses at most two concurrent requests and starts at least one second apart.
 Workers retain server-issued session cookies in memory.
-Pacing waits consume the saved time allowance.
+Pacing waits count toward an optional saved time allowance.
 The [yt-dlp request-rate guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#common-youtube-errors) recommends longer waits between downloads when rate limits occur.
 YouTube can still require sign-in or verification.
 Such a response pauses the platform without an automatic retry or a negative video rating.
-Review the reported video in your system browser and continue explicitly after access is restored.
+Review the reported video in your system browser.
+Continue only after you restore access.
 Browser sign-in is not imported automatically. Increasing the request cap does not repair an access challenge.
 They share one request counter and retain the existing access checks.
 Video downloads omit audio unless transcription requires it.
-Exact selected-stream sizes support a check before transfer.
+Exact or estimated selected-stream sizes support a check before transfer.
 Transfer checkpoints record observed bytes and bound unreported bytes after interruption.
 Reports identify conservative byte charges as upper bounds.
 

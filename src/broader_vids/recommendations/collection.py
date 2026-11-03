@@ -1,12 +1,9 @@
-from broader_vids.evidence.media import EvidencePending
 from broader_vids.http import BudgetExhausted, PublicHttp
-from broader_vids.preferences import video_states
-from broader_vids.recommendations.engagement import collect_snapshot, metadata_fresh
-from broader_vids.recommendations.metadata import metadata_session, SnapshotPool
-from broader_vids.recommendations.screening import rejection_reason
-from broader_vids.creators import enrich
+from broader_vids.recommendations.engagement import collect_snapshot
+from broader_vids.recommendations.screening import CURRENT_SCREENING_POLICY
+from broader_vids.recommendations.collection_policy import default_collection_policy
 from broader_vids.storage import utc_now
-import json
+from broader_vids.time_budget import report_limit
 import hashlib
 
 
@@ -94,7 +91,9 @@ def refill_candidates(
             **run,
             "settings": {
                 **run["settings"],
-                "max_seconds": run["elapsed"] + remaining(),
+                "max_seconds": report_limit(
+                    {"max_seconds": run["elapsed"] + remaining()}
+                ),
             },
         },
         anonymous_session=True,
@@ -163,130 +162,20 @@ def collect_eligible_buffer(
     snapshot_collector=collect_snapshot,
 ):
     if (
-        run["settings"].get("collection_policy")
-        and run["settings"].get("screening_policy_version", 2) >= 3
+        run["settings"].get("screening_policy_version") != CURRENT_SCREENING_POLICY
+        or run["settings"].get("collection_policy") != default_collection_policy()
     ):
-        from broader_vids.recommendations.collection_batches import collect_batches
-
-        return collect_batches(
-            store,
-            run,
-            http,
-            remaining,
-            save,
-            refill=refill,
-            snapshot_collector=snapshot_collector,
+        raise ValueError(
+            "This recommendation uses unsupported collection settings; start a new round."
         )
-    state, settings = run["state"], run["settings"]
-    state.setdefault("candidate_pool", list(state["buffer"]))
-    state.setdefault("pool_index", 0)
-    state.setdefault("screening_rejections", {})
-    states = video_states(store, run["platform"])
-    accepted = {item["canonical_id"] for item in state["buffer"]}
+    from broader_vids.recommendations.collection_batches import collect_batches
 
-    def needs_snapshot(item):
-        if item["canonical_id"] in accepted or rejection_reason(
-            item,
-            states,
-            settings["profile"],
-            state.get("creator_rules"),
-            require_metrics=False,
-        ):
-            return False
-        row = store.db.execute(
-            "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
-            (item["canonical_id"],),
-        ).fetchone()
-        return not row or not metadata_fresh(json.loads(row[0]), run["platform"])
-
-    authenticated = settings["use_browser"] and run["platform"] == "bilibili"
-    with (
-        metadata_session(store, http, authenticated),
-        SnapshotPool(store, http, remaining, snapshot_collector) as snapshots,
-    ):
-        while len(state["buffer"]) < 100:
-            if remaining() <= 0:
-                raise BudgetExhausted(
-                    "Candidate collection time budget exhausted before 100 eligible videos."
-                )
-            if state["pool_index"] >= len(state["candidate_pool"]):
-                options = (
-                    {
-                        "cancelled": getattr(http, "cancelled", None),
-                        "request_gate": getattr(http, "request_gate", None),
-                        "visitor_session": http
-                        if run["platform"] == "youtube"
-                        else None,
-                    }
-                    if refill is refill_candidates
-                    else {}
-                )
-                if refill(store, run, remaining, save, **options):
-                    continue
-                raise EvidencePending(
-                    f"Only {len(state['buffer'])}/100 videos passed duration and community-response floors; discovery sources are exhausted within the current limits."
-                )
-            item = dict(state["candidate_pool"][state["pool_index"]])
-            snapshots.prefetch(
-                state["candidate_pool"][state["pool_index"] :],
-                needs_snapshot,
-                min(2, 100 - len(state["buffer"])),
-            )
-            key = item["canonical_id"]
-            if key in accepted:
-                state["pool_index"] += 1
-                continue
-            reason = rejection_reason(
-                item,
-                states,
-                settings["profile"],
-                state.get("creator_rules"),
-                require_metrics=False,
-            )
-            if reason is None:
-                cached = store.db.execute(
-                    "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
-                    (key,),
-                ).fetchone()
-                snapshot = json.loads(cached[0]) if cached else None
-                if not snapshot or not metadata_fresh(snapshot, run["platform"]):
-                    snapshot = snapshots.get(item, save)
-                    with store.db:
-                        store.db.execute(
-                            "INSERT OR REPLACE INTO engagement_snapshots VALUES(?,?)",
-                            (key, json.dumps(snapshot)),
-                        )
-                snapshot = snapshot or {}
-                item["engagement"] = {**item.get("engagement", {}), **snapshot}
-                enrich(item, item["engagement"])
-                if (
-                    run["platform"] == "youtube"
-                    and snapshot.get("duration_seconds") is not None
-                ):
-                    item["duration_seconds"] = snapshot["duration_seconds"]
-                elif run["platform"] == "bilibili":
-                    part = next(
-                        (
-                            p
-                            for p in snapshot.get("pages", [])
-                            if p["page"] == item.get("part_index", 1)
-                        ),
-                        None,
-                    )
-                    if part:
-                        item.update(
-                            duration_seconds=part["duration"],
-                            duration_scope="resolved_part",
-                            cid=part["cid"],
-                        )
-                reason = rejection_reason(
-                    item, states, settings["profile"], state.get("creator_rules")
-                )
-            state["pool_index"] += 1
-            if reason:
-                state["screening_rejections"][key] = reason
-            else:
-                state["buffer"].append(item)
-                accepted.add(key)
-                state["enrichment_index"] = len(state["buffer"])
-            save()
+    return collect_batches(
+        store,
+        run,
+        http,
+        remaining,
+        save,
+        refill=refill,
+        snapshot_collector=snapshot_collector,
+    )

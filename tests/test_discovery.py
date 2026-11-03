@@ -24,7 +24,6 @@ from broader_vids.discovery.sources import (
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
 from broader_vids.discovery.state import pinia_state
 from broader_vids.discovery.queries import load_bank, query_plan
-from broader_vids.readiness import release_gate
 from broader_vids.storage import Store
 
 
@@ -179,8 +178,6 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(target.read_text(encoding="utf-8"))["run_id"], identifier
             )
-        gate = release_gate(self.store)
-        self.assertFalse(gate["phase_one_complete"])
         for platform in ("youtube", "bilibili"):
             for _ in range(2):
                 execute_discovery(
@@ -193,16 +190,29 @@ class DiscoveryTests(unittest.TestCase):
                     ),
                     FixtureHttp,
                 )
-        gate = release_gate(self.store)
-        self.assertTrue(gate["phase_one_complete"])
-        self.assertEqual(gate["current_phase"], 2)
-        self.assertFalse(gate["ready"])
         self.assertGreater(
             self.store.db.execute("SELECT COUNT(*) FROM discovery_registry").fetchone()[
                 0
             ],
             100,
         )
+
+    def test_old_exploration_policy_is_rejected_without_checkpoint_mutation(self):
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        run = self.store.get(identifier)
+        run["state"]["exploration"] = {"policy_version": 1}
+        self.store.save(run)
+        before = self.store.get(identifier)
+        with self.assertRaisesRegex(ValueError, "unsupported exploration policy"):
+            execute_discovery(self.store, identifier, FixtureHttp)
+        after = self.store.get(identifier)
+        self.assertEqual(after["state"], before["state"])
+        self.assertEqual(after["updated_at"], before["updated_at"])
 
     def test_forged_receipts_cannot_pass_discovery(self):
         identifier = create_discovery(

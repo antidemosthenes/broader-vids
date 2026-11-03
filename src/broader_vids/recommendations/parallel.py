@@ -8,8 +8,13 @@ import json
 
 from broader_vids.evidence.assessment import assess_evidence
 from broader_vids.evidence.browser import bilibili_browser, browser_cookie_jar
-from broader_vids.evidence.media import EvidencePending, public_error
-from broader_vids.evidence.failures import failure_details, save_failure
+from broader_vids.evidence.media import EvidencePending, public_error, MAX_VIDEO_RETRIES
+from broader_vids.evidence.failures import (
+    failure_details,
+    save_failure,
+    terminal_media_failure,
+)
+from broader_vids.evidence.retention import discard_failed_media
 from broader_vids.evidence.service import create_evidence, prepare_evidence
 from broader_vids.evidence.preparation_worker import (
     prepare_bounded,
@@ -17,8 +22,14 @@ from broader_vids.evidence.preparation_worker import (
 )
 from broader_vids.http import BudgetExhausted
 from broader_vids.recommendations.originality import provenance, assessment_context
-from broader_vids.recommendations.quality import cached_quality
+from broader_vids.recommendations.quality import cached_quality, unscored_quality
+from broader_vids.recommendations.retries import (
+    retry_candidate,
+    begin_candidate_attempt,
+    release_cancelled_attempt,
+)
 from broader_vids.storage import Store
+from broader_vids.time_budget import effective_limit, report_limit
 from broader_vids.creators import excluded as excluded_creator
 
 
@@ -50,20 +61,27 @@ class Runtime:
 
     @contextmanager
     def slot(self, semaphore, remaining, cancelled):
-        acquired = False
-        try:
-            while not acquired:
-                if cancelled.is_set() or self.cancelled.is_set() or remaining() <= 0:
-                    raise EvidencePending(
-                        "Parallel work reached its deadline or checkpoint stop.",
-                        retryable=True,
-                    )
-                acquired = semaphore.acquire(timeout=min(0.25, remaining()))
-            if cancelled.is_set() or self.cancelled.is_set() or remaining() <= 0:
+        def check():
+            if cancelled.is_set() or self.cancelled.is_set():
                 raise EvidencePending(
                     "Parallel work was cancelled before entering its slot.",
                     retryable=True,
+                    category="cancelled",
                 )
+            if remaining() <= 0:
+                raise EvidencePending(
+                    "Parallel work reached its selected deadline.",
+                    retryable=True,
+                    scope="platform",
+                    category="budget",
+                )
+
+        acquired = False
+        try:
+            while not acquired:
+                check()
+                acquired = semaphore.acquire(timeout=min(0.25, remaining()))
+            check()
             yield
         finally:
             if acquired:
@@ -71,8 +89,13 @@ class Runtime:
 
 
 def process_candidate(root, work, settings, runtime, cookie_jar, cancelled):
-    deadline = work.get(
-        "parent_deadline", work.get("deadline", time.monotonic() + work["seconds"])
+    deadline = effective_limit(
+        {
+            "max_seconds": work.get(
+                "parent_deadline",
+                work.get("deadline", time.monotonic() + work["seconds"]),
+            )
+        }
     )
     store = Store(root)
 
@@ -146,7 +169,7 @@ def _process_owned(
             prepared = prepare_evidence(
                 store,
                 identifier,
-                max_seconds=max(0.01, remaining()),
+                max_seconds=max(0.01, min(300, remaining())),
                 lease_owner=owner,
             )
         else:
@@ -206,20 +229,9 @@ def _process_owned(
         if observation:
             return observation
         failed = store.get(identifier)
-        if "augmented" in failed["state"]["assessments"]:
-            reason = "The supplied evidence does not support a numeric quality score."
-            return {
-                "status": "unavailable",
-                "evidence_run": identifier,
-                "reason": reason,
-                "failure": {
-                    "stage": "assessment",
-                    "scope": "candidate",
-                    "category": "insufficient_evidence",
-                    "reason": reason,
-                    "retryable": False,
-                },
-            }
+        unscored = unscored_quality(failed)
+        if unscored:
+            return unscored
         failure = failed["state"].get("failure") or failure_details(
             EvidencePending(
                 failed["reason"],
@@ -229,8 +241,11 @@ def _process_owned(
         )
         return {
             "status": "pending"
-            if failed["state"].get("retryable_failure")
-            or failure["scope"] != "candidate"
+            if not terminal_media_failure(failure)
+            and (
+                failed["state"].get("retryable_failure")
+                or failure["scope"] != "candidate"
+            )
             else "unavailable",
             "evidence_run": identifier,
             "reason": failed["reason"]
@@ -244,13 +259,14 @@ def _process_owned(
             failure = save_failure(
                 failed, error, failed["state"].get("stage", "worker")
             )
-        failed["state"]["retryable_failure"] = (
-            failure.get("category") != "attempt_limit"
-        )
+        failed["state"]["retryable_failure"] = failure.get(
+            "category"
+        ) != "attempt_limit" and failure.get("retryable", True)
         failed.update(status="pending", reason=failure["reason"])
         store.save(failed)
+        discard_failed_media(store, identifier, lease_owner=owner)
         return {
-            "status": "pending",
+            "status": "unavailable" if terminal_media_failure(failure) else "pending",
             "evidence_run": identifier,
             "reason": failure["reason"],
             "failure": failure,
@@ -270,8 +286,10 @@ def assess_parallel(
     runtime = runtime or Runtime(models=settings.get("workers", 4))
     cancelled = threading.Event()
     inflight = state.setdefault("inflight", {})
+    assessment_jobs = state.setdefault("assessment_jobs", {})
 
     def reconcile(key, work):
+        assessment_jobs[key] = work["evidence_run"]
         child = store.get(work["evidence_run"])
         if work.get("accounting_version") == 2:
             state["model_calls"] += sum(
@@ -387,9 +405,20 @@ def assess_parallel(
             if observation:
                 break
         if observation:
+            previous = state["evidence"].get(key, {})
             state["evidence"][key] = observation
             hits = state.setdefault("cache_hit_ids", [])
-            if key not in hits:
+            owned = assessment_jobs.get(key) == observation["evidence_run"]
+            if owned and key in hits:
+                hits.remove(key)
+            elif (
+                not owned
+                and key not in hits
+                and not (
+                    previous.get("quality") is not None
+                    and previous.get("evidence_run") == observation["evidence_run"]
+                )
+            ):
                 hits.append(key)
         else:
             if state["evidence"].get(key, {}).get("quality") is not None:
@@ -424,7 +453,7 @@ def assess_parallel(
         )
     jar = None
     futures, stop_reason = {}, None
-    repairs = set()
+    jobs = {}
     last_heartbeat = time.monotonic()
     with ThreadPoolExecutor(
         max_workers=settings.get("workers", 4),
@@ -454,21 +483,32 @@ def assess_parallel(
                     )
                     if remaining() <= 20:
                         if not futures:
-                            stop_reason = "Parallel evidence reached its model, media or 30-minute time allowance."
+                            stop_reason = "Parallel evidence reached its requested time allowance."
                         break
                     item, context = queue[0]
                     key = item["canonical_id"]
+                    if (
+                        state.get("candidate_attempt_counts", {}).get(key, 0)
+                        >= 1 + MAX_VIDEO_RETRIES
+                    ):
+                        queue.pop(0)
+                        begin_candidate_attempt(state, key)
+                        progress()
+                        continue
                     allowance = min(128 * 1024 * 1024, max(0, bytes_left))
-                    identifier = create_evidence(
-                        store,
-                        item["url"],
-                        use_browser=settings["use_browser"],
-                        max_mib=128,
-                        max_seconds=min(480, remaining() - 20),
-                        originality_context=context,
-                        reasoning_effort=settings.get("reasoning_effort"),
-                        assessment_model=settings.get("assessment_model"),
-                    )
+                    identifier = jobs.get(key)
+                    if identifier is None:
+                        identifier = create_evidence(
+                            store,
+                            item["url"],
+                            use_browser=settings["use_browser"],
+                            max_mib=128,
+                            max_seconds=min(480, remaining() - 20),
+                            originality_context=context,
+                            reasoning_effort=settings.get("reasoning_effort"),
+                            assessment_model=settings.get("assessment_model"),
+                        )
+                        jobs[key] = identifier
                     child = store.get(identifier)
                     if (
                         child["state"]["model_calls"]
@@ -493,6 +533,8 @@ def assess_parallel(
                     model_reservation = int(
                         "augmented" not in child["state"]["assessments"]
                     )
+                    if needs_download and futures and bytes_left < 128 * 1024 * 1024:
+                        break
                     if calls_left < model_reservation or (
                         needs_download and bytes_left < 1024 * 1024
                     ):
@@ -520,6 +562,9 @@ def assess_parallel(
                     if not needs_download:
                         allowance = 0
                     queue.pop(0)
+                    if not begin_candidate_attempt(state, key):
+                        progress()
+                        continue
                     work = {
                         "accounting_version": 2,
                         "recommendation_run": run["id"],
@@ -529,7 +574,9 @@ def assess_parallel(
                         "bytes": allowance,
                         "seconds": min(300, remaining() - 20),
                         "deadline": time.monotonic() + min(300, remaining() - 20),
-                        "parent_deadline": time.monotonic() + remaining() - 15,
+                        "parent_deadline": report_limit(
+                            {"max_seconds": time.monotonic() + remaining() - 15}
+                        ),
                         "base_calls": child["state"]["model_calls"],
                         "base_bytes": child["state"]["resources"][
                             "media_download_bytes"
@@ -543,6 +590,7 @@ def assess_parallel(
                         ],
                     }
                     inflight[key] = work
+                    assessment_jobs[key] = identifier
                     save()
                     futures[
                         executor.submit(
@@ -553,9 +601,10 @@ def assess_parallel(
                     break
                 done, _ = wait(futures, timeout=0.25, return_when=FIRST_COMPLETED)
                 if remaining() <= 15:
-                    stop_reason = (
-                        stop_reason
-                        or "The shared deadline was reached; unfinished work is checkpointed."
+                    stop_reason = stop_reason or (
+                        "Shared work was cancelled; unfinished work is checkpointed."
+                        if runtime.cancelled.is_set() or cancelled.is_set()
+                        else "The shared deadline was reached; unfinished work is checkpointed."
                     )
                     cancelled.set()
                 for future in done:
@@ -568,6 +617,7 @@ def assess_parallel(
                             "status": "pending",
                             "evidence_run": work["evidence_run"],
                             "reason": public_error(error),
+                            "failure": failure_details(error, "worker"),
                         }
                     reconcile(key, work)
                     state["evidence"][key] = observation
@@ -576,6 +626,9 @@ def assess_parallel(
                             EvidencePending(observation["reason"], retryable=True),
                             "worker",
                         )
+                        observation["failure"] = failure
+                        if failure["category"] == "cancelled":
+                            release_cancelled_attempt(state, key)
                         issue = {
                             "canonical_id": key,
                             "evidence_run": work["evidence_run"],
@@ -601,11 +654,7 @@ def assess_parallel(
                                     cancelled.set()
                                 if failure["scope"] == "run":
                                     runtime.cancelled.set()
-                            elif (
-                                failure["category"] == "validation"
-                                and key not in repairs
-                            ):
-                                repairs.add(key)
+                            elif retry_candidate(state, key, observation):
                                 item = next(
                                     i
                                     for i in state["shortlist"]

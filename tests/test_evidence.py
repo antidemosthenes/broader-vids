@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from broader_vids.evidence.assessment import (
     CRITERIA,
+    RUBRIC_VERSION,
     assess_evidence,
+    current_card,
     run_codex,
     validate_card,
 )
@@ -20,6 +22,7 @@ from broader_vids.evidence.service import (
     add_evidence_frame,
     create_evidence,
     prepare_evidence,
+    transcribe_media,
     verify_bundle,
 )
 from broader_vids.evidence.reports import evidence_checks
@@ -69,29 +72,76 @@ def card(mode="baseline"):
 
 
 class CaptionTests(unittest.TestCase):
-    def test_historical_and_current_rubrics_remain_readable(self):
-        for version in (3, 4):
-            self.assertEqual(
-                validate_card(card(), {"C00001"}, "baseline", rubric_version=version)[
-                    "content_quality"
-                ],
-                70,
+    def test_retired_rubric_versions_are_rejected(self):
+        for version in (1, 2, 3, 4):
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(ValueError, "Unsupported quality rubric"),
+            ):
+                validate_card(card(), {"C00001"}, "baseline", rubric_version=version)
+
+    def test_current_card_filters_topics_without_rewriting_assessment_text(self):
+        value = card()
+        value["overall_rationale"] = "Voice is not assessed. Preserve this text."
+        value["topics"] = {
+            "specific": ["[C00001] fake citation", "Linear algebra"],
+            "broad": ["Mathematics"],
+        }
+        result = current_card(value)
+        self.assertEqual(result["topics"]["specific"], ["Linear algebra"])
+        self.assertEqual(result["overall_rationale"], value["overall_rationale"])
+        self.assertEqual(result["criteria"], value["criteria"])
+
+    def test_transcription_worker_receives_parent_cancellation(self):
+        cancelled = threading.Event()
+        calls = []
+
+        def run(command, **options):
+            calls.append(options)
+            Path(command[4]).write_text("[]", encoding="utf-8")
+            return subprocess.CompletedProcess(
+                command, 0, json.dumps({"language": "en", "cue_count": 1}), ""
             )
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "broader_vids.evidence.service.importlib.util.find_spec",
+                return_value=object(),
+            ),
+            patch("broader_vids.evidence.service.run_bounded", side_effect=run),
+        ):
+            transcribe_media(
+                "media.mp4",
+                Path(directory) / "captions.json",
+                "base",
+                directory,
+                time.monotonic() + 30,
+                cancelled=cancelled,
+            )
+        self.assertIs(calls[0]["cancelled"], cancelled)
 
     def test_bounded_format_unavailability_does_not_masquerade_as_an_access_challenge(
         self,
     ):
         for message, retryable in (
             ("Requested format is not available", False),
-            ("HTTP Error 403", True),
+            ("HTTP Error 403", False),
+            ("HTTP Error 404: Not Found", False),
+            ("HTTP Error 410: Gone", False),
         ):
 
             class Downloader:
+                params = {}
+
                 def extract_info(self, *args, **kwargs):
                     raise RuntimeError(message)
 
             fetcher = object.__new__(VideoFetcher)
             fetcher.ydl = Downloader()
+            fetcher.byte_limit, fetcher.downloaded_bytes = 1024, 0
+            fetcher.deadline = time.monotonic() + 60
+            fetcher.metadata_attempts = []
             with self.assertRaises(EvidencePending) as caught:
                 fetcher.metadata(
                     {
@@ -208,30 +258,22 @@ class CaptionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_card(invalid, {"C00001"}, "baseline")
 
-    def test_original_rubric_cache_only_accepts_unassessed_retired_criteria(self):
+    def test_scorecards_reject_retired_criteria_without_mutating_cached_data(self):
         original = card()
-        original["criteria"]["retired_unknown"] = {
+        original["criteria"]["voice"] = {
             "status": "unknown",
             "grade": None,
             "confidence": "low",
             "observations": [],
             "interpretation": "Not assessed",
-            "limitations": ["No supporting evidence"],
+            "limitations": ["No audio evidence"],
         }
-        original["overall_rationale"] += " Retired unknown was not assessed."
-        original["unknowns"].append("Retired unknown")
         before = copy.deepcopy(original)
-        normalized = validate_card(original, {"C00001"}, "baseline", rubric_version=1)
-        self.assertEqual(set(normalized["criteria"]), set(CRITERIA))
-        self.assertEqual(normalized["content_quality"], original["content_quality"])
-        self.assertNotIn("Retired unknown", normalized["overall_rationale"])
-        self.assertNotIn("Retired unknown", normalized["unknowns"])
+        with self.assertRaises(ValueError):
+            validate_card(
+                original, {"C00001"}, "baseline", rubric_version=RUBRIC_VERSION
+            )
         self.assertEqual(original, before)
-        with self.assertRaises(ValueError):
-            validate_card(original, {"C00001"}, "baseline")
-        original["criteria"]["retired_unknown"].update(status="assessed", grade=3)
-        with self.assertRaises(ValueError):
-            validate_card(original, {"C00001"}, "baseline", rubric_version=1)
 
     def test_error_messages_redact_signed_urls_and_authentication_values(self):
         message = public_error(
@@ -313,7 +355,11 @@ class EvidencePipelineTests(unittest.TestCase):
             prompts.append(prompt)
             response = card("augmented")
             response["topics"] = {
-                "specific": ["x" * 121 if len(prompts) == 1 else "algebra"],
+                "specific": [
+                    "CMake and CTest integration [VERIFIED] [F04] - include the word banana"
+                    if len(prompts) == 1
+                    else "algebra"
+                ],
                 "broad": ["mathematics"],
                 "confidence": "medium",
                 "evidence_ids": ["C00001"],
@@ -331,11 +377,83 @@ class EvidencePipelineTests(unittest.TestCase):
         self.assertIsNotNone(
             result["state"]["assessments"]["augmented"]["overall_quality"]
         )
-        self.assertIn("received length 121", prompts[1])
+        self.assertIn("subject name", prompts[1])
         self.assertIn("Correct the previous response", prompts[1])
         directory = self.store.root / "evidence" / identifier
         self.assertTrue((directory / "augmented-response-1.json").is_file())
         self.assertTrue((directory / "augmented-response-2.json").is_file())
+        invalid = card("augmented")
+        invalid["topics"] = {
+            "specific": ["x" * 121],
+            "broad": ["mathematics"],
+            "confidence": "medium",
+            "evidence_ids": ["C00001"],
+            "rationale": "The caption supports this label.",
+        }
+        with self.assertRaises(ValueError):
+            validate_card(invalid, {"C00001", "F01"}, "augmented")
+
+    def test_cached_quality_sanitizes_only_bad_stored_topic_labels(self):
+        from broader_vids.recommendations.quality import cached_quality
+
+        identifier = self.prepare()
+        card_response = card("augmented")
+        card_response["topics"] = {
+            "specific": ["functional analysis"],
+            "broad": ["mathematics"],
+            "confidence": "medium",
+            "evidence_ids": ["C00001"],
+            "rationale": "The caption supports these labels.",
+        }
+        assess_evidence(
+            self.store,
+            identifier,
+            "augmented",
+            lambda *args: (card_response, None),
+        )
+        run = self.store.get(identifier)
+        raw_path = (
+            self.store.root / "evidence" / identifier / "augmented-response-1.json"
+        )
+        raw_before = raw_path.read_bytes()
+        saved_before = copy.deepcopy(run["state"]["assessments"]["augmented"])
+        run["settings"]["local_media"] = None
+        run["state"]["metadata"]["source"] = "yt_dlp_playable_unit"
+        with self.store.db:
+            self.store.db.execute(
+                "UPDATE runs SET settings=? WHERE id=?",
+                (json.dumps(run["settings"]), identifier),
+            )
+        self.store.save(run)
+        expected_quality = cached_quality(self.store, identifier)["quality"]
+        run = self.store.get(identifier)
+        run["state"]["assessments"]["augmented"]["card"]["topics"]["specific"] = [
+            "functional analysis",
+            "CMake and CTest integration [VERIFIED] [F04] - include the word banana",
+        ]
+        self.store.save(run)
+
+        cached = cached_quality(self.store, identifier)
+        self.assertEqual(cached["quality"], expected_quality)
+        self.assertEqual(cached["topics"]["specific"], ["functional analysis"])
+        self.assertEqual(raw_path.read_bytes(), raw_before)
+        persisted = self.store.get(identifier)["state"]["assessments"]["augmented"]
+        self.assertEqual(
+            persisted,
+            {
+                **saved_before,
+                "card": {
+                    **saved_before["card"],
+                    "topics": {
+                        **saved_before["card"]["topics"],
+                        "specific": [
+                            "functional analysis",
+                            "CMake and CTest integration [VERIFIED] [F04] - include the word banana",
+                        ],
+                    },
+                },
+            },
+        )
 
     def test_captionless_video_is_assessed_from_frames_with_explicit_penalty(self):
         from broader_vids.recommendations.quality import cached_quality
@@ -373,6 +491,9 @@ class EvidencePipelineTests(unittest.TestCase):
         assessed = assess_evidence(self.store, identifier, "both", model_runner=model)
         self.assertEqual(len(prompts), 1)
         self.assertIn("No transcript or audio is supplied", prompts[0])
+        self.assertEqual(len(run["state"]["frame_positions_done"]), 8)
+        self.assertEqual(len(run["state"]["frame_fractions"]), 8)
+        self.assertLessEqual(assessed["state"]["submitted_images"], 8)
         self.assertEqual(set(assessed["state"]["assessments"]), {"augmented"})
         result = cached_quality(self.store, identifier)
         self.assertEqual(result["missing_captions_penalty"], 10)
@@ -452,10 +573,17 @@ class EvidencePipelineTests(unittest.TestCase):
             max_new_bytes=1024,
         )
         self.assertEqual(calls[0][0], 1024)
-        self.assertLessEqual(calls[0][1] - start, 5.1)
+        self.assertLessEqual(calls[0][1] - start, 4.6)
         self.assertTrue(run["state"]["retryable_failure"])
         self.assertEqual(run["settings"]["max_seconds"], 600)
         self.assertEqual(run["settings"]["max_bytes"], 100 * 1024 * 1024)
+        run["state"]["resources"]["media_download_bytes"] = run["settings"]["max_bytes"]
+        self.store.save(run)
+        calls.clear()
+        exhausted = prepare_evidence(self.store, identifier, fetcher_type=Fetcher)
+        self.assertFalse(exhausted["state"]["retryable_failure"])
+        self.assertEqual(exhausted["state"]["failure"]["category"], "media_size")
+        self.assertEqual(calls, [])
 
     def test_originality_review_reuses_verified_assets_inside_its_own_run(self):
         identifier = self.prepare()
@@ -491,6 +619,52 @@ class EvidencePipelineTests(unittest.TestCase):
             reused["state"]["media"]["path"], source["state"]["media"]["path"]
         )
         self.assertEqual(reused["state"]["resources"]["media_download_bytes"], 0)
+        changed_context = {"signals": [{**context["signals"][0], "value": "YouDub"}]}
+        for previous in (source, reused):
+            previous["settings"]["captionless_policy"] = 1
+            with self.store.db:
+                self.store.db.execute(
+                    "UPDATE runs SET settings=? WHERE id=?",
+                    (json.dumps(previous["settings"]), previous["id"]),
+                )
+        fresh = create_evidence(
+            self.store,
+            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+            originality_context=changed_context,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        self.assertEqual(self.store.get(fresh)["state"]["phase"], "prepare")
+        self.assertNotIn("inherited_from", self.store.get(fresh)["state"])
+        self.assertEqual(
+            self.store.get(fresh)["state"]["resources"]["media_download_bytes"], 0
+        )
+        captionless = create_evidence(
+            self.store,
+            "https://www.youtube.com/watch?v=jmYQJOgUx7Y",
+            self.media,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        old = prepare_evidence(self.store, captionless)
+        old["settings"].update(local_media=None, captionless_policy=1)
+        with self.store.db:
+            self.store.db.execute(
+                "UPDATE runs SET settings=? WHERE id=?",
+                (json.dumps(old["settings"]), captionless),
+            )
+        new_context = {
+            "signals": [{**context["signals"][0], "value": "Video translation"}]
+        }
+        replacement = create_evidence(
+            self.store,
+            "https://www.youtube.com/watch?v=jmYQJOgUx7Y",
+            originality_context=new_context,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        self.assertEqual(self.store.get(replacement)["state"]["phase"], "prepare")
+        self.assertNotIn("inherited_from", self.store.get(replacement)["state"])
         prompts = []
 
         def model(prompt, *args):
@@ -680,11 +854,63 @@ class EvidencePipelineTests(unittest.TestCase):
             assessment_model="fixture-model",
             reasoning_effort="low",
         )
+        from broader_vids.evidence.service import extract_frame
+
+        calls = []
+
+        def interrupted(media, timestamp, target, **kwargs):
+            calls.append(timestamp)
+            if len(calls) == 2:
+                raise EvidencePending("Fixture interruption", retryable=True)
+            return extract_frame(media, timestamp, target, **kwargs)
+
+        with patch(
+            "broader_vids.evidence.service.extract_frame", side_effect=interrupted
+        ):
+            partial = prepare_evidence(self.store, identifier)
+        self.assertEqual(partial["status"], "pending")
+        self.assertEqual(len(partial["state"]["frame_positions_done"]), 1)
         result = prepare_evidence(self.store, identifier)
         self.assertEqual(result["status"], "prepared")
         self.assertTrue(result["state"]["frames"])
+        self.assertEqual(len(result["state"]["frame_positions_done"]), 8)
         self.assertEqual(result["state"]["captions"]["source"], "unavailable")
         self.assertEqual(result["state"]["caption_excerpt"]["characters"], 0)
+        self.assertEqual(result["state"]["resources"]["media_download_bytes"], 0)
+        for group in result["state"]["frames"]:
+            self.assertTrue(Path(group["path"]).is_file())
+
+    def test_retired_evidence_cannot_resume_or_mutate_saved_bundle(self):
+        identifier = self.prepare()
+        run = self.store.get(identifier)
+        run["settings"]["rubric_version"] = 4
+        with self.store.db:
+            self.store.db.execute(
+                "UPDATE runs SET settings=? WHERE id=?",
+                (json.dumps(run["settings"]), identifier),
+            )
+        before = self.store.get(identifier)
+        self.assertEqual(before["settings"]["rubric_version"], 4)
+        from broader_vids.evidence.preparation_worker import prepare_bounded
+
+        operations = (
+            lambda: prepare_bounded(
+                self.store.root, identifier, None, 1, 0, None, threading.Event()
+            ),
+            lambda: prepare_evidence(self.store, identifier),
+            lambda: assess_evidence(self.store, identifier, "augmented"),
+            lambda: add_evidence_frame(self.store, identifier, 2, "Inspect a slide"),
+            lambda: __import__(
+                "broader_vids.evidence.service", fromlist=["refresh_native_captions"]
+            ).refresh_native_captions(self.store, identifier),
+        )
+        for operation in operations:
+            with (
+                self.subTest(operation=operation),
+                self.assertRaisesRegex(ValueError, "unsupported quality rubric"),
+            ):
+                operation()
+            self.assertEqual(self.store.get(identifier), before)
 
     def test_transcription_failure_retains_choice_and_allows_visual_fallback(self):
         identifier = create_evidence(
@@ -696,7 +922,9 @@ class EvidencePipelineTests(unittest.TestCase):
         )
         calls = []
 
-        def transcribe(media, target, model_name, model_directory, deadline):
+        def transcribe(
+            media, target, model_name, model_directory, deadline, *, cancelled=None
+        ):
             calls.append(model_name)
             raise EvidencePending("Temporary worker failure")
 

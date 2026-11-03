@@ -8,6 +8,7 @@ import time
 import uuid
 
 from broader_vids.onboarding import status as onboarding_status, PLATFORMS
+from broader_vids.time_budget import effective_limit
 from broader_vids.preferences import get_profile
 from broader_vids.processes import run_bounded
 from broader_vids.worker_context import resolve_worker_settings
@@ -138,7 +139,7 @@ def preflight(
             "Use the setup skill to select platforms and complete onboarding."
         )
         return finish("setup_required")
-    if not math.isfinite(max_seconds) or max_seconds <= 0:
+    if max_seconds is not None and (not math.isfinite(max_seconds) or max_seconds <= 0):
         report["checks"]["time_allowance"] = {
             "status": "unusable",
             "remedy": "The saved allowance is exhausted. Start a new round without resetting the existing round.",
@@ -180,7 +181,9 @@ def preflight(
             "status": "unverified",
             "remedy": str(error),
         }
-    remaining = min(30, max_seconds) - (time.monotonic() - started)
+    remaining = min(30, effective_limit({"max_seconds": max_seconds})) - (
+        time.monotonic() - started
+    )
     if remaining > 0:
         automated = external_checks(store.root, platform, asr=asr, timeout=remaining)
         report["checks"].update(automated["checks"])
@@ -208,6 +211,9 @@ def charge_elapsed(store, identifier, seconds):
 
     with store.lease(identifier):
         run = store.get(identifier)
+        previous = run["elapsed"]
         recover_elapsed(run)
-        run["elapsed"] = min(run["settings"]["max_seconds"], run["elapsed"] + seconds)
+        run["elapsed"] = min(
+            effective_limit(run["settings"]), max(run["elapsed"], previous + seconds)
+        )
         store.save(run, ("preflight", {"elapsed_seconds": seconds}))

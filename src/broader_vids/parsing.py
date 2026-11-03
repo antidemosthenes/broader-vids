@@ -5,13 +5,18 @@ from broader_vids.http import AccessPaused
 
 
 def walk(value):
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from walk(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from walk(child)
+    stack = [iter((value,))]
+    while stack:
+        try:
+            value = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            continue
+        if isinstance(value, dict):
+            yield value
+            stack.append(iter(value.values()))
+        elif isinstance(value, list):
+            stack.append(iter(value))
 
 
 def embedded_json(body, marker):
@@ -22,7 +27,7 @@ def embedded_json(body, marker):
         )
     try:
         value, _ = json.JSONDecoder().raw_decode(body[match.end() :].lstrip())
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         raise AccessPaused(
             "The embedded metadata object could not be decoded."
         ) from None

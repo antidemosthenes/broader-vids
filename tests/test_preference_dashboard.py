@@ -65,6 +65,10 @@ class PreferenceDashboardTests(unittest.TestCase):
 
     def test_export_import_preserve_lists_and_unsaved_rating_drafts(self):
         with dashboard_fixture() as (page, directory):
+            row = page.locator(".video-row").first
+            watched_id = row.get_attribute("data-id")
+            row.get_by_role("button", name="Mark watched", exact=True).click()
+            row.get_by_role("button", name="Watched ✓", exact=True).wait_for()
             inspector = open_first(page)
             topic = inspector.get_by_role("group", name="Specific topic", exact=True)
             topic.get_by_label("Topic", exact=True).fill("unsaved subject")
@@ -77,12 +81,12 @@ class PreferenceDashboardTests(unittest.TestCase):
                 ).click()
             file_text = Path(download.value.path()).read_text(encoding="utf-8")
             bundle = json.loads(file_text)
+            self.assertEqual(bundle["watched_video_ids"], [watched_id])
             page.wait_for_function(
                 "() => !document.getElementById('preferences-file').disabled"
             )
             for marker in (
                 "canonical_id",
-                "watched",
                 "recommendation",
                 "features",
                 "video_topics",
@@ -109,6 +113,13 @@ class PreferenceDashboardTests(unittest.TestCase):
             self.assertEqual(
                 dialog.locator("#preferences-filename").inner_text(), "preferences.json"
             )
+            self.assertIn(
+                "Watched video IDs", dialog.locator("#preferences-summary").inner_text()
+            )
+            self.assertIn(
+                "1 (1 YouTube, 0 Bilibili)",
+                dialog.locator("#preferences-summary").inner_text(),
+            )
             dialog.get_by_role("button", name="Import preferences", exact=True).click()
             dialog.locator("#preferences-status").filter(
                 has_text="Preferences imported."
@@ -128,6 +139,79 @@ class PreferenceDashboardTests(unittest.TestCase):
                 topic.get_by_role("radio", name="Low", exact=True).is_checked()
             )
             self.assertEqual(page.locator(".video-row").count(), 10)
+
+    def test_manual_creator_exclusion_roundtrip_is_visible_after_import(self):
+        with dashboard_fixture() as (page, directory):
+            inspector = open_first(page)
+            checkbox = inspector.get_by_role(
+                "checkbox", name="Exclude this creator from future rounds"
+            )
+            checkbox.check()
+            page.wait_for_function(
+                "() => { const input = document.querySelector('.creator-rule input'); return input.checked && !input.disabled; }"
+            )
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            preferences = page.get_by_role("region", name="Preferences", exact=True)
+            page.wait_for_function(
+                "() => !document.getElementById('preferences-file').disabled"
+            )
+            with page.expect_download() as download:
+                preferences.get_by_role(
+                    "button", name="Export preferences", exact=True
+                ).click()
+            file_text = Path(download.value.path()).read_text(encoding="utf-8")
+
+            page.get_by_role("button", name="Back", exact=True).click()
+            page.get_by_role("navigation").get_by_role(
+                "button", name="Exclusions", exact=True
+            ).click()
+            management = page.locator("#management")
+            management.get_by_role("button", name="Remove", exact=True).click()
+            page.get_by_text("No creator exclusions on YouTube.", exact=True).wait_for()
+
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            preferences = page.get_by_role("region", name="Preferences", exact=True)
+            preferences.get_by_label("Preference file", exact=True).set_input_files(
+                {
+                    "name": "preferences.json",
+                    "mimeType": "application/json",
+                    "buffer": file_text.encode(),
+                }
+            )
+            preferences.get_by_text(
+                "File is compatible. Check the summary before importing.", exact=True
+            ).wait_for()
+            summary = preferences.locator("#preferences-summary").inner_text()
+            self.assertIn("Manual creator exclusions", summary)
+            self.assertIn("1 (1 YouTube, 0 Bilibili)", summary)
+            preferences.get_by_role(
+                "button", name="Import preferences", exact=True
+            ).click()
+            preferences.locator("#preferences-status").filter(
+                has_text="Manual creator lists replaced with 1 exclusion"
+            ).wait_for()
+
+            page.get_by_role("button", name="Back", exact=True).click()
+            page.get_by_role("navigation").get_by_role(
+                "button", name="Exclusions", exact=True
+            ).click()
+            self.assertEqual(management.locator(".management-row").count(), 1)
+            creator_id = management.locator(".management-row .small-text").inner_text()
+            page.get_by_role("navigation").get_by_role(
+                "button", name="Recommendations", exact=True
+            ).click()
+            restored = open_first(page).get_by_role(
+                "checkbox", name="Exclude this creator from future rounds"
+            )
+            self.assertTrue(restored.is_checked())
+            with closing(Store(directory)) as store:
+                saved = store.db.execute(
+                    "SELECT source,creator_id FROM creator_exclusions"
+                ).fetchall()
+                self.assertEqual(
+                    [(row["source"], row["creator_id"]) for row in saved],
+                    [("manual", creator_id)],
+                )
 
     def test_imported_interests_are_editable_on_the_same_page_and_operations_are_serial(
         self,

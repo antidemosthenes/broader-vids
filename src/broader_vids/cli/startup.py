@@ -1,4 +1,8 @@
-import math
+from broader_vids.time_budget import (
+    effective_limit,
+    validate_optional_limit,
+    report_limit,
+)
 
 from broader_vids.onboarding import status as onboarding_status
 from broader_vids.preferences import platform_lock
@@ -30,6 +34,15 @@ def prepare_recommendation(store, args):
         if request_limit is not None:
             raise ValueError("The recommendation run is complete; start a new round.")
         return None
+    if resume:
+        if run["settings"]["kind"] == "recommendation_batch":
+            from broader_vids.recommendations.batch import _validate_current_batch
+
+            _validate_current_batch(store, run)
+        else:
+            from broader_vids.recommendations.service import _validate_current_round
+
+            _validate_current_round(run)
     platform = (
         run["platform"]
         if resume
@@ -67,11 +80,13 @@ def prepare_recommendation(store, args):
         model = settings.get("assessment_model") if resume else args.model
         effort = settings.get("reasoning_effort") if resume else args.effort
         asr = settings.get("asr_model") if resume else args.asr_model
-    limit = settings["max_seconds"] - run["elapsed"] if resume else args.max_seconds
-    if not resume and (not math.isfinite(limit) or not 0 < limit <= 1800):
-        raise ValueError(
-            "Use a time allowance greater than zero and no more than 1,800 seconds."
-        )
+    if not resume:
+        validate_optional_limit(args.max_seconds)
+    limit = (
+        effective_limit(settings) - run["elapsed"]
+        if resume
+        else effective_limit({"max_seconds": args.max_seconds})
+    )
     locks = [
         platform_lock(p)
         for p in (("youtube", "bilibili") if platform == "both" else (platform,))
@@ -95,7 +110,7 @@ def prepare_recommendation(store, args):
         from broader_vids.recommendations.timing import recover_elapsed
 
         recover_elapsed(run)
-        limit = settings["max_seconds"] - run["elapsed"]
+        limit = effective_limit(settings) - run["elapsed"]
         if model is None or effort is None:
             return {
                 "status": "blocked",
@@ -117,7 +132,7 @@ def prepare_recommendation(store, args):
         require_setup=not resume,
         check_feedback=not resume,
         allow_missing_feedback=getattr(args, "allow_missing_feedback", False),
-        max_seconds=limit,
+        max_seconds=report_limit({"max_seconds": limit}),
     )
     if resume:
         charge_elapsed(store, run["id"], report["elapsed_seconds"])

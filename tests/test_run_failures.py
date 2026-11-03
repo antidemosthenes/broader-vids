@@ -191,6 +191,111 @@ class RunFailureTests(unittest.TestCase):
         self.store.save(run)
         return run
 
+    def test_candidate_failure_report_separates_download_from_assessment_failure(self):
+        run = self.run_fixture(2)
+        completed_item, failed_item = run["state"]["shortlist"]
+        completed_id = create_evidence(
+            self.store,
+            completed_item["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        completed = self.store.get(completed_id)
+        completed["state"].update(
+            phase="prepared",
+            media={"sha256": "fixture"},
+            download_attempts=[{"number": 1, "status": "completed"}],
+            captions={"source": "unavailable", "reason": "No separate subtitle track."},
+            frames=[{"id": "F01"}, {"id": "F02"}],
+            assessments={
+                "augmented": {
+                    "card": {
+                        "overall_rationale": "Visible evidence did not support a score.",
+                        "unknowns": ["The lesson progression is unclear."],
+                        "criteria": {
+                            "substance": {"status": "unknown"},
+                            "presentation": {"status": "assessed"},
+                        },
+                    }
+                }
+            },
+        )
+        self.store.save(completed)
+        failed_id = create_evidence(
+            self.store,
+            failed_item["url"],
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        failed = self.store.get(failed_id)
+        failed["state"]["download_attempts"] = [
+            {"number": 1, "status": "failed", "error": "Temporary transfer failed."}
+        ]
+        self.store.save(failed)
+        run["state"]["evidence"] = {
+            completed_item["canonical_id"]: {
+                "status": "unavailable",
+                "evidence_run": completed_id,
+                "reason": "Evidence did not support a defensible score.",
+                "failure": {
+                    "stage": "assessment",
+                    "category": "insufficient_evidence",
+                    "retryable": False,
+                },
+            },
+            failed_item["canonical_id"]: {
+                "status": "unavailable",
+                "evidence_run": failed_id,
+                "reason": "Transfer failed.",
+                "failure": {
+                    "stage": "download",
+                    "category": "media_transfer",
+                    "retryable": False,
+                },
+            },
+        }
+        run["state"]["candidate_retry_counts"] = {failed_item["canonical_id"]: 1}
+        run["state"]["candidate_attempt_counts"] = {failed_item["canonical_id"]: 2}
+        self.store.save(run)
+
+        from broader_vids.recommendations.reports import candidate_failures
+
+        failures = {
+            entry["canonical_id"]: entry
+            for entry in candidate_failures(self.store, run)
+        }
+        assessment = failures[completed_item["canonical_id"]]
+        self.assertEqual(assessment["download_outcome"], "completed")
+        self.assertEqual(assessment["completed_download_attempts"], 1)
+        self.assertEqual(assessment["stop_reason"], "assessment_insufficient_evidence")
+        self.assertEqual(
+            assessment["assessment_summary"],
+            {
+                "overall_rationale": "Visible evidence did not support a score.",
+                "unknowns": ["The lesson progression is unclear."],
+                "unknown_criteria": ["substance"],
+                "caption_source": "unavailable",
+                "caption_reason": "No separate subtitle track.",
+                "frame_count": 2,
+            },
+        )
+        transfer = failures[failed_item["canonical_id"]]
+        self.assertEqual(transfer["download_outcome"], "failed")
+        self.assertEqual(transfer["failed_download_attempts"], 1)
+        self.assertEqual(transfer["candidate_retries"], 1)
+        self.assertEqual(transfer["stop_reason"], "non_retryable_failure")
+        failed = self.store.get(failed_id)
+        failed["state"]["download_attempts"] = []
+        self.store.save(failed)
+        empty = candidate_failures(self.store, run)[1]
+        self.assertEqual(empty["download_outcome"], "not_attempted")
+        failed["state"]["download_attempts"] = [
+            {"number": number, "status": "failed"} for number in range(1, 5)
+        ]
+        self.store.save(failed)
+        exhausted = candidate_failures(self.store, run)[1]
+        self.assertEqual(exhausted["stop_reason"], "retry_exhausted")
+
     def test_generation_and_validation_share_the_topic_length_bound(self):
         schema = topics_schema()
         for key in ("specific", "broad"):
@@ -204,41 +309,6 @@ class RunFailureTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, r"topics.specific\[0\].*121"):
             validate_topics(topics, {"F01"})
-
-    def test_candidate_failure_does_not_cancel_later_candidates(self):
-        run = self.run_fixture(7)
-        seen = []
-        first = run["state"]["shortlist"][0]["canonical_id"]
-
-        def worker(root, work, settings, runtime, jar, cancelled):
-            seen.append(work["canonical_id"])
-            self.assertFalse(cancelled.is_set())
-            if work["canonical_id"] == first:
-                return {
-                    "status": "pending",
-                    "evidence_run": work["evidence_run"],
-                    "reason": "One candidate transfer timed out.",
-                }
-            time.sleep(0.01)
-            return quality(work["evidence_run"])
-
-        with self.assertRaises(EvidencePending):
-            assess_parallel(
-                self.store,
-                run,
-                lambda: self.store.save(run),
-                lambda: 100,
-                worker=worker,
-                quality_lookup=lambda *a: None,
-            )
-        self.assertEqual(len(seen), 7)
-        self.assertEqual(
-            sum(
-                v.get("quality") is not None for v in run["state"]["evidence"].values()
-            ),
-            6,
-        )
-        self.assertIn("transfer timed out", run["state"]["first_failure"]["reason"])
 
     def test_access_failure_preserves_the_cause_when_other_workers_cancel(self):
         run = self.run_fixture(6)
@@ -396,7 +466,8 @@ class RunFailureTests(unittest.TestCase):
             )
         run = self.store.get(rid)
         self.assertEqual(run["status"], "pending")
-        self.assertEqual(run["state"]["failure"]["category"], "timeout")
+        self.assertEqual(run["state"]["failure"]["category"], "media_timeout")
+        self.assertFalse(run["state"]["retryable_failure"])
         self.assertEqual(
             run["state"]["preparation_usage"]["timeout-test"], 3 * 1024 * 1024
         )

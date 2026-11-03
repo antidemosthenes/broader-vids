@@ -1,10 +1,35 @@
 import json
+import os
 from pathlib import Path
 import shutil
+import tempfile
 import tarfile
 import zipfile
 
 from verify_package import main as verify_package
+
+
+def write_archive(destination, output):
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=output.parent, prefix=f".{output.name}.", suffix=".tmp"
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        with zipfile.ZipFile(
+            temporary, "w", compression=zipfile.ZIP_DEFLATED
+        ) as zipped:
+            for source in sorted(destination.rglob("*")):
+                if source.is_file():
+                    info = zipfile.ZipInfo(source.relative_to(destination).as_posix())
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.create_system = 3
+                    info.external_attr = 0o100644 << 16
+                    with source.open("rb") as stream, zipped.open(info, "w") as target:
+                        shutil.copyfileobj(stream, target)
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def build(root):
@@ -31,10 +56,7 @@ def build(root):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(package.extractfile(member).read())
     output = root / "dist" / f"broader-vids-{version}.zip"
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
-        for source in sorted(destination.rglob("*")):
-            if source.is_file():
-                zipped.write(source, source.relative_to(destination).as_posix())
+    write_archive(destination, output)
     print(
         json.dumps(
             {

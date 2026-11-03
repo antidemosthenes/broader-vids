@@ -1,18 +1,24 @@
 from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.time_budget import (
+    effective_limit,
+    validate_optional_limit,
+    report_limit,
+)
 from collections import Counter
 import copy
 import json
 import time
 
 from broader_vids.evidence.assessment import assess_evidence
-from broader_vids.discovery.service import create_discovery, execute_discovery
+from broader_vids.discovery.service import (
+    _validate_discovery_policy,
+    create_discovery,
+    execute_discovery,
+)
 from broader_vids.recommendations.engagement import (
     collect_snapshot,
-    fresh,
-    metadata_fresh,
 )
 from broader_vids.recommendations.collection_policy import default_collection_policy
-from broader_vids.recommendations.metadata import metadata_session
 from broader_vids.evidence.service import create_evidence, prepare_evidence
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
@@ -29,18 +35,24 @@ from broader_vids.recommendations.budgets import (
     collection_budget_message,
 )
 from broader_vids.recommendations.ranking import fair_buffer, screen, rank_slate
-from broader_vids.recommendations.quality import cached_quality
+from broader_vids.recommendations.quality import cached_quality, unscored_quality
+from broader_vids.recommendations.learning_snapshot import (
+    freeze_learning,
+    round_learning,
+)
+from broader_vids.recommendations.retries import (
+    retry_candidate,
+    begin_candidate_attempt,
+    release_cancelled_attempt,
+)
 from broader_vids.recommendations.screening import (
+    CURRENT_SCREENING_POLICY,
     DEFAULT_INSPECTION_LIMIT,
     inspection_limit,
 )
 from broader_vids.recommendations.originality import provenance, assessment_context
 from broader_vids.recommendations.timing import recover_elapsed, start_attempt
-from broader_vids.creators import (
-    enrich as enrich_creator,
-    excluded as excluded_creator,
-    initialize_round,
-)
+from broader_vids.creators import excluded as excluded_creator, initialize_round
 
 
 def create_recommendation(
@@ -48,7 +60,7 @@ def create_recommendation(
     platform,
     discovery_run=None,
     use_browser=False,
-    max_seconds=1800,
+    max_seconds=None,
     max_requests=DEFAULT_METADATA_REQUESTS,
     max_assessments=52,
     max_mib=1024,
@@ -65,15 +77,15 @@ def create_recommendation(
         raise ValueError(
             "Set an onboarding profile with profile set --interest TOPIC before recommending."
         )
+    validate_optional_limit(max_seconds)
     if (
         platform not in {"youtube", "bilibili"}
-        or not 0 < max_seconds <= 1800
         or not 1 <= max_requests <= 1000
         or not 0 <= max_assessments <= 52
         or not 1 <= max_mib <= 8192
     ):
         raise ValueError(
-            "Recommendation limits are 1,800 seconds, 1–1,000 metadata requests, 0–52 total model calls and 1–8,192 MiB."
+            "Recommendation limits are 1–1,000 metadata requests, 0–52 total model calls and 1–8,192 MiB."
         )
     assessment_model, reasoning_effort = resolve_worker_settings(
         assessment_model, reasoning_effort
@@ -93,12 +105,13 @@ def create_recommendation(
             or source["settings"].get("kind") != "discovery"
         ):
             raise ValueError("Use a discovery run from the same platform.")
+        _validate_discovery_policy(source)
     settings = {
         "kind": "recommendation",
         "token_usage_version": 1,
         "creator_policy_version": 1,
         "schema": 1,
-        "screening_policy_version": 4,
+        "screening_policy_version": 5,
         "collection_policy": default_collection_policy(),
         "inspection_limit": DEFAULT_INSPECTION_LIMIT,
         "worker_policy_version": 2,
@@ -107,6 +120,7 @@ def create_recommendation(
         "profile": profile,
         "use_browser": use_browser,
         "max_seconds": max_seconds,
+        "time_policy_version": 2,
         "max_requests": max_requests,
         "max_assessments": max_assessments,
         "max_bytes": max_mib * 1024 * 1024,
@@ -162,7 +176,9 @@ def _publish(store, run, remaining=None):
 def _publish_scored(store, run, check):
     from broader_vids.learning.service import ensure_model
 
-    learning = ensure_model(store)
+    learning = round_learning(store, run)
+    if learning is None:
+        learning = ensure_model(store)
     draft = copy.deepcopy(run)
     state = draft["state"]
     for key, observation in state["evidence"].items():
@@ -199,13 +215,6 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
             retryable=True,
         )
     if learning is not None:
-        from broader_vids.learning.service import change_epoch
-
-        if change_epoch(store) != learning["epoch"]:
-            raise EvidencePending(
-                "Feedback changed before publication; continue to rerank with the current posterior.",
-                retryable=True,
-            )
         state["learning_snapshot"] = {
             "id": learning["id"],
             "version": learning["version"],
@@ -217,12 +226,6 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
     pending = pending_videos(store, run["platform"])
     short_ids = {i["canonical_id"] for i in state["shortlist"]}
     states = video_states(store, run["platform"], identifiers=list(short_ids))
-    if run["settings"].get("screening_policy_version", 2) < 3 and (
-        len(pending) > 50 or any(i["canonical_id"] not in short_ids for i in pending)
-    ):
-        raise ValueError(
-            "Pending membership changed; a new run is required to honor guaranteed slots."
-        )
     candidates = [
         i
         for i in state["shortlist"]
@@ -255,6 +258,9 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
         return
     state["pending_at_publication"] = len(pending)
     state["published_at"] = utc_now()
+    from broader_vids.exploration.coverage import record_recommendations
+
+    record_recommendations(store, run)
     state["assessment_complete"] = all(
         i["canonical_id"] in observations
         or state["evidence"].get(i["canonical_id"], {}).get("status") == "unavailable"
@@ -276,11 +282,6 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
     )
     if any(i["canonical_id"] not in short_ids for i in state["selected"]):
         raise ValueError("Selected item is outside the inspection list.")
-    pending_ids = {i["canonical_id"] for i in pending} | {
-        i["canonical_id"] for i in state["selected"]
-    }
-    if run["settings"].get("screening_policy_version", 2) < 3 and len(pending_ids) > 50:
-        raise ValueError("Publication would exceed guaranteed pending capacity.")
     with store.db:
         for position, item in enumerate(state["selected"], 1):
             store.db.execute(
@@ -313,6 +314,7 @@ def publish_recommendation(store, identifier, allow_incomplete=False):
     run = store.get(identifier)
     if run["settings"].get("kind") != "recommendation":
         raise ValueError("Not a recommendation run.")
+    _validate_current_round(run)
     with store.lease(platform_lock(run["platform"])), store.lease(identifier):
         run = store.get(identifier)
         if run["state"]["phase"] == "published":
@@ -330,165 +332,32 @@ def publish_recommendation(store, identifier, allow_incomplete=False):
 
 
 def enrich_buffer(store, run, http, remaining, save):
-    if run["settings"].get("screening_policy_version", 2) >= 3:
-        from broader_vids.recommendations.collection import collect_eligible_buffer
+    _validate_current_round(run)
+    from broader_vids.recommendations.collection import collect_eligible_buffer
 
-        collect_eligible_buffer(
-            store, run, http, remaining, save, snapshot_collector=collect_snapshot
-        )
-        pending = [
-            item
-            for item in run["state"]["buffer"]
-            if item["canonical_id"]
-            in {
-                entry["canonical_id"]
-                for entry in pending_videos(store, run["platform"])
-            }
-        ]
-        run["state"]["shortlist"], rejected = screen(
-            run["state"]["buffer"],
-            pending,
-            video_states(store, run["platform"]),
-            run["settings"]["profile"],
-            run["state"].get("creator_rules"),
-            policy_version=run["settings"].get("screening_policy_version", 2),
-            limit=inspection_limit(run["settings"]),
-        )
-        run["state"]["rejections"] = {
-            **run["state"].get("screening_rejections", {}),
-            **rejected,
-        }
-        limit = inspection_limit(run["settings"])
-        if len(run["state"]["shortlist"]) != limit:
-            raise EvidencePending(
-                f"Fewer than {limit} eligible screening entries remain; quality assessment has not started."
-            )
-        run["state"]["phase"] = "assess"
-        save()
-        return
+    collect_eligible_buffer(
+        store, run, http, remaining, save, snapshot_collector=collect_snapshot
+    )
+    pending_ids = {
+        item["canonical_id"] for item in pending_videos(store, run["platform"])
+    }
     state = run["state"]
-    authenticated = run["settings"]["use_browser"] and run["platform"] == "bilibili"
-    state.pop("metadata_route_paused", None)
-    with metadata_session(store, http, authenticated):
-        while state["enrichment_index"] < len(state["buffer"]):
-            if remaining() <= 0:
-                raise BudgetExhausted("Recommendation time budget exhausted.")
-            item = state["buffer"][state["enrichment_index"]]
-            cached = store.db.execute(
-                "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
-                (item["canonical_id"],),
-            ).fetchone()
-            snapshot = json.loads(cached[0]) if cached else None
-            if not snapshot or not metadata_fresh(snapshot, run["platform"]):
-                try:
-                    snapshot = collect_snapshot(http, item)
-                    with store.db:
-                        store.db.execute(
-                            "INSERT OR REPLACE INTO engagement_snapshots VALUES(?,?)",
-                            (item["canonical_id"], json.dumps(snapshot)),
-                        )
-                except AccessPaused as error:
-                    state["issues"].append(
-                        {
-                            "canonical_id": item["canonical_id"],
-                            "stage": "metadata",
-                            "reason": public_error(error),
-                        }
-                    )
-                    state["metadata_route_paused"] = True
-                    save()
-                    raise
-            if snapshot:
-                enrich_creator(item, snapshot)
-                item["engagement"] = snapshot
-                if run["platform"] == "youtube" and snapshot.get("duration_seconds"):
-                    item["duration_seconds"] = snapshot["duration_seconds"]
-                elif run["platform"] == "bilibili":
-                    part = next(
-                        (
-                            p
-                            for p in snapshot.get("pages", [])
-                            if p["page"] == item.get("part_index", 1)
-                        ),
-                        None,
-                    )
-                    if part:
-                        item.update(
-                            duration_seconds=part["duration"],
-                            duration_scope="resolved_part",
-                            cid=part["cid"],
-                        )
-            state["enrichment_index"] += 1
-            save()
-        if state["buffer"]:
-            for item in pending_videos(store, run["platform"]):
-                row = store.db.execute(
-                    "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
-                    (item["canonical_id"],),
-                ).fetchone()
-                if row and metadata_fresh(json.loads(row[0]), run["platform"]):
-                    continue
-                if remaining() <= 0:
-                    raise BudgetExhausted(
-                        "Recommendation time budget exhausted during pending-count refresh."
-                    )
-                try:
-                    snapshot = collect_snapshot(http, item)
-                    with store.db:
-                        store.db.execute(
-                            "INSERT OR REPLACE INTO engagement_snapshots VALUES(?,?)",
-                            (item["canonical_id"], json.dumps(snapshot)),
-                        )
-                except AccessPaused as error:
-                    state["issues"].append(
-                        {
-                            "canonical_id": item["canonical_id"],
-                            "stage": "pending_metadata",
-                            "reason": public_error(error),
-                        }
-                    )
-                    state["metadata_route_paused"] = True
-                    save()
-                    raise
-    pending = pending_videos(store, run["platform"])
-    for item in pending:
-        row = store.db.execute(
-            "SELECT payload FROM engagement_snapshots WHERE canonical_id=?",
-            (item["canonical_id"],),
-        ).fetchone()
-        snapshot = json.loads(row[0]) if row else item.get("engagement", {})
-        item["engagement"] = (
-            snapshot
-            if fresh(snapshot)
-            else {"stale": True, "observed_at": snapshot.get("observed_at")}
-        )
-        enrich_creator(item, snapshot)
-    blocked_pending = [
-        item["canonical_id"]
-        for item in pending
-        if excluded_creator(item, state.get("creator_rules"))
-    ]
-    if blocked_pending:
-        with store.db:
-            store.db.executemany(
-                "UPDATE video_state SET recommended=0,updated_at=? WHERE canonical_id=?",
-                [(utc_now(), key) for key in blocked_pending],
-            )
-        state["creator_released_pending"] = sorted(
-            set(state.get("creator_released_pending", [])) | set(blocked_pending)
-        )
-        pending = [
-            item for item in pending if item["canonical_id"] not in blocked_pending
-        ]
-    state["shortlist"], state["rejections"] = screen(
+    state["shortlist"], rejected = screen(
         state["buffer"],
-        pending,
+        [item for item in state["buffer"] if item["canonical_id"] in pending_ids],
         video_states(store, run["platform"]),
         run["settings"]["profile"],
         state.get("creator_rules"),
-        policy_version=run["settings"].get("screening_policy_version", 2),
+        policy_version=CURRENT_SCREENING_POLICY,
         limit=inspection_limit(run["settings"]),
+        learning=round_learning(store, run),
     )
+    state["rejections"] = {**state.get("screening_rejections", {}), **rejected}
+    limit = inspection_limit(run["settings"])
+    if len(state["shortlist"]) != limit:
+        raise EvidencePending(
+            f"Fewer than {limit} eligible screening entries remain; quality assessment has not started."
+        )
     state["phase"] = "assess"
     save()
 
@@ -508,6 +377,7 @@ def execute_recommendation(
     initial = store.get(identifier)
     if initial["settings"].get("kind") != "recommendation":
         raise ValueError("Not a recommendation run.")
+    _validate_current_round(initial)
     if initial["settings"].get("batch_id") not in {None, batch_id}:
         raise ValueError(
             f"Continue batch {initial['settings']['batch_id']} to preserve its shared budget."
@@ -515,14 +385,15 @@ def execute_recommendation(
     with store.lease(platform_lock(initial["platform"])), store.lease(identifier):
         run = store.get(identifier)
         state, settings = run["state"], run["settings"]
+        _validate_current_round(run)
         recover_elapsed(run)
         if state["phase"] == "published":
             store.save(run)
             return run
         started, initial_elapsed = time.monotonic(), run["elapsed"]
+        validate_optional_limit(max_seconds)
         limit = min(
-            settings["max_seconds"],
-            1800,
+            effective_limit(settings),
             initial_elapsed + max_seconds if max_seconds is not None else float("inf"),
         )
         limit -= min(20, limit * 0.05)
@@ -577,123 +448,110 @@ def execute_recommendation(
                 raise BudgetExhausted(
                     "Recommendation time budget exhausted; no automatic budget reset."
                 )
+            freeze_learning(store, run)
             if state["phase"] == "discovery":
                 initialize_round(store, run, remaining)
                 pending = pending_videos(store, run["platform"])
-                if (
-                    settings.get("screening_policy_version", 2) < 3
-                    and len(pending) > 50
-                ):
-                    raise ValueError(
-                        "Pending queue exceeds 50; preserve records and dismiss entries first."
-                    )
+
                 state["pending_at_start"] = [i["canonical_id"] for i in pending]
-                if (
-                    settings.get("screening_policy_version", 2) >= 3
-                    or len(pending) < 50
-                ):
-                    if not state["discovery_run"]:
-                        state["discovery_run"] = create_discovery(
-                            store,
-                            run["platform"],
-                            max_requests=min(60, settings["max_requests"]),
-                            max_seconds=min(600, remaining()),
-                            max_planning_calls=min(
-                                2,
-                                max(
-                                    0,
-                                    settings["max_assessments"] - state["model_calls"],
-                                ),
+                if not state["discovery_run"]:
+                    state["discovery_run"] = create_discovery(
+                        store,
+                        run["platform"],
+                        max_requests=min(60, settings["max_requests"]),
+                        max_seconds=min(600, remaining()),
+                        max_planning_calls=min(
+                            2,
+                            max(
+                                0,
+                                settings["max_assessments"] - state["model_calls"],
                             ),
-                            creator_rules=state.get("creator_rules"),
-                            assessment_model=settings["assessment_model"],
-                            reasoning_effort=settings["reasoning_effort"],
+                        ),
+                        creator_rules=state.get("creator_rules"),
+                        assessment_model=settings["assessment_model"],
+                        reasoning_effort=settings["reasoning_effort"],
+                        planning_policy=2,
+                    )
+                    save()
+                source = store.get(state["discovery_run"])
+                state["planning_model_calls"] = max(
+                    0,
+                    len(source["state"].get("exploration", {}).get("attempts", []))
+                    - settings.get("discovery_initial_planning_calls", 0),
+                )
+                if source["state"]["phase"] != "finished":
+                    if remaining() <= 0:
+                        raise BudgetExhausted(
+                            "Recommendation time budget exhausted during discovery."
                         )
-                        save()
-                    source = store.get(state["discovery_run"])
+                    model_options = {}
+                    if runtime is not None:
+                        from broader_vids.evidence.assessment import run_codex
+
+                        def planning_runner(prompt, schema, output, images, timeout):
+                            with runtime.slot(
+                                runtime.models, remaining, runtime.cancelled
+                            ):
+                                return run_codex(
+                                    prompt,
+                                    schema,
+                                    output,
+                                    images,
+                                    min(timeout, remaining()),
+                                    cancelled=runtime.cancelled,
+                                    model=settings["assessment_model"],
+                                    effort=settings["reasoning_effort"],
+                                )
+
+                        model_options["model_runner"] = planning_runner
+                    execute_discovery(
+                        store,
+                        source["id"],
+                        max_seconds=remaining(),
+                        max_new_planning_calls=max(
+                            0,
+                            settings["max_assessments"]
+                            - state["model_calls"]
+                            - state["planning_model_calls"],
+                        ),
+                        **model_options,
+                        usage_owner=run["id"],
+                        cancel_event=runtime.cancelled if runtime else None,
+                    )
+                    source = store.get(source["id"])
                     state["planning_model_calls"] = max(
                         0,
                         len(source["state"].get("exploration", {}).get("attempts", []))
                         - settings.get("discovery_initial_planning_calls", 0),
                     )
-                    if source["state"]["phase"] != "finished":
-                        if remaining() <= 0:
-                            raise BudgetExhausted(
-                                "Recommendation time budget exhausted during discovery."
-                            )
-                        model_options = {}
-                        if runtime is not None:
-                            from broader_vids.evidence.assessment import run_codex
-
-                            def planning_runner(
-                                prompt, schema, output, images, timeout
-                            ):
-                                with runtime.slot(
-                                    runtime.models, remaining, runtime.cancelled
-                                ):
-                                    return run_codex(
-                                        prompt,
-                                        schema,
-                                        output,
-                                        images,
-                                        min(timeout, remaining()),
-                                        cancelled=runtime.cancelled,
-                                        model=settings["assessment_model"],
-                                        effort=settings["reasoning_effort"],
-                                    )
-
-                            model_options["model_runner"] = planning_runner
-                        execute_discovery(
-                            store,
-                            source["id"],
-                            max_seconds=remaining(),
-                            max_new_planning_calls=max(
-                                0,
-                                settings["max_assessments"]
-                                - state["model_calls"]
-                                - state["planning_model_calls"],
-                            ),
-                            **model_options,
-                            usage_owner=run["id"],
-                            cancel_event=runtime.cancelled if runtime else None,
-                        )
-                        source = store.get(source["id"])
-                        state["planning_model_calls"] = max(
-                            0,
-                            len(
-                                source["state"]
-                                .get("exploration", {})
-                                .get("attempts", [])
-                            )
-                            - settings.get("discovery_initial_planning_calls", 0),
-                        )
-                    if source["state"]["phase"] != "finished":
-                        raise EvidencePending(
-                            "Discovery is incomplete; continue its source run before continuing recommendations."
-                        )
-                    states = video_states(store, run["platform"])
-                    available = [
-                        i
-                        for i in source["state"]["candidates"].values()
-                        if not states.get(i["canonical_id"], {}).get("watched")
-                        and not states.get(i["canonical_id"], {}).get("dismissed")
-                        and not states.get(i["canonical_id"], {}).get("pending")
-                        and not excluded_creator(i, state.get("creator_rules"))
-                    ]
-                    if settings.get("screening_policy_version", 2) >= 3:
-                        state["candidate_pool"] = fair_buffer(
-                            [*available, *pending], 1000
-                        )
-                        state["pool_index"] = 0
-                        state["buffer"] = []
-                        state["screening_rejections"] = {}
-                    else:
-                        state["buffer"] = fair_buffer(available, 100)
+                if source["state"]["phase"] != "finished":
+                    raise EvidencePending(
+                        "Discovery is incomplete; continue its source run before continuing recommendations."
+                    )
+                states = video_states(store, run["platform"])
+                available = [
+                    i
+                    for i in source["state"]["candidates"].values()
+                    if not states.get(i["canonical_id"], {}).get("watched")
+                    and not states.get(i["canonical_id"], {}).get("dismissed")
+                    and not states.get(i["canonical_id"], {}).get("pending")
+                    and not excluded_creator(i, state.get("creator_rules"))
+                ]
+                state["candidate_pool"] = fair_buffer([*available, *pending], 1000)
+                state["pool_index"] = 0
+                state["buffer"] = []
+                state["screening_rejections"] = {}
                 state["phase"] = "enrich"
                 save()
             http = http_factory(
                 store,
-                {**run, "settings": {**settings, "max_seconds": limit}},
+                {
+                    **run,
+                    "settings": {
+                        **settings,
+                        "max_seconds": report_limit({"max_seconds": limit}),
+                    },
+                },
                 anonymous_session=True,
             )
             http.cancelled = runtime.cancelled if runtime else None
@@ -785,6 +643,15 @@ def execute_recommendation(
                             reasoning_effort=settings.get("reasoning_effort"),
                             assessment_model=settings.get("assessment_model"),
                         )
+                        if not begin_candidate_attempt(state, key):
+                            state["assessment_index"] += 1
+                            save()
+                            continue
+                        state["assessment_jobs"] = {
+                            **state.get("assessment_jobs", {}),
+                            key: evidence_id,
+                        }
+                        save()
                         before = store.get(evidence_id)["state"]["resources"][
                             "media_download_bytes"
                         ]
@@ -797,7 +664,7 @@ def execute_recommendation(
                                 store,
                                 evidence_id,
                                 settings["asr_model"],
-                                max_seconds=remaining(),
+                                max_seconds=min(300, remaining()),
                                 max_new_bytes=bytes_left,
                             )
                             if (
@@ -820,7 +687,7 @@ def execute_recommendation(
                                         if assess is assess_evidence
                                         else {}
                                     ),
-                                    max_seconds=remaining(),
+                                    max_seconds=min(180, remaining()),
                                 )
                             observation = cached_quality(store, evidence_id)
                         except (EvidencePending, ValueError, OSError) as error:
@@ -841,15 +708,43 @@ def execute_recommendation(
                             )
                         if not observation:
                             failed = store.get(evidence_id)
-                            if failed["state"].get("retryable_failure"):
-                                state["evidence"][key] = {
-                                    "status": "pending",
-                                    "evidence_run": evidence_id,
-                                    "reason": failed["reason"],
-                                }
+                            unscored = unscored_quality(failed)
+                            if unscored:
+                                state["evidence"][key] = unscored
+                                state["assessment_index"] += 1
+                                save()
+                                continue
+                            from broader_vids.evidence.failures import failure_details
+
+                            failure = failed["state"].get("failure") or failure_details(
+                                EvidencePending(
+                                    failed["reason"],
+                                    retryable=failed["state"].get(
+                                        "retryable_failure", False
+                                    ),
+                                ),
+                                "evidence",
+                            )
+                            pending = {
+                                "status": "pending",
+                                "evidence_run": evidence_id,
+                                "reason": failed["reason"],
+                                "failure": failure,
+                            }
+                            state["evidence"][key] = pending
+                            if failure["category"] == "cancelled":
+                                release_cancelled_attempt(state, key)
+                            if failure["scope"] != "candidate" or failure[
+                                "category"
+                            ] in {"cancelled", "budget", "access", "storage"}:
                                 raise EvidencePending(
-                                    "Evidence collection needs retry or access review; the current candidate and cursor are preserved."
+                                    failure["reason"],
+                                    scope=failure["scope"],
+                                    category=failure["category"],
                                 )
+                            if retry_candidate(state, key, pending):
+                                save()
+                                continue
                             null_cards = [
                                 a["card"]
                                 for a in failed["state"]["assessments"].values()
@@ -864,6 +759,7 @@ def execute_recommendation(
                                 "status": "unavailable",
                                 "evidence_run": evidence_id,
                                 "reason": reason,
+                                "failure": failure,
                             }
                             reason = store.get(evidence_id)["reason"].casefold()
                             if any(
@@ -894,10 +790,9 @@ def execute_recommendation(
             from broader_vids.evidence.failures import failure_details
 
             if (
-                isinstance(error, BudgetExhausted)
-                and error.resource == "http_requests"
-                and state["phase"] == "enrich"
-                and settings.get("screening_policy_version", 2) >= 3
+                (isinstance(error, BudgetExhausted))
+                and (error.resource == "http_requests")
+                and (state["phase"] == "enrich")
             ):
                 error = BudgetExhausted(
                     collection_budget_message(store, run), resource="http_requests"
@@ -925,3 +820,25 @@ def execute_recommendation(
             run["state"].pop("active_attempt", None)
             save()
         return store.get(identifier)
+
+
+def _validate_current_round(run):
+    settings = run["settings"]
+    if (
+        settings.get("time_policy_version") != 2
+        or settings.get("creator_policy_version") != 1
+    ):
+        raise ValueError(
+            "This recommendation uses unsupported round policies; start a new round."
+        )
+    if settings.get("screening_policy_version") != CURRENT_SCREENING_POLICY:
+        raise ValueError(
+            "This recommendation uses an unsupported screening policy; start a new round."
+        )
+    if (
+        settings.get("inspection_limit") != DEFAULT_INSPECTION_LIMIT
+        or settings.get("collection_policy") != default_collection_policy()
+    ):
+        raise ValueError(
+            "This recommendation uses unsupported screening settings; start a new round."
+        )

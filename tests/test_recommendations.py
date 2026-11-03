@@ -27,7 +27,10 @@ from broader_vids.recommendations.service import (
     publish_recommendation,
 )
 from broader_vids.recommendations.ranking import rank_slate, screen
-from broader_vids.recommendations.reports import write_recommendation_report
+from broader_vids.recommendations.reports import (
+    write_recommendation_report,
+    recommendation_report,
+)
 from broader_vids.storage import Store, utc_now
 
 
@@ -293,62 +296,61 @@ class RecommendationTests(unittest.TestCase):
         selected, _ = screen(self.items, self.items[:70], {}, self.profile)
         self.assertEqual(len(selected), 35)
 
-    def test_inspection_limit_is_saved_and_historical_rounds_keep_fifty(self):
-        from broader_vids.recommendations.reports import recommendation_readiness
+    def test_inspection_limit_is_saved_and_old_policy_is_rejected_preflight(self):
         from broader_vids.recommendations.screening import inspection_limit
 
         source = self.source()
-        for historical, expected in ((False, 35), (True, 50)):
-            with self.subTest(historical=historical):
-                identifier = create_recommendation(
-                    self.store,
-                    "youtube",
-                    source,
-                    assessment_model="fixture-model",
-                    reasoning_effort="low",
-                )
-                run = self.store.get(identifier)
-                self.assertEqual(run["settings"]["inspection_limit"], 35)
-                if historical:
-                    run["settings"].pop("inspection_limit")
-                    with self.store.db:
-                        self.store.db.execute(
-                            "UPDATE runs SET settings=? WHERE id=?",
-                            (json.dumps(run["settings"]), identifier),
-                        )
-                self.assertEqual(inspection_limit(run["settings"]), expected)
-                with (
-                    patch(
-                        "broader_vids.recommendations.service.collect_snapshot",
-                        return_value={"observed_at": utc_now()},
-                    ),
-                    patch(
-                        "broader_vids.recommendations.service.cached_quality",
-                        side_effect=lambda s, i: quality(i),
-                    ),
-                ):
-                    completed = execute_recommendation(self.store, identifier)
-                self.assertEqual(completed["status"], "completed", completed["reason"])
-                self.assertEqual(len(completed["state"]["shortlist"]), expected)
-                self.assertEqual(len(completed["state"]["selected"]), 10)
-                self.assertEqual(completed["state"]["model_calls"], 0)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            source,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        run = self.store.get(identifier)
+        self.assertEqual(run["settings"]["inspection_limit"], 35)
+        self.assertEqual(inspection_limit(run["settings"]), 35)
+        original_state, original_updated = run["state"], run["updated_at"]
+        from broader_vids.cli.arguments import parser
+        from broader_vids.cli.startup import prepare_recommendation
 
-                def observation(store, evidence_id):
-                    canonical = store.get(evidence_id)["settings"]["identity"][
-                        "canonical_id"
-                    ]
-                    return {**quality(evidence_id), "canonical_id": canonical}
-
-                with patch(
-                    "broader_vids.recommendations.reports.cached_quality",
-                    side_effect=observation,
-                ):
-                    self.assertIn(
-                        identifier,
-                        recommendation_readiness(self.store)["verified_runs"][
-                            "youtube"
-                        ],
+        for field, old_value in (
+            ("screening_policy_version", 4),
+            ("creator_policy_version", 0),
+            ("time_policy_version", 1),
+        ):
+            with self.subTest(field=field):
+                settings = {**run["settings"], field: old_value}
+                with self.store.db:
+                    self.store.db.execute(
+                        "UPDATE runs SET settings=? WHERE id=?",
+                        (json.dumps(settings), identifier),
                     )
+                with self.assertRaisesRegex(ValueError, "unsupported"):
+                    execute_recommendation(self.store, identifier)
+                with patch("broader_vids.cli.startup.preflight") as probe:
+                    with self.assertRaisesRegex(ValueError, "unsupported"):
+                        prepare_recommendation(
+                            self.store, parser().parse_args(["continue", identifier])
+                        )
+                    probe.assert_not_called()
+                unchanged = self.store.get(identifier)
+                self.assertEqual(unchanged["state"], original_state)
+                self.assertEqual(unchanged["updated_at"], original_updated)
+
+    def test_recommendation_rejects_a_legacy_discovery_source(self):
+        source = self.source()
+        discovery = self.store.get(source)
+        discovery["state"]["exploration"] = {"policy_version": 1}
+        self.store.save(discovery)
+        with self.assertRaisesRegex(ValueError, "unsupported exploration policy"):
+            create_recommendation(
+                self.store,
+                "youtube",
+                source,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
 
     def test_vote_watch_dismiss_and_revision_are_independent(self):
         self.insert_pending(self.items[:1])
@@ -371,7 +373,7 @@ class RecommendationTests(unittest.TestCase):
             self.store.db.execute("SELECT COUNT(*) FROM user_actions").fetchone()[0], 7
         )
 
-    def test_slate_quality_exclusion_without_unrelated_quota(self):
+    def test_slate_excludes_low_quality_video(self):
         shortlist, _ = screen(self.items, [], {}, self.profile)
         observations = {i["canonical_id"]: quality("fixture") for i in shortlist}
         observations[shortlist[0]["canonical_id"]]["quality"] = 20
@@ -384,7 +386,6 @@ class RecommendationTests(unittest.TestCase):
         }
         selected = rank_slate(shortlist, observations, self.profile, weights)
         self.assertEqual(len(selected), 10)
-        self.assertTrue(all(i["related"] for i in selected))
         self.assertNotIn(
             shortlist[0]["canonical_id"], {i["canonical_id"] for i in selected}
         )
@@ -525,25 +526,38 @@ class RecommendationTests(unittest.TestCase):
         self.assertEqual(run["status"], "paused")
         self.assertIsNone(run["state"]["published_at"])
 
-    def test_temporary_evidence_failure_preserves_cursor_and_parent_limits(self):
+    def test_candidate_failures_retry_three_times_without_blocking_the_sequential_route(
+        self,
+    ):
         source = self.source()
-        calls = []
+        blocked = self.items[-1]["canonical_id"]
+        calls, evidence_ids = [], []
 
         def interrupted(store, evidence_id, asr_model, **limits):
             calls.append(limits)
+            evidence_ids.append(evidence_id)
             child = store.get(evidence_id)
             child["state"]["retryable_failure"] = True
             child.update(status="pending", reason="Temporary extraction failure")
             store.save(child)
             return child
 
+        def lookup(store, identifier):
+            return (
+                None
+                if store.get(identifier)["settings"]["identity"]["canonical_id"]
+                == blocked
+                else quality(identifier)
+            )
+
         with (
             patch(
                 "broader_vids.recommendations.service.collect_snapshot",
-                return_value={"observed_at": utc_now()},
+                side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
             ),
             patch(
-                "broader_vids.recommendations.service.cached_quality", return_value=None
+                "broader_vids.recommendations.service.cached_quality",
+                side_effect=lookup,
             ),
         ):
             identifier = create_recommendation(
@@ -556,13 +570,184 @@ class RecommendationTests(unittest.TestCase):
                 reasoning_effort="low",
             )
             run = execute_recommendation(self.store, identifier, prepare=interrupted)
-        self.assertEqual(run["status"], "paused")
-        self.assertEqual(run["state"]["assessment_index"], 0)
-        self.assertIsNone(run["state"]["published_at"])
-        self.assertEqual(len(calls), 1)
-        self.assertLessEqual(calls[0]["max_seconds"], 30)
-        self.assertEqual(calls[0]["max_new_bytes"], 2 * 1024 * 1024)
-        self.assertEqual(len(pending_videos(self.store, "youtube")), 0)
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(set(evidence_ids)), 1)
+        self.assertEqual(run["state"]["candidate_retry_counts"][blocked], 3)
+        self.assertEqual(run["state"]["evidence"][blocked]["status"], "unavailable")
+        self.assertEqual(run["state"]["assessment_index"], 35)
+        self.assertTrue(all(call["max_seconds"] <= 30 for call in calls))
+        self.assertTrue(all(call["max_new_bytes"] == 2 * 1024 * 1024 for call in calls))
+        self.assertEqual(len(pending_videos(self.store, "youtube")), 10)
+
+    def test_sequential_unscored_assessment_is_not_retried_as_a_download_failure(self):
+        source = self.source()
+        blocked = self.items[-1]["canonical_id"]
+        prepared_ids = []
+
+        def unavailable(store, identifier, *args, **kwargs):
+            prepared_ids.append(identifier)
+            child = store.get(identifier)
+            child["state"].update(
+                phase="prepared",
+                assessments={
+                    "augmented": {
+                        "overall_quality": None,
+                        "card": {
+                            "overall_rationale": "No transcript establishes the explanation."
+                        },
+                    }
+                },
+            )
+            store.save(child)
+            return child
+
+        def lookup(store, identifier):
+            child = store.get(identifier)
+            return (
+                None
+                if child["settings"]["identity"]["canonical_id"] == blocked
+                else quality(identifier)
+            )
+
+        with (
+            patch(
+                "broader_vids.recommendations.service.collect_snapshot",
+                side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
+            ),
+            patch(
+                "broader_vids.recommendations.service.cached_quality",
+                side_effect=lookup,
+            ),
+        ):
+            identifier = create_recommendation(
+                self.store,
+                "youtube",
+                source,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+            result = execute_recommendation(self.store, identifier, prepare=unavailable)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(prepared_ids), 1)
+        self.assertEqual(result["state"]["candidate_attempt_counts"][blocked], 1)
+        self.assertEqual(
+            result["state"]["evidence"][blocked]["failure"]["category"],
+            "insufficient_evidence",
+        )
+        self.assertIn("No transcript", result["state"]["evidence"][blocked]["reason"])
+        self.assertEqual(len(result["state"]["selected"]), 10)
+
+    def test_candidate_download_limit_does_not_block_verified_recommendations(self):
+        source = self.source()
+        blocked = self.items[-1]["canonical_id"]
+
+        def lookup(store, identifier):
+            child = store.get(identifier)
+            return (
+                None
+                if child["settings"]["identity"]["canonical_id"] == blocked
+                else quality(identifier)
+            )
+
+        def unavailable(store, identifier, *args, **kwargs):
+            child = store.get(identifier)
+            child["state"].update(
+                retryable_failure=False,
+                failure={
+                    "stage": "download",
+                    "scope": "candidate",
+                    "category": "media_transfer",
+                    "retryable": False,
+                },
+                download_attempts=[
+                    {"number": n, "status": "failed", "error": "read timed out"}
+                    for n in range(1, 5)
+                ],
+            )
+            child.update(
+                status="pending", reason="Candidate download exceeds its allowance."
+            )
+            store.save(child)
+            return child
+
+        with (
+            patch(
+                "broader_vids.recommendations.service.collect_snapshot",
+                side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
+            ),
+            patch(
+                "broader_vids.recommendations.service.cached_quality",
+                side_effect=lookup,
+            ),
+        ):
+            identifier = create_recommendation(
+                self.store,
+                "youtube",
+                source,
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+            result = execute_recommendation(self.store, identifier, prepare=unavailable)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["state"]["evidence"][blocked]["status"], "unavailable")
+        self.assertTrue(result["state"]["assessment_complete"])
+        self.assertEqual(len(result["state"]["selected"]), 10)
+        self.assertNotIn(
+            blocked, [item["canonical_id"] for item in result["state"]["selected"]]
+        )
+        report = recommendation_report(self.store, identifier)
+        self.assertEqual(len(report["candidate_failures"]), 1)
+        failure = report["candidate_failures"][0]
+        self.assertEqual(failure["canonical_id"], blocked)
+        self.assertEqual(
+            (
+                failure["status"],
+                failure["download_attempts"],
+                failure["download_retries"],
+            ),
+            ("skipped", 4, 3),
+        )
+        recovered = result["state"]["selected"][0]
+        child = self.store.get(recovered["quality_evidence"]["evidence_run"])
+        child["state"]["download_attempts"] = [
+            {"number": 1, "status": "failed", "error": "read timed out"},
+            {"number": 2, "status": "completed"},
+            {"number": 1, "status": "failed", "error": "read timed out"},
+            {"number": 2, "status": "completed"},
+        ]
+        self.store.save(child)
+        report = recommendation_report(self.store, identifier)
+        self.assertEqual(
+            {record["status"] for record in report["candidate_failures"]},
+            {"recovered", "skipped"},
+        )
+        recovered_failure = next(
+            record
+            for record in report["candidate_failures"]
+            if record["status"] == "recovered"
+        )
+        self.assertEqual(recovered_failure["download_retries"], 2)
+        digest = write_recommendation_report(self.store, identifier).read_text(
+            encoding="utf-8"
+        )
+        self.assertGreater(
+            digest.index("## Candidate failures and retries"), digest.index("10. [")
+        )
+        self.assertIn("4 download attempts", digest)
+        self.assertIn("**Recovered**", digest)
+        saved = self.store.get(identifier)
+        saved["state"]["cache_hit_ids"] = [recovered["canonical_id"]]
+        self.store.save(saved)
+        self.assertEqual(
+            [
+                record["status"]
+                for record in recommendation_report(self.store, identifier)[
+                    "candidate_failures"
+                ]
+            ],
+            ["skipped"],
+        )
 
     def test_failed_publication_rolls_back_exposures_and_pending_state(self):
         source = self.source()

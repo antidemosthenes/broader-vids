@@ -366,8 +366,9 @@ function render() {
     listPane.scrollTop = state.scrolls.get(nextRoute) || 0;
   }
   rows.forEach((row) => row.update());
+  const itemName = state.view === "calibration" ? "example" : "video";
   $("#list-label").textContent =
-    `${platformName(state.platform)} · ${items.length} ${state.view === "calibration" ? "examples" : "videos"}`;
+    `${platformName(state.platform)} · ${items.length} ${itemName}${items.length === 1 ? "" : "s"}`;
   const pending =
     state.data.pending_items[state.platform]?.filter(
       (item) =>

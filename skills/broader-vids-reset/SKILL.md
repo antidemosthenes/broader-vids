@@ -38,5 +38,5 @@ Use the Node launcher so no Python process remains inside a directory that Clean
 Report success only when the command returns `completed` or `absent`.
 For an error or partial result, explain the failure and preserve the reported remaining files.
 Report the remaining data after a partial failure.
-Do not enable a schedule, uninstall the plugin, or remove shared UV or npm caches.
+Do not uninstall the plugin or remove shared UV or npm caches.
 After Reset, offer the setup skill to choose interests or import preferences.

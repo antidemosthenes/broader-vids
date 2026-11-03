@@ -79,159 +79,126 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.root / "broader-vids.sqlite3", timeout=5)
         self.db.row_factory = sqlite3.Row
-        version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
-            self.db.close()
-            raise ValueError(
-                f"Unsupported database version {version}; use a compatible Broader Vids release."
-            )
-        self.db.execute("PRAGMA foreign_keys=ON")
-        if version == 12:
-            try:
-                mark_profile(self.root)
-            except BaseException:
-                self.db.close()
-                raise
-            return
-        backup = self.root / "broader-vids.before-v12.sqlite3"
-        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) and not backup.exists():
-            target = sqlite3.connect(backup)
-            try:
-                self.db.backup(target)
-            finally:
-                target.close()
-        self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.executescript("""
-            BEGIN;
-            CREATE TABLE IF NOT EXISTS runs (
-                id TEXT PRIMARY KEY, platform TEXT NOT NULL, created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL,
-                settings TEXT NOT NULL, state TEXT NOT NULL, elapsed REAL NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-                created_at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS requests (
-                id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
-                created_at TEXT NOT NULL, endpoint TEXT NOT NULL, outcome TEXT NOT NULL,
-                detail TEXT NOT NULL DEFAULT ''
-            );
-            CREATE TABLE IF NOT EXISTS discovery_registry (
-                platform TEXT NOT NULL, kind TEXT NOT NULL, item_key TEXT NOT NULL,
-                payload TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
-                PRIMARY KEY (platform, kind, item_key)
-            );
-            CREATE TABLE IF NOT EXISTS user_profile (
-                id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS video_state (
-                canonical_id TEXT PRIMARY KEY, platform TEXT NOT NULL, payload TEXT NOT NULL,
-                watched INTEGER NOT NULL DEFAULT 0, dismissed INTEGER NOT NULL DEFAULT 0,
-                recommended INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS user_actions (
-                id INTEGER PRIMARY KEY, canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
-                created_at TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS recommendation_exposures (
-                run_id TEXT NOT NULL REFERENCES runs(id), canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
-                position INTEGER NOT NULL, created_at TEXT NOT NULL,
-                PRIMARY KEY(run_id,canonical_id)
-            );
-            CREATE TABLE IF NOT EXISTS engagement_snapshots (
-                canonical_id TEXT PRIMARY KEY, payload TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS user_feedback_lookup ON user_actions(canonical_id,action,id);
-            CREATE INDEX IF NOT EXISTS run_request_lookup ON requests(run_id);
-            CREATE INDEX IF NOT EXISTS exposure_time_lookup ON recommendation_exposures(created_at);
-            CREATE TABLE IF NOT EXISTS domain_nodes (
-                id TEXT PRIMARY KEY, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS domain_observations (
-                run_id TEXT NOT NULL REFERENCES runs(id),
-                node_id TEXT NOT NULL REFERENCES domain_nodes(id),
-                created_at TEXT NOT NULL, payload TEXT NOT NULL,
-                PRIMARY KEY(run_id,node_id)
-            );
-            CREATE INDEX IF NOT EXISTS domain_history_lookup ON domain_observations(node_id,created_at);
-            CREATE INDEX IF NOT EXISTS run_kind_platform_lookup ON runs(json_extract(settings,'$.kind'),platform,created_at);
-            CREATE INDEX IF NOT EXISTS pending_video_lookup ON video_state(recommended,watched,dismissed,platform);
-            CREATE INDEX IF NOT EXISTS evidence_cache_lookup ON runs(json_extract(settings,'$.cache_key'),platform);
-            CREATE INDEX IF NOT EXISTS evidence_identity_lookup ON runs(json_extract(settings,'$.identity.canonical_id'),platform);
-            CREATE TABLE IF NOT EXISTS feedback_ratings (
-                canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
-                dimension TEXT NOT NULL CHECK(dimension IN ('interest','quality','overall')),
-                action_id INTEGER NOT NULL REFERENCES user_actions(id), payload TEXT NOT NULL,
-                PRIMARY KEY(canonical_id,dimension)
-            );
-            CREATE TABLE IF NOT EXISTS learning_models (
-                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS calibration_items (
-                canonical_id TEXT PRIMARY KEY, cohort TEXT NOT NULL,
-                split TEXT NOT NULL CHECK(split IN ('train','holdout')),
-                payload TEXT NOT NULL, released INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS learning_evaluations (
-                id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS feedback_details (
-                canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
-                dimension TEXT NOT NULL CHECK(dimension IN ('topic_interest','domain_interest','depth','quality_level')),
-                action_id INTEGER NOT NULL REFERENCES user_actions(id), payload TEXT NOT NULL,
-                PRIMARY KEY(canonical_id,dimension)
-            );
-            CREATE TABLE IF NOT EXISTS feedback_scopes (
-                target TEXT PRIMARY KEY, payload TEXT NOT NULL
-            );
-            INSERT OR IGNORE INTO feedback_scopes
-            SELECT json_extract(payload,'$.target'),
-                json_object('domains',json(COALESCE(json_extract(payload,'$.features.domains'),'[]')),'source_action',id)
-            FROM user_actions WHERE action='feedback'
-                AND json_extract(payload,'$.kind') IN ('topic_interest','depth')
-                AND json_extract(payload,'$.value')!='clear'
-                AND json_extract(payload,'$.target') IS NOT NULL
-            ORDER BY id;
-            INSERT OR IGNORE INTO feedback_ratings
-            SELECT canonical_id,COALESCE(json_extract(payload,'$.kind'),'overall'),id,payload
-            FROM user_actions WHERE action='feedback'
-            AND id IN (SELECT MAX(id) FROM user_actions WHERE action='feedback' GROUP BY canonical_id)
-            AND json_extract(payload,'$.vote') IN ('up','down');
-            DELETE FROM user_actions WHERE action='comment'
-                AND id NOT IN (SELECT action_id FROM feedback_details)
-                AND id NOT IN (SELECT action_id FROM feedback_ratings);
-            UPDATE user_actions SET payload=json_remove(payload,'$.note','$.reason')
-                WHERE action IN ('feedback','comment');
-            UPDATE feedback_details SET payload=json_remove(payload,'$.note','$.reason');
-            UPDATE feedback_ratings SET payload=json_remove(payload,'$.note','$.reason');
-            DELETE FROM events WHERE run_id IN (
-                SELECT id FROM runs WHERE json_extract(settings,'$.kind')='feedback_interpretation'
-            );
-            UPDATE runs SET settings=json_set(settings,'$.kind','retired_feedback_interpretation'),
-                state='{"retired":true}',reason='Comment workflow removed.'
-                WHERE json_extract(settings,'$.kind')='feedback_interpretation';
-            CREATE TABLE IF NOT EXISTS creator_exclusions (
-                platform TEXT NOT NULL CHECK(platform IN ('youtube','bilibili')),
-                creator_id TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('manual','bilibili_blacklist')),
-                account_id TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL,
-                PRIMARY KEY(platform,creator_id,source,account_id)
-            );
-            CREATE TABLE IF NOT EXISTS creator_sync (
-                account_id TEXT PRIMARY KEY, payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS creator_policy (
-                id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, account_id TEXT NOT NULL
-            );
-            INSERT OR IGNORE INTO creator_policy VALUES(1,0,'');
-            PRAGMA user_version=12;
-            COMMIT;
-        """)
-        self.db.commit()
         try:
+            version = self.db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 12):
+                raise ValueError(
+                    f"Unsupported database version {version}. This release supports fresh profiles and schema 12. Export preferences with the matching older engine before changing versions."
+                )
+            self.db.execute("PRAGMA foreign_keys=ON")
+            if version == 0:
+                if self.db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1"
+                ).fetchone():
+                    raise ValueError(
+                        "Unsupported unversioned database. Use a new profile directory; existing data was not changed."
+                    )
+                self.db.executescript("""
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS runs (
+                    id TEXT PRIMARY KEY, platform TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL,
+                    settings TEXT NOT NULL, state TEXT NOT NULL, elapsed REAL NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+                    created_at TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS requests (
+                    id INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
+                    created_at TEXT NOT NULL, endpoint TEXT NOT NULL, outcome TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS discovery_registry (
+                    platform TEXT NOT NULL, kind TEXT NOT NULL, item_key TEXT NOT NULL,
+                    payload TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+                    PRIMARY KEY (platform, kind, item_key)
+                );
+                CREATE TABLE IF NOT EXISTS user_profile (
+                    id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS video_state (
+                    canonical_id TEXT PRIMARY KEY, platform TEXT NOT NULL, payload TEXT NOT NULL,
+                    watched INTEGER NOT NULL DEFAULT 0, dismissed INTEGER NOT NULL DEFAULT 0,
+                    recommended INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS user_actions (
+                    id INTEGER PRIMARY KEY, canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                    created_at TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS recommendation_exposures (
+                    run_id TEXT NOT NULL REFERENCES runs(id), canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                    position INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY(run_id,canonical_id)
+                );
+                CREATE TABLE IF NOT EXISTS engagement_snapshots (
+                    canonical_id TEXT PRIMARY KEY, payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS user_feedback_lookup ON user_actions(canonical_id,action,id);
+                CREATE INDEX IF NOT EXISTS run_request_lookup ON requests(run_id);
+                CREATE INDEX IF NOT EXISTS exposure_time_lookup ON recommendation_exposures(created_at);
+                CREATE TABLE IF NOT EXISTS domain_nodes (
+                    id TEXT PRIMARY KEY, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS domain_observations (
+                    run_id TEXT NOT NULL REFERENCES runs(id),
+                    node_id TEXT NOT NULL REFERENCES domain_nodes(id),
+                    created_at TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY(run_id,node_id)
+                );
+                CREATE INDEX IF NOT EXISTS domain_history_lookup ON domain_observations(node_id,created_at);
+                CREATE INDEX IF NOT EXISTS run_kind_platform_lookup ON runs(json_extract(settings,'$.kind'),platform,created_at);
+                CREATE INDEX IF NOT EXISTS pending_video_lookup ON video_state(recommended,watched,dismissed,platform);
+                CREATE INDEX IF NOT EXISTS evidence_cache_lookup ON runs(json_extract(settings,'$.cache_key'),platform);
+                CREATE INDEX IF NOT EXISTS evidence_identity_lookup ON runs(json_extract(settings,'$.identity.canonical_id'),platform);
+                CREATE TABLE IF NOT EXISTS feedback_ratings (
+                    canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                    dimension TEXT NOT NULL CHECK(dimension IN ('interest','quality','overall')),
+                    action_id INTEGER NOT NULL REFERENCES user_actions(id), payload TEXT NOT NULL,
+                    PRIMARY KEY(canonical_id,dimension)
+                );
+                CREATE TABLE IF NOT EXISTS learning_models (
+                    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS calibration_items (
+                    canonical_id TEXT PRIMARY KEY, cohort TEXT NOT NULL,
+                    split TEXT NOT NULL CHECK(split IN ('train','holdout')),
+                    payload TEXT NOT NULL, released INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS learning_evaluations (
+                    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS feedback_details (
+                    canonical_id TEXT NOT NULL REFERENCES video_state(canonical_id),
+                    dimension TEXT NOT NULL CHECK(dimension IN ('topic_interest','domain_interest','depth','quality_level')),
+                    action_id INTEGER NOT NULL REFERENCES user_actions(id), payload TEXT NOT NULL,
+                    PRIMARY KEY(canonical_id,dimension)
+                );
+                CREATE TABLE IF NOT EXISTS feedback_scopes (
+                    target TEXT PRIMARY KEY, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS creator_exclusions (
+                    platform TEXT NOT NULL CHECK(platform IN ('youtube','bilibili')),
+                    creator_id TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('manual','bilibili_blacklist')),
+                    account_id TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY(platform,creator_id,source,account_id)
+                );
+                CREATE TABLE IF NOT EXISTS creator_sync (
+                    account_id TEXT PRIMARY KEY, payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS creator_policy (
+                    id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, account_id TEXT NOT NULL
+                );
+                INSERT OR IGNORE INTO creator_policy VALUES(1,0,'');
+                PRAGMA user_version=12;
+                COMMIT;
+            """)
             mark_profile(self.root)
         except BaseException:
-            self.db.close()
+            try:
+                self.db.rollback()
+            finally:
+                self.db.close()
             raise
 
     def close(self):

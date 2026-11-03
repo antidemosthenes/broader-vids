@@ -25,6 +25,8 @@ def main(archive_path):
             "PLAN.md",
             "PHASES.md",
             "AUDIT.md",
+            "my-plan.md",
+            ".test-tmp",
             "research",
             "validation",
             ".env",
@@ -73,6 +75,9 @@ def main(archive_path):
                 "diagnostics",
                 "audio",
                 "audio_worker",
+                "readiness",
+                "learning/migration",
+                "recommendations/legacy",
             ):
                 assert f"broader_vids/{retired}.py" not in packaged
         documents = [

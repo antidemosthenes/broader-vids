@@ -1,4 +1,9 @@
 from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.time_budget import (
+    effective_limit,
+    validate_optional_limit,
+    report_limit,
+)
 from broader_vids.recommendations.budgets import DEFAULT_METADATA_REQUESTS
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import time
@@ -9,6 +14,7 @@ from broader_vids.recommendations.parallel import Runtime
 from broader_vids.recommendations.service import (
     create_recommendation,
     execute_recommendation,
+    _validate_current_round,
 )
 from broader_vids.recommendations.reports import (
     recommendation_report,
@@ -23,7 +29,7 @@ def create_batch(
     store,
     *,
     use_browser=False,
-    max_seconds=1800,
+    max_seconds=None,
     max_requests=DEFAULT_METADATA_REQUESTS,
     max_assessments=52,
     max_mib=1024,
@@ -36,10 +42,7 @@ def create_batch(
     assessment_model, reasoning_effort = resolve_worker_settings(
         assessment_model, reasoning_effort
     )
-    if not 0 < max_seconds <= 1800:
-        raise ValueError(
-            "The two-platform batch has one allowance of at most 1,800 seconds."
-        )
+    validate_optional_limit(max_seconds)
     if type(workers) is not int or not 1 <= workers <= 4:
         raise ValueError("Use one to four shared model workers.")
     with store.db:
@@ -49,6 +52,7 @@ def create_batch(
             {
                 "kind": "recommendation_batch",
                 "max_seconds": max_seconds,
+                "time_policy_version": 2,
                 "workers": workers,
                 "assessment_model": assessment_model,
                 "reasoning_effort": reasoning_effort,
@@ -82,8 +86,10 @@ def create_batch(
 
 
 def execute_batch(store, identifier, runner=execute_recommendation, *, progress=None):
+    _validate_current_batch(store, store.get(identifier))
     with store.lease(identifier):
         run = store.get(identifier)
+        _validate_current_batch(store, run)
         if run["settings"].get("kind") != "recommendation_batch":
             raise ValueError("Not a two-platform recommendation batch.")
         recover_elapsed(run)
@@ -108,7 +114,9 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
         started, prior = time.monotonic(), run["elapsed"]
 
         def remaining():
-            return run["settings"]["max_seconds"] - prior - (time.monotonic() - started)
+            return (
+                effective_limit(run["settings"]) - prior - (time.monotonic() - started)
+            )
 
         def save():
             run["elapsed"] = prior + time.monotonic() - started
@@ -134,7 +142,7 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
         if remaining() <= 20:
             run.update(
                 status="paused",
-                reason="The shared 30-minute allowance is exhausted; no automatic reset.",
+                reason="The requested batch time allowance is exhausted; progress is preserved.",
             )
             save()
             return run
@@ -146,7 +154,9 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
                 result = runner(
                     local,
                     child,
-                    max_seconds=max(0.01, remaining() - 20),
+                    max_seconds=report_limit(
+                        {"max_seconds": max(0.01, remaining() - 20)}
+                    ),
                     runtime=runtime,
                     batch_id=identifier,
                 )
@@ -161,7 +171,7 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
 
         run.update(
             status="running",
-            reason="Both platforms share bounded local/model workers and one deadline.",
+            reason="Both platforms share bounded local/model workers.",
         )
         start_attempt(run)
         save()
@@ -246,7 +256,7 @@ def batch_report(store, identifier):
         "status": run["status"],
         "reason": run["reason"],
         "elapsed_seconds": live_elapsed(run),
-        "shared_max_seconds": run["settings"]["max_seconds"],
+        "shared_max_seconds": report_limit(run["settings"]),
         "platforms": {
             p: recommendation_report(store, child)
             for p, child in run["state"]["children"].items()
@@ -265,3 +275,12 @@ def batch_report(store, identifier):
         encoding="utf-8",
     )
     return report, root / "report.json"
+
+
+def _validate_current_batch(store, run):
+    if run["settings"].get("time_policy_version") != 2:
+        raise ValueError(
+            "This batch uses an unsupported time policy; start a new round."
+        )
+    for child in run["state"].get("children", {}).values():
+        _validate_current_round(store.get(child))

@@ -160,16 +160,13 @@ class LearningAuditTests(unittest.TestCase):
             result["validation_status"], "frozen_for_earlier_response_types"
         )
 
-    def test_topic_anchor_survives_clear_and_schema_nine_migration(self):
+    def test_topic_anchor_survives_clear_and_current_profile_reopen(self):
         self.cohort()
         key = self.keys[0]
         with patch("broader_vids.learning.service.refresh_after_feedback"):
             save_detail(self.store, key, "topic_interest", "low", target="networks")
             save_detail(self.store, key, "topic_interest", "clear")
         expected = list(self.store.db.execute("SELECT * FROM feedback_scopes"))[0][1]
-        self.store.db.executescript(
-            "DROP TABLE feedback_scopes; PRAGMA user_version=9;"
-        )
         self.store.close()
         self.store = Store(self.directory.name)
         actual = self.store.db.execute(

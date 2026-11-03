@@ -10,7 +10,7 @@ import tempfile
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.evidence.failures import save_failure
 from broader_vids.processes import ProcessCleanupError
-from broader_vids.evidence.service import prepare_evidence
+from broader_vids.evidence.service import _require_current_rubric, prepare_evidence
 from broader_vids.processes import _terminate, start_owned, release_owned
 from broader_vids.storage import Store
 from broader_vids.storage import utc_now
@@ -166,6 +166,7 @@ def prepare_bounded(
     try:
         with store.lease(identifier, owner=lease_owner) as owner:
             baseline = store.get(identifier)
+            _require_current_rubric(baseline["settings"])
             prior = baseline["elapsed"]
             started = time.monotonic()
             try:
@@ -187,7 +188,7 @@ def prepare_bounded(
                     failure = save_failure(
                         current, error, state.get("stage", "preparation")
                     )
-                    state["retryable_failure"] = True
+                    state["retryable_failure"] = failure["retryable"]
                     current.update(status="pending", reason=failure["reason"])
                     resources = state.setdefault("resources", {})
                     resources["preparation_seconds"] = max(
@@ -230,6 +231,9 @@ def prepare_bounded(
                         }
                         state["preparation_receipt"] = attempt_token
                     store.save(current, ("preparation_interrupted", failure))
+                    from broader_vids.evidence.retention import discard_failed_media
+
+                    discard_failed_media(store, identifier, lease_owner=owner)
                 raise
             finally:
                 with store.db:

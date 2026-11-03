@@ -164,8 +164,17 @@
             <section class="preference-panel" aria-labelledby="import-heading">
               <h2 id="import-heading">Import preferences</h2>
               <p class="muted">
-                Restore interests and learned weights from a saved file. Video
-                history and exclusion rules stay on this device.
+                Restore interests, learned weights, watched video IDs, bounded
+                exploration coverage, and manual creator exclusions. Coverage
+                transfers topic summaries, not video records. A matching watched
+                ID will not enter a new recommendation list. Older files may
+                omit watched IDs, coverage, or creator rules. Manual creator
+                lists replace this profile's manual lists. An empty imported
+                list clears that platform's manual rules. Files without creator
+                rules keep the current lists. Bilibili blacklist entries stay
+                tied to the signed-in account and are refetched when you sync
+                with Bilibili. Other video history, ratings, and tag rules stay
+                local.
               </p>
               <div class="preference-file">
                 <input
@@ -185,8 +194,12 @@
               <div id="preferences-preview" hidden>
                 <dl id="preferences-summary" class="preference-summary"></dl>
                 <p class="note small-text">
-                  Import replaces saved preferences. A recovery file is saved
-                  first.
+                  Import replaces learned parameters, interests, and manual
+                  creator lists. It merges watched video IDs and exploration
+                  coverage. Older files without creator rules keep the local
+                  manual lists. Bilibili blacklist entries stay account-bound
+                  and are refetched when you sync with Bilibili. A recovery file
+                  is saved first.
                 </p>
                 <p
                   id="preferences-draft-warning"
@@ -215,8 +228,12 @@
             <section class="preference-panel" aria-labelledby="export-heading">
               <h2 id="export-heading">Export preferences</h2>
               <p class="muted">
-                Download your saved interests and learned weights as a JSON
-                file.
+                Download your saved interests, learned weights, watched video
+                IDs, bounded exploration coverage, and manual creator exclusions
+                as a JSON file. Coverage contains topic summaries, not video
+                records. Bilibili blacklist entries stay tied to the signed-in
+                account and are refetched when you sync with Bilibili. Other
+                video history, ratings, and tag rules are not included.
               </p>
               <p id="preferences-export-warning" class="note small-text" hidden>
                 Save your interest edits before exporting.

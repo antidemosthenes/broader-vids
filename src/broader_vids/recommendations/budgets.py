@@ -30,7 +30,7 @@ def collection_budget_message(store, run):
         f"{len(state['buffer'])}/100 videos passed admission and "
         f"{len(state.get('screening_rejections', {}))} were rejected.{detail} "
         "Saved candidates remain available. Explicitly increase --max-requests when continuing; "
-        "the time allowance and prior request use do not reset."
+        "any explicit time allowance and prior request use do not reset."
     )
 
 

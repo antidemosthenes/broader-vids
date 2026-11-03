@@ -203,34 +203,6 @@ class ScopedFeedbackTests(unittest.TestCase):
         self.assertEqual(snapshot["structured"]["groups"]["topic_interest"], {})
         self.assertEqual(source_data(self.store)["details"][0]["split"], "holdout")
 
-    def test_schema_eight_migration_preserves_existing_tables(self):
-        with patch("broader_vids.learning.service.refresh_after_feedback"):
-            user_action(self.store, self.key, "down", "Original reason", "quality")
-        before = list(self.store.db.execute("SELECT * FROM feedback_ratings"))
-        self.store.db.executescript(
-            "DROP TABLE feedback_details; PRAGMA user_version=8;"
-        )
-        self.store.close()
-        self.store = Store(self.directory.name)
-        self.assertEqual(
-            [
-                (*tuple(r)[:3], json.loads(r["payload"]))
-                for r in self.store.db.execute("SELECT * FROM feedback_ratings")
-            ],
-            [
-                (
-                    *tuple(r)[:3],
-                    {
-                        k: v
-                        for k, v in json.loads(r["payload"]).items()
-                        if k not in {"note", "reason"}
-                    },
-                )
-                for r in before
-            ],
-        )
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 12)
-
     def test_abstentions_do_not_require_thirty_paired_votes(self):
         from test_learning import LearningStorageTests
 

@@ -69,47 +69,6 @@ class ExplorationTests(unittest.TestCase):
             ],
         }, {"input_tokens": 100, "output_tokens": 50}
 
-    def test_language_repair_keeps_the_original_topics_and_call_allowance(self):
-        for allowance in (1, 2):
-            with self.subTest(allowance=allowance):
-                calls = []
-
-                def model(*args):
-                    response, usage = self.model(*args)
-                    calls.append(response)
-                    if len(calls) == 1:
-                        response["existing_queries"][0]["queries"]["youtube"] = (
-                            "数学 教学"
-                        )
-                    return response, usage
-
-                identifier = create_discovery(
-                    self.store,
-                    "youtube",
-                    seed=42,
-                    max_planning_calls=allowance,
-                    assessment_model="fixture-model",
-                    reasoning_effort="low",
-                )
-                run = execute_discovery(
-                    self.store, identifier, FixtureHttp, model_runner=model
-                )
-                state = run["state"]["exploration"]
-                self.assertEqual(len(calls), allowance)
-                self.assertEqual(len(state["selected"]), 3)
-                self.assertTrue(state["attempts"][0]["language_error"])
-                if allowance == 1:
-                    self.assertEqual(run["status"], "paused")
-                    self.assertEqual(self.store.request_count(identifier), 0)
-                else:
-                    self.assertTrue(state["ready"])
-                    self.assertEqual(len(state["new_nodes"]), 5)
-                    self.assertTrue(self.calls[-1]["query_language_errors"])
-                    self.assertFalse(self.calls[-1]["allow_refinements"])
-                    self.assertTrue(
-                        all(task["query"].isascii() for task in run["state"]["plan"])
-                    )
-
     def test_cold_start_search_activation_and_preferences_are_independent(self):
         original = get_profile(self.store)
         identifier = create_discovery(
@@ -128,7 +87,7 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(state["existing_shortfall"], 9)
         self.assertEqual(len(state["new_nodes"]), 5)
         self.assertEqual(state["new_shortfall"], 0)
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 2)
         self.assertEqual(len(nodes(self.store)), 8)
         self.assertTrue(
             all(n["status"] == "active" for n in nodes(self.store).values())
@@ -141,10 +100,10 @@ class ExplorationTests(unittest.TestCase):
             8,
         )
         self.assertEqual(
-            discovery_report(self.store, identifier)["planning_model_calls"], 1
+            discovery_report(self.store, identifier)["planning_model_calls"], 2
         )
         execute_discovery(self.store, identifier, FixtureHttp, model_runner=self.model)
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 2)
 
     def test_continuation_keeps_selected_topics_plan_and_attempt_allowance(self):
         identifier = create_discovery(
@@ -165,7 +124,7 @@ class ExplorationTests(unittest.TestCase):
                 self.store, identifier, FixtureHttp, model_runner=self.model
             )
             self.assertEqual(second["state"]["plan"], snapshot)
-            self.assertEqual(len(self.calls), 1)
+            self.assertEqual(len(self.calls), 2)
             self.assertEqual(second["state"]["phase"], "finished")
         finally:
             FixtureHttp.fail_once = False
@@ -222,32 +181,6 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(self.store.request_count(identifier), 0)
         self.assertEqual(self.calls, [])
         self.assertEqual(len(nodes(self.store)), 3)
-
-    def test_bounded_second_attempt_refines_locally_and_records_shortfalls(self):
-        def refinement(prompt, schema, output, images, timeout):
-            context = json.loads(prompt.split("\n", 1)[1])
-            response, usage = self.model(prompt, schema, output, images, timeout)
-            response["proposals"] = (
-                []
-                if not context["allow_refinements"]
-                else [proposal("Topology", [context["selected"][0]["id"]])]
-            )
-            return response, usage
-
-        identifier = create_discovery(
-            self.store,
-            "bilibili",
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        run = execute_discovery(
-            self.store, identifier, FixtureHttp, model_runner=refinement
-        )
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(run["state"]["exploration"]["new_shortfall"], 4)
-        node = next(n for n in nodes(self.store).values() if n["label"] == "Topology")
-        self.assertEqual(node["depth"], 2)
-        self.assertEqual(node["status"], "active")
 
     def test_empty_successful_search_does_not_activate_a_proposal(self):
         def no_match(*args):
@@ -335,10 +268,10 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(len(self.store.get(identifier)["state"]["plan"]), 17)
         self.assertNotIn("exploration", self.store.get(identifier)["state"])
 
-    def test_missing_existing_queries_can_use_the_remaining_attempt(self):
+    def test_missing_existing_queries_preserve_the_round_when_budget_exhausts(self):
         def incomplete(*args):
             response, usage = self.model(*args)
-            if len(self.calls) == 1:
+            if Path(args[1]).name != "branch-schema.json":
                 response["existing_queries"] = []
             return response, usage
 
@@ -351,9 +284,11 @@ class ExplorationTests(unittest.TestCase):
         run = execute_discovery(
             self.store, identifier, FixtureHttp, model_runner=incomplete
         )
-        self.assertEqual(run["state"]["phase"], "finished")
+        self.assertEqual(run["status"], "budget_exhausted")
+        self.assertEqual(run["state"]["phase"], "planning")
         self.assertEqual(len(self.calls), 2)
-        self.assertEqual(len(run["state"]["exploration"]["new_nodes"]), 5)
+        self.assertFalse(run["state"]["exploration"]["ready"])
+        self.assertEqual(self.store.request_count(identifier), 0)
 
     def test_reusing_a_finished_buffer_does_not_charge_historical_planning(self):
         identifier = create_discovery(
@@ -376,7 +311,7 @@ class ExplorationTests(unittest.TestCase):
                 ),
             )
         self.assertEqual(run["state"]["planning_model_calls"], 0)
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 2)
 
     def test_recommendations_charge_planning_calls_to_the_shared_allowance(self):
         def discovery(store, identifier, **kwargs):

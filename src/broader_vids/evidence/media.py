@@ -1,4 +1,5 @@
 import hashlib
+import errno
 import copy
 from collections import deque
 import html
@@ -12,9 +13,12 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 
+MAX_VIDEO_RETRIES = 3
+
+
 MEDIA_FORMAT = (
-    "worst[height>=240][height<=480][vcodec!=none][acodec!=none]/"
-    "worstvideo[height>=240][height<=480]+worstaudio/"
+    "worst[height>=200][height<=480][vcodec!=none][acodec!=none]/"
+    "worstvideo[height>=200][height<=480]+worstaudio/"
     "worst[height<=720][vcodec!=none][acodec!=none]/"
     "worstvideo[height<=720]+worstaudio/"
     "worst[width<=720][vcodec!=none][acodec!=none]/"
@@ -31,7 +35,7 @@ class EvidencePending(Exception):
 
 
 VIDEO_FORMAT = (
-    "worstvideo[height>=240][height<=480]/"
+    "worstvideo[height>=200][height<=480]/"
     "worstvideo[height<=720]/worstvideo[width<=720]/"
     "worst[height<=720][vcodec!=none]/worst[width<=720][vcodec!=none]"
 )
@@ -46,6 +50,87 @@ def public_error(error):
         message,
     )
     return message[:400]
+
+
+def content_status(error):
+    status = getattr(error, "status", None) or getattr(error, "code", None)
+    if type(status) is int:
+        return status
+    match = re.search(
+        r"\b(?:http(?:\s+error)?|status(?:\s+code)?)\s*[:=]?\s*(\d{3})\b",
+        str(error),
+        re.IGNORECASE,
+    )
+    return int(match[1]) if match else None
+
+
+def access_challenge(error):
+    return content_status(error) in {403, 412, 429} or any(
+        token in str(error).casefold()
+        for token in ("captcha", "security check", "sign in to confirm")
+    )
+
+
+def file_in_use(error):
+    return (
+        getattr(error, "winerror", None) in {32, 33}
+        or bool(re.search(r"\[WinError\s+(?:32|33)\]", str(error), re.IGNORECASE))
+        or "because it is being used by another process" in str(error).casefold()
+    )
+
+
+def transient_content_error(error):
+    return (
+        file_in_use(error)
+        or isinstance(error, (TimeoutError, ConnectionError))
+        or any(
+            token in str(error).casefold()
+            for token in (
+                "timed out",
+                "timeout",
+                "connection reset",
+                "connection aborted",
+                "connection refused",
+                "remote end closed",
+                "incomplete read",
+                "bytes read",
+                "slow cdn transfer",
+                "http error 500",
+                "http error 502",
+                "http error 503",
+                "http error 504",
+            )
+        )
+    )
+
+
+def storage_failure(error):
+    if file_in_use(error):
+        return None
+    text = str(error).casefold()
+    if (
+        isinstance(error, PermissionError)
+        or isinstance(error, OSError)
+        and error.errno in {errno.EACCES, errno.EPERM, errno.ENOSPC, errno.EROFS}
+        or any(
+            token in text
+            for token in (
+                "no space left on device",
+                "not enough space on the disk",
+                "not enough disk space",
+                "disk full",
+                "unable to open for writing",
+                "unable to write data",
+                "unable to rename file",
+            )
+        )
+    ):
+        return EvidencePending(
+            f"Local media storage failed: {public_error(error)}",
+            scope="run",
+            category="storage",
+        )
+    return None
 
 
 def file_hash(path):
@@ -249,11 +334,13 @@ def compact_captions(cues, max_characters=12000):
 
 
 class QuietLog:
-    def __init__(self):
+    def __init__(self, resume_reset=None):
         self.messages = deque(maxlen=20)
+        self.resume_reset = resume_reset
 
     def debug(self, message):
-        pass
+        if self.resume_reset and message.startswith("[download] Unable to resume"):
+            self.resume_reset()
 
     def warning(self, message):
         self.messages.append(public_error(message))
@@ -265,7 +352,7 @@ class QuietLog:
 class VideoFetcher:
     def __init__(self, byte_limit, deadline, cookie_jar=None):
         try:
-            from yt_dlp import YoutubeDL
+            from broader_vids.evidence.downloader import ManagedYoutubeDL
         except ImportError:
             raise EvidencePending(
                 "Install the optional evidence dependencies with UV."
@@ -274,12 +361,15 @@ class VideoFetcher:
         self.downloaded_bytes = 0
         self._finished = {}
         self.download_attempts = []
+        self.metadata_attempts = []
         self._spent_base = 0
         self._resume_offsets = {}
+        self._progress_positions = {}
+        self._resume_reset_pending = False
         self._stream_started = {}
         self._stream_samples = {}
         self._can_failover = False
-        self.logger = QuietLog()
+        self.logger = QuietLog(self._resume_reset)
         self.options = {
             "quiet": True,
             "logger": self.logger,
@@ -293,15 +383,17 @@ class VideoFetcher:
             "http_chunk_size": 2 * 1024 * 1024,
             "retries": 0,
             "fragment_retries": 0,
+            "concurrent_fragment_downloads": 1,
             "extractor_retries": 0,
             "extractor_args": {"youtube": {"skip": ["translated_subs"]}},
             "js_runtimes": {"node": {}},
             "cachedir": False,
             "format": VIDEO_FORMAT,
             "progress_hooks": [self._progress],
+            "_broader_vids_file_retry": self._wait_before_retry,
             "ffmpeg_location": ffmpeg_executable(),
         }
-        self.ydl = YoutubeDL(self.options)
+        self.ydl = ManagedYoutubeDL(self.options)
         self.audio_required = False
         self.max_file_bytes = byte_limit
         from broader_vids.evidence.bilibili_download import ReliableBilibiliIE
@@ -320,57 +412,147 @@ class VideoFetcher:
         self.ydl.params["format"] = selected
         self.ydl.format_selector = self.ydl.build_format_selector(selected)
 
+    def _resume_reset(self):
+        self._resume_reset_pending = True
+
     def _progress(self, progress):
         filename = progress.get("filename", "current")
         downloaded = progress.get("downloaded_bytes", 0) or 0
         offset = getattr(self, "_resume_offsets", {}).get(filename, 0)
-        self._finished[filename] = max(
-            self._finished.get(filename, 0), max(0, downloaded - offset)
+        positions = self._progress_positions
+        previous = positions.get(filename, offset)
+        if self._resume_reset_pending:
+            previous = 0
+            self._resume_reset_pending = False
+        elif 0 < downloaded < previous and progress.get("status") == "downloading":
+            previous = 0
+        self._finished[filename] = self._finished.get(filename, 0) + max(
+            0, downloaded - previous
         )
+        if downloaded >= previous:
+            positions[filename] = downloaded
         self.downloaded_bytes = getattr(self, "_spent_base", 0) + sum(
             self._finished.values()
         )
         if getattr(self, "progress_callback", None):
             self.progress_callback(self.downloaded_bytes)
-        if (
-            self.downloaded_bytes > self.byte_limit
-            or time.monotonic() > self.deadline
-            or (
-                getattr(self, "cancelled", None) is not None and self.cancelled.is_set()
-            )
-        ):
-            raise EvidencePending(
-                "The evidence download byte/time budget was exhausted.", retryable=True
-            )
-        if (
-            getattr(self, "_can_failover", False)
-            and progress.get("status") == "downloading"
-        ):
+        self._check_download_budget()
+        if progress.get("status") != "downloading":
+            self._stream_started.pop(filename, None)
+            self._stream_samples.pop(filename, None)
+            return
+        attempt_deadline = getattr(self, "_attempt_deadline", None)
+        if not self._can_failover and attempt_deadline is None:
+            return
+        now = time.monotonic()
+        samples = self._stream_samples.get(filename)
+        if samples is None:
             started, initial = self._stream_started.setdefault(
-                filename, (time.monotonic(), downloaded)
+                filename, (now, downloaded)
             )
-            now = time.monotonic()
-            samples = self._stream_samples.setdefault(
-                filename, deque([(started, initial)])
+            samples = self._stream_samples[filename] = deque(
+                [(started, initial)], maxlen=64
             )
+        if now - samples[-1][0] >= 0.25:
             samples.append((now, downloaded))
-            while len(samples) > 2 and samples[1][0] <= now - 15:
-                samples.popleft()
-            seconds = now - samples[0][0]
-            if seconds >= 15 and (downloaded - samples[0][1]) / seconds < 128 * 1024:
-                raise ConnectionError(
-                    "Slow CDN transfer; trying an offered backup within the remaining budget."
+        while len(samples) > 2 and samples[1][0] <= now - 15:
+            samples.popleft()
+        seconds = now - samples[0][0]
+        rate = (downloaded - samples[0][1]) / seconds if seconds > 0 else 0
+        total = progress.get("total_bytes") or progress.get("total_bytes_estimate")
+        can_finish = (
+            type(total) in {int, float}
+            and math.isfinite(total)
+            and total >= downloaded
+            and rate > 0
+            and (total - downloaded) / rate + 5 < self.deadline - now
+        )
+        if attempt_deadline is not None and now >= attempt_deadline and not can_finish:
+            raise TimeoutError(
+                "The media transfer attempt timed out within its time slice."
+            )
+        if (
+            self._can_failover
+            and seconds >= 15
+            and rate < 128 * 1024
+            and not can_finish
+        ):
+            raise ConnectionError(
+                "Slow CDN transfer; trying an offered backup within the remaining budget."
+            )
+
+    def _check_download_budget(self):
+        if getattr(self, "cancelled", None) is not None and self.cancelled.is_set():
+            raise EvidencePending(
+                "Media download was cancelled.", retryable=True, category="cancelled"
+            )
+        if self.downloaded_bytes > self.byte_limit:
+            raise EvidencePending(
+                "The candidate media-download byte allowance was exhausted.",
+                category="media_size",
+            )
+        if time.monotonic() >= self.deadline:
+            raise EvidencePending(
+                "The candidate media-download time allowance was exhausted.",
+                category="media_timeout",
+            )
+
+    def _wait_before_retry(self, number, scale=0.5):
+        pause = min(scale * (number + 1), max(0, self.deadline - time.monotonic()))
+        cancellation = getattr(self, "cancelled", None)
+        if cancellation is None:
+            time.sleep(pause)
+            return
+        end = time.monotonic() + pause
+        while time.monotonic() < end:
+            if cancellation.is_set():
+                raise EvidencePending(
+                    "Video access was cancelled.", retryable=True, category="cancelled"
                 )
+            time.sleep(min(0.1, max(0, end - time.monotonic())))
 
     def metadata(self, identity):
-        try:
-            info = self.ydl.extract_info(identity["url"], download=False)
-        except Exception as error:
-            raise EvidencePending(
-                f"{identity['platform']} content access failed ({type(error).__name__}): {public_error(error)}",
-                retryable="requested format is not available"
-                not in str(error).casefold(),
-            ) from None
+        if identity["platform"] == "bilibili":
+            self.ydl.params["format_sort"] = ["res", "br", "size"]
+        for number in range(1 + MAX_VIDEO_RETRIES):
+            self._check_download_budget()
+            self.ydl.params["socket_timeout"] = min(
+                15, max(0.1, self.deadline - time.monotonic())
+            )
+            attempt = {"number": number + 1}
+            started = time.monotonic()
+            try:
+                info = self.ydl.extract_info(identity["url"], download=False)
+                attempt["status"] = "completed"
+                break
+            except Exception as error:
+                attempt.update(status="failed", error=public_error(error))
+                if isinstance(error, EvidencePending):
+                    raise
+                local_failure = storage_failure(error)
+                if local_failure:
+                    raise local_failure from None
+                challenge = access_challenge(error)
+                permanent = (
+                    content_status(error) in {400, 404, 410}
+                    or "requested format is not available" in str(error).casefold()
+                )
+                if (
+                    not challenge
+                    and not permanent
+                    and number < MAX_VIDEO_RETRIES
+                    and self.deadline - time.monotonic() > 1
+                ):
+                    self._wait_before_retry(number, scale=1)
+                    continue
+                raise EvidencePending(
+                    f"{identity['platform']} content access failed ({type(error).__name__}): {public_error(error)}",
+                    scope="platform" if challenge else "candidate",
+                    category="access" if challenge else "media_transfer",
+                ) from None
+            finally:
+                attempt["seconds"] = round(time.monotonic() - started, 3)
+                self.metadata_attempts.append(attempt)
         if info.get("_type") in {"playlist", "multi_video"}:
             entries = list(info.get("entries") or [])
             if len(entries) != 1:
@@ -468,6 +650,7 @@ class VideoFetcher:
         return None
 
     def download(self, info, directory):
+        self._check_download_budget()
         output = Path(directory) / "media.%(ext)s"
         self.ydl.params["outtmpl"]["default"] = str(output)
         self.ydl.params["writesubtitles"] = False
@@ -480,11 +663,17 @@ class VideoFetcher:
             }
         )
         templates = info.get("requested_formats") or [info]
-        sizes = [stream.get("filesize") for stream in templates]
+        sizes = [
+            stream.get("filesize") or stream.get("filesize_approx")
+            for stream in templates
+        ]
         present = sum(
             p.stat().st_size for p in Path(directory).glob("media.*") if p.is_file()
         )
-        if all(type(size) is int and size > 0 for size in sizes):
+        if all(
+            type(size) in {int, float} and math.isfinite(size) and size > 0
+            for size in sizes
+        ):
             required = max(0, sum(sizes) - present)
             if required > self.byte_limit:
                 raise EvidencePending(
@@ -495,22 +684,20 @@ class VideoFetcher:
             list(dict.fromkeys([stream["url"], *stream.get("backup_urls", [])]))
             for stream in templates
         ]
-        maximum = min(3, max(2, max(map(len, routes))))
+        maximum = 1 + MAX_VIDEO_RETRIES
         attempts = getattr(self, "download_attempts", [])
         self.download_attempts = attempts
         for number in range(maximum):
-            if (
-                time.monotonic() >= self.deadline
-                or self.downloaded_bytes >= self.byte_limit
-            ):
+            self._check_download_budget()
+            if self.downloaded_bytes >= self.byte_limit:
                 raise EvidencePending(
-                    "The evidence download byte/time budget was exhausted.",
-                    retryable=True,
+                    "No media-download bytes remain for this candidate.",
+                    category="media_size",
                 )
             selected = copy.deepcopy(info)
             streams = selected.get("requested_formats") or [selected]
             for stream, options in zip(streams, routes):
-                route = options[min(number, len(options) - 1)]
+                route = options[number % len(options)]
                 stream["url"] = route
                 for entry in selected.get("formats", []):
                     if (
@@ -518,23 +705,34 @@ class VideoFetcher:
                         and entry.get("url") in options
                     ):
                         entry["url"] = route
-            self._can_failover = any(number + 1 < len(options) for options in routes)
+            self._can_failover = number + 1 < maximum and any(
+                len(options) > 1 for options in routes
+            )
             self._spent_base = self.downloaded_bytes
             self._finished = {}
             self._stream_started = {}
             self._stream_samples = {}
             self._resume_offsets = {
-                str(path.with_suffix("")): path.stat().st_size
-                for path in Path(directory).glob("media.*.part")
+                str(
+                    path.with_suffix("") if path.suffix == ".part" else path
+                ): path.stat().st_size
+                for path in Path(directory).glob("media.*")
+                if path.is_file()
             }
+            self._progress_positions = {}
+            self._resume_reset_pending = False
             attempt = {
                 "number": number + 1,
                 "hosts": [urlsplit(s["url"]).hostname for s in streams],
             }
             started = time.monotonic()
-            self.ydl.params["socket_timeout"] = min(
-                15, max(0.1, self.deadline - started)
+            attempt_seconds = max(0.1, self.deadline - started)
+            if self._can_failover:
+                attempt_seconds /= maximum - number
+            self._attempt_deadline = (
+                started + attempt_seconds if self._can_failover else None
             )
+            self.ydl.params["socket_timeout"] = min(15, attempt_seconds)
             try:
                 self.ydl.process_ie_result(selected, download=True)
                 attempt["status"] = "completed"
@@ -542,36 +740,13 @@ class VideoFetcher:
             except Exception as error:
                 message = public_error(error)
                 attempt.update(status="failed", error=message)
-                text = str(error).casefold()
-                challenge = any(
-                    token in text
-                    for token in (
-                        "403",
-                        "412",
-                        "429",
-                        "captcha",
-                        "security check",
-                        "sign in to confirm",
-                    )
-                )
-                transient = isinstance(error, (TimeoutError, ConnectionError)) or any(
-                    token in text
-                    for token in (
-                        "timed out",
-                        "timeout",
-                        "connection reset",
-                        "connection aborted",
-                        "connection refused",
-                        "remote end closed",
-                        "incomplete read",
-                        "bytes read",
-                        "slow cdn transfer",
-                        "http error 500",
-                        "http error 502",
-                        "http error 503",
-                        "http error 504",
-                    )
-                )
+                if isinstance(error, EvidencePending):
+                    raise
+                local_failure = storage_failure(error)
+                if local_failure:
+                    raise local_failure from None
+                challenge = access_challenge(error)
+                transient = transient_content_error(error)
                 if (
                     challenge
                     or not transient
@@ -580,23 +755,13 @@ class VideoFetcher:
                 ):
                     raise EvidencePending(
                         f"Media download stopped ({type(error).__name__}): {message}",
-                        retryable=not challenge,
+                        retryable=False,
+                        scope="platform" if challenge else "candidate",
+                        category="access" if challenge else "media_transfer",
                     ) from None
-                pause = min(
-                    0.5 * (number + 1), max(0, self.deadline - time.monotonic())
-                )
-                cancellation = getattr(self, "cancelled", None)
-                if cancellation is not None:
-                    end = time.monotonic() + pause
-                    while time.monotonic() < end:
-                        if cancellation.is_set():
-                            raise EvidencePending(
-                                "Media download was cancelled.", retryable=True
-                            )
-                        time.sleep(min(0.1, max(0, end - time.monotonic())))
-                else:
-                    time.sleep(pause)
+                self._wait_before_retry(number)
             finally:
+                self._attempt_deadline = None
                 attempt["seconds"] = round(time.monotonic() - started, 3)
                 attempt["new_bytes"] = self.downloaded_bytes - self._spent_base
                 attempts.append(attempt)
@@ -607,6 +772,7 @@ class VideoFetcher:
         ]
         if len(candidates) != 1 or candidates[0].stat().st_size > self.max_file_bytes:
             raise EvidencePending(
-                "The downloader did not produce one video within the byte limit."
+                "The downloader did not produce one video within the byte limit.",
+                category="media_size",
             )
         return candidates[0]

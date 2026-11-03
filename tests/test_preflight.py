@@ -1,6 +1,7 @@
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 import io
 import json
+import math
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ from broader_vids.preflight_checks import bilibili_check, chatgpt_check, inspect
 from broader_vids.recommendations.batch import create_batch
 from broader_vids.recommendations.service import create_recommendation
 from broader_vids.storage import Store, utc_now
+from broader_vids.time_budget import effective_limit
 
 
 AVAILABLE = {
@@ -176,6 +178,14 @@ class PreflightTests(unittest.TestCase):
             self.assertNotIn("terminal_argv", action)
             self.assertNotIn("powershell_command", action)
             self.assertNotIn(launcher, json.dumps(action))
+        message = report["next_steps_message"]
+        for action in steps.values():
+            self.assertIn(action["description"], message)
+            self.assertIn(action["request"], message)
+            self.assertIn(action["skill_invocation"], message)
+        self.assertIn("Import/Export", message)
+        self.assertIn("Run setup before reuse.", message)
+        self.assertNotIn(launcher, message)
         self.assertEqual(self.store.list_runs(), [])
         self.assertFalse((self.store.root / ".dashboard").exists())
 
@@ -359,6 +369,37 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(len(self.store.events(identifier)), 1)
         self.assertIsNone(status(self.store.root)["completed_at"])
 
+    def test_interrupted_run_preflight_is_charged_once_after_crash_recovery(self):
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            assessment_model="saved-model",
+            reasoning_effort="high",
+        )
+        run = self.store.get(identifier)
+        run["elapsed"] = 25
+        run["state"]["active_attempt"] = {"started_wall": 100, "prior_elapsed": 5}
+        self.store.save(run)
+        wall = [120]
+
+        def ready(*args, **kwargs):
+            wall[0] += 2
+            return {"status": "ready", "elapsed_seconds": 2}
+
+        with (
+            patch(
+                "broader_vids.recommendations.timing.time.time",
+                side_effect=lambda: wall[0],
+            ),
+            patch("broader_vids.cli.startup.preflight", side_effect=ready),
+        ):
+            report = prepare_recommendation(
+                self.store, parser().parse_args(["continue", identifier])
+            )
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(self.store.get(identifier)["elapsed"], 27)
+        self.assertNotIn("active_attempt", self.store.get(identifier)["state"])
+
     def test_batch_resume_retains_children_settings_and_rejects_child_continuation(
         self,
     ):
@@ -394,10 +435,66 @@ class PreflightTests(unittest.TestCase):
         self.probe.assert_not_called()
         self.assertEqual(self.store.get(identifier)["elapsed"], 0)
 
+    def test_unlimited_rounds_resume_beyond_thirty_minutes(self):
+        self.assertIsNone(parser().parse_args(["recommend"]).max_seconds)
+        identifier = create_recommendation(
+            self.store,
+            "youtube",
+            assessment_model="saved-model",
+            reasoning_effort="high",
+        )
+        run = self.store.get(identifier)
+        self.assertIsNone(run["settings"]["max_seconds"])
+        run["elapsed"] = 2400
+        self.store.save(run)
+        report = prepare_recommendation(
+            self.store, parser().parse_args(["continue", identifier])
+        )
+        self.assertEqual(report["status"], "ready")
+        self.assertTrue(
+            math.isinf(effective_limit(self.store.get(identifier)["settings"]))
+        )
+        self.assertGreaterEqual(self.store.get(identifier)["elapsed"], 2400)
+        self.assertLessEqual(self.probe.call_args.kwargs["timeout"], 30)
+        json.dumps(self.store.get(identifier), allow_nan=False)
+
+    def test_optional_time_limits_accept_long_runs_and_keep_explicit_caps(self):
+        for value in (0, -1, True, float("inf"), float("nan")):
+            with self.subTest(invalid=value), self.assertRaises(ValueError):
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    max_seconds=value,
+                    assessment_model="saved-model",
+                    reasoning_effort="high",
+                )
+        for value in (None, 1800, 7200):
+            with self.subTest(value=value):
+                identifier = create_recommendation(
+                    self.store,
+                    "youtube",
+                    max_seconds=value,
+                    assessment_model="saved-model",
+                    reasoning_effort="high",
+                )
+                run = self.store.get(identifier)
+                self.assertEqual(run["settings"]["time_policy_version"], 2)
+                self.assertEqual(run["settings"]["max_seconds"], value)
+                json.dumps(run, allow_nan=False)
+                if value == 1800:
+                    run["elapsed"] = 2000
+                    self.store.save(run)
+                    report = prepare_recommendation(
+                        self.store, parser().parse_args(["continue", identifier])
+                    )
+                    self.assertEqual(report["status"], "blocked")
+                    self.assertIn("time_allowance", report["checks"])
+
     def test_resume_recovers_crash_time_before_any_network_check(self):
         identifier = create_recommendation(
             self.store,
             "youtube",
+            max_seconds=100,
             assessment_model="saved-model",
             reasoning_effort="high",
         )
@@ -498,6 +595,79 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid onboarding"):
             status(self.store.root)
         self.assertEqual(get_profile(self.store)["interests"], ["mathematics"])
+
+    def test_chat_completion_renders_the_entire_guide_and_keeps_blockers_structured(
+        self,
+    ):
+        configure(self.store, "both")
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            code = main(
+                [
+                    "--data-dir",
+                    self.directory.name,
+                    "onboarding",
+                    "complete",
+                    "--format",
+                    "chat",
+                    "--skill-namespace",
+                    "broader-vids",
+                    "--model",
+                    "fixture-model",
+                    "--effort",
+                    "low",
+                    "--asr-model",
+                    "base",
+                ]
+            )
+        message = output.getvalue().strip()
+        self.assertEqual(code, 0)
+        self.assertIn("Self-check: passed.", message)
+        self.assertIn("YouTube and Bilibili", message)
+        self.assertIn(str(self.store.root), message)
+        self.assertIn("ffprobe: missing", message)
+        self.assertIn("Import/Export", message)
+        report = complete(
+            self.store,
+            model="fixture-model",
+            effort="low",
+            asr_model="base",
+            skill_namespace="broader-vids",
+        )
+        self.assertEqual(message, report["next_steps_message"])
+        for action in report["next_steps"].values():
+            self.assertIn(action["description"], message)
+            self.assertIn(action["request"], message)
+            self.assertIn("`$broader-vids:" + action["skill_name"] + "`", message)
+        self.assertEqual(self.store.list_runs(), [])
+        self.assertFalse((self.store.root / ".dashboard").exists())
+        configure(self.store, "youtube")
+        self.probe.return_value = {
+            "checks": {"ffmpeg": {"status": "missing"}},
+            "warnings": {},
+        }
+        code, blocked = self.invoke(
+            "onboarding",
+            "complete",
+            "--format",
+            "chat",
+            "--model",
+            "fixture-model",
+            "--effort",
+            "low",
+        )
+        self.assertEqual((code, blocked["status"]), (2, "blocked"))
+        self.assertNotIn("next_steps_message", blocked)
+        self.assertIsNone(status(self.store.root)["completed_at"])
+        self.probe.reset_mock()
+        with self.assertRaises(ValueError):
+            complete(
+                self.store,
+                model="fixture-model",
+                effort="low",
+                skill_namespace="invalid:namespace",
+            )
+        self.probe.assert_not_called()
 
     def test_completion_verifies_transcription_only_when_explicitly_requested(self):
         configure(self.store, "youtube")

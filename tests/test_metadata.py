@@ -10,9 +10,7 @@ from broader_vids.cli.arguments import parser
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
 from broader_vids.recommendations.engagement import collect_snapshot, metadata_fresh
 from broader_vids.recommendations.metadata import metadata_session, refresh_metadata
-from broader_vids.recommendations.service import enrich_buffer
 from broader_vids.storage import Store, utc_now
-from test_recommendations import candidate
 
 
 VIDEO = "BV1ig87zeE9q"
@@ -192,42 +190,6 @@ class MetadataTests(unittest.TestCase):
         self.assertIn("login bilibili", result["reason"])
         request.assert_not_called()
 
-    def test_failed_enrichment_preserves_cursor_and_successful_resume(self):
-        http = self.http()
-        run = self.store.get(http.run["id"])
-        run["settings"].update(
-            use_browser=False, profile={"interests": ["mathematics"]}
-        )
-        item = candidate(1, "bilibili")
-        run["state"] = {
-            "phase": "enrich",
-            "buffer": [item],
-            "enrichment_index": 0,
-            "issues": [],
-        }
-
-        def save():
-            self.store.save(run)
-
-        with patch(
-            "broader_vids.recommendations.service.collect_snapshot",
-            side_effect=AccessPaused("HTTP 412"),
-        ):
-            with self.assertRaises(AccessPaused):
-                enrich_buffer(self.store, run, http, lambda: 60, save)
-        saved = self.store.get(run["id"])
-        self.assertEqual(saved["state"]["enrichment_index"], 0)
-        self.assertEqual(saved["state"]["phase"], "enrich")
-        with patch(
-            "broader_vids.recommendations.service.collect_snapshot",
-            return_value={"observed_at": utc_now(), "metadata_version": 2},
-        ) as request:
-            enrich_buffer(self.store, run, http, lambda: 60, save)
-        self.assertEqual(request.call_count, 1)
-        self.assertEqual(run["state"]["enrichment_index"], 1)
-        self.assertEqual(run["state"]["phase"], "assess")
-        self.assertNotIn("metadata_route_paused", run["state"])
-
     def test_cli_and_platform_validation(self):
         args = parser().parse_args(["metadata", URL, "--use-browser"])
         self.assertTrue(args.use_browser)
@@ -245,62 +207,6 @@ class MetadataTests(unittest.TestCase):
         self.assertTrue(metadata_fresh(cached, "youtube"))
         self.assertTrue(
             metadata_fresh({**cached, "provenance_status": "complete"}, "bilibili")
-        )
-
-    def test_pending_metadata_failure_pauses_and_retries_without_refetching_buffer(
-        self,
-    ):
-        http = self.http()
-        run = self.store.get(http.run["id"])
-        run["settings"].update(
-            use_browser=False, profile={"interests": ["mathematics"]}
-        )
-        item, pending = candidate(1, "bilibili"), candidate(2, "bilibili")
-        with self.store.db:
-            self.store.db.execute(
-                "INSERT INTO video_state VALUES(?,?,?,0,0,1,?)",
-                (pending["canonical_id"], "bilibili", json.dumps(pending), utc_now()),
-            )
-        run["state"] = {
-            "phase": "enrich",
-            "buffer": [item],
-            "enrichment_index": 0,
-            "issues": [],
-        }
-
-        def save():
-            self.store.save(run)
-
-        snapshot = {
-            **pending["engagement"],
-            "observed_at": utc_now(),
-            "metadata_version": 2,
-            "provenance_status": "complete",
-        }
-        with patch(
-            "broader_vids.recommendations.service.collect_snapshot",
-            side_effect=[snapshot, AccessPaused("HTTP 412")],
-        ):
-            with self.assertRaises(AccessPaused):
-                enrich_buffer(self.store, run, http, lambda: 60, save)
-        self.assertEqual(run["state"]["enrichment_index"], 1)
-        self.assertEqual(run["state"]["phase"], "enrich")
-        self.assertEqual(run["state"]["issues"][-1]["stage"], "pending_metadata")
-        with patch(
-            "broader_vids.recommendations.service.collect_snapshot",
-            return_value=snapshot,
-        ) as request:
-            enrich_buffer(self.store, run, http, lambda: 60, save)
-        self.assertEqual(request.call_count, 1)
-        self.assertEqual(
-            request.call_args.args[1]["canonical_id"], pending["canonical_id"]
-        )
-        self.assertEqual(run["state"]["phase"], "assess")
-        self.assertTrue(
-            any(
-                i["canonical_id"] == pending["canonical_id"] and i["carryover"]
-                for i in run["state"]["shortlist"]
-            )
         )
 
     def test_failed_request_clears_previous_success_receipt(self):

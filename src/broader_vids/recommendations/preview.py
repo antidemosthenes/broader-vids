@@ -4,6 +4,7 @@ from broader_vids.creators import excluded
 from broader_vids.evidence.media import public_error
 from broader_vids.learning.inference import work_scope
 from broader_vids.learning.service import ensure_model
+from broader_vids.recommendations.learning_snapshot import round_learning
 from broader_vids.preferences import get_profile, video_states
 from broader_vids.recommendations.quality import cached_quality
 from broader_vids.recommendations.ranking import rank_slate
@@ -41,7 +42,9 @@ def update_preview(store, run, seconds=5):
                 and not states.get(i["canonical_id"], {}).get("dismissed")
                 and not excluded(i, state.get("creator_rules"))
             ]
-            learning = ensure_model(store)
+            learning = round_learning(store, run)
+            if learning is None:
+                learning = ensure_model(store)
             state["preview"] = rank_slate(
                 items,
                 observations,

@@ -152,25 +152,16 @@ def canonical_identity(value):
 
 
 def current_recommendation_id(store, platform):
-    cursor = store.db.execute(
-        "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='recommendation' AND platform=?"
-        " ORDER BY created_at DESC, id DESC",
+    query = "SELECT id FROM runs WHERE json_extract(settings,'$.kind')='recommendation' AND platform=?"
+    order = " ORDER BY created_at DESC, id DESC LIMIT 1"
+    row = store.db.execute(
+        query + " AND (COALESCE(json_array_length(state,'$.selected'),0)>0"
+        " OR COALESCE(json_array_length(state,'$.preview'),0)>0)" + order,
         (platform,),
-    )
-    newest = None
-    try:
-        for row in cursor:
-            newest = newest or row[0]
-            counts = store.db.execute(
-                "SELECT COALESCE(json_array_length(state,'$.selected'),0),"
-                " COALESCE(json_array_length(state,'$.preview'),0) FROM runs WHERE id=?",
-                (row[0],),
-            ).fetchone()
-            if counts and (counts[0] or counts[1]):
-                return row[0]
-        return newest
-    finally:
-        cursor.close()
+    ).fetchone()
+    if row is None:
+        row = store.db.execute(query + order, (platform,)).fetchone()
+    return row[0] if row else None
 
 
 def video_payload(store, identifier):

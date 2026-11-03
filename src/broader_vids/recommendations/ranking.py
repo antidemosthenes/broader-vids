@@ -6,7 +6,10 @@ from broader_vids.recommendations.engagement import rate_scores
 from broader_vids.exploration.domains import normalized
 from broader_vids.recommendations.originality import provenance
 from broader_vids.creators import excluded
-from broader_vids.recommendations.screening import DEFAULT_INSPECTION_LIMIT
+from broader_vids.recommendations.screening import (
+    CURRENT_SCREENING_POLICY,
+    DEFAULT_INSPECTION_LIMIT,
+)
 
 
 def domains(item):
@@ -51,11 +54,18 @@ def screen(
     profile,
     creator_rules=None,
     *,
-    policy_version=3,
+    policy_version=5,
     limit=DEFAULT_INSPECTION_LIMIT,
+    learning=None,
 ):
-    if type(limit) is not int or not 1 <= limit <= 100:
-        raise ValueError("The inspection limit must be an integer from 1 to 100.")
+    if policy_version != CURRENT_SCREENING_POLICY:
+        raise ValueError(
+            "Unsupported screening policy; start a new recommendation round."
+        )
+    if limit != DEFAULT_INSPECTION_LIMIT:
+        raise ValueError(
+            "Unsupported inspection limit; start a new recommendation round."
+        )
     blocked = {
         i["canonical_id"] for i in [*items, *pending] if excluded(i, creator_rules)
     }
@@ -73,6 +83,14 @@ def screen(
             )
     from broader_vids.recommendations.screening import rejection_reason, screening_score
 
+    compiled = None
+    from broader_vids.recommendations.personalization import (
+        blended_screening_score,
+        compile_screening_learning,
+    )
+
+    compiled = compile_screening_learning(learning)
+
     rates = rate_scores(list(all_items.values()))
     pending_ids = {item["canonical_id"] for item in pending}
     for identifier, item in all_items.items():
@@ -82,12 +100,6 @@ def screen(
             engagement_score=rates[identifier],
             originality_evidence=provenance(item, profile),
         )
-    if policy_version < 3:
-        from broader_vids.recommendations.legacy import screen_legacy
-
-        return screen_legacy(
-            all_items, [i["canonical_id"] for i in pending], states, blocked
-        )
     eligible, rejected = [], {}
     for identifier, item in all_items.items():
         reason = rejection_reason(item, states, profile, creator_rules)
@@ -95,24 +107,25 @@ def screen(
             rejected[identifier] = reason
             continue
         item["carryover"] = identifier in pending_ids
-        item["screening_score"] = screening_score(item)
+        base_score = screening_score(item)
+        if compiled is not None:
+            item["screening_score"], item["screening_detail"] = blended_screening_score(
+                base_score, item, compiled
+            )
+        else:
+            item["screening_score"] = base_score
         eligible.append(item)
     ordered = sorted(
         eligible, key=lambda item: (-item["screening_score"], item["canonical_id"])
     )
-    if policy_version >= 4:
-        from broader_vids.recommendations.diversity import balanced_inspection
+    from broader_vids.recommendations.diversity import balanced_inspection
 
-        selected = balanced_inspection(ordered, limit)
-    else:
-        selected = ordered[:limit]
+    selected = balanced_inspection(ordered, limit)
     chosen = {item["canonical_id"] for item in selected}
     for item in eligible:
         if item["canonical_id"] not in chosen:
             rejected[item["canonical_id"]] = (
                 "lower_screening_priority_or_query_diversity"
-                if policy_version >= 4
-                else "lower_screening_priority_or_no_free_slot"
             )
     return selected, rejected
 
@@ -143,8 +156,12 @@ def rank_slate(
     learning=None,
     creator_rules=None,
     *,
-    policy_version=3,
+    policy_version=5,
 ):
+    if policy_version != 5:
+        raise ValueError(
+            "Unsupported scoring policy; start a new recommendation round."
+        )
     now, recent = now or datetime.now(timezone.utc), recent or Counter()
     pool = [
         dict(i)
@@ -154,9 +171,7 @@ def rank_slate(
         and isinstance(
             observations[i["canonical_id"]].get("duration_seconds"), (int, float)
         )
-        and (60 if policy_version >= 3 else 0)
-        < observations[i["canonical_id"]]["duration_seconds"]
-        <= 5400
+        and 60 < observations[i["canonical_id"]]["duration_seconds"] <= 5400
         and not provenance(i, profile)["excluded"]
         and not excluded(i, creator_rules)
     ]
@@ -164,15 +179,13 @@ def rank_slate(
 
     signatures = (
         {i["canonical_id"]: signature(i, observations[i["canonical_id"]]) for i in pool}
-        if policy_version >= 4
+        if policy_version == CURRENT_SCREENING_POLICY
         else {}
     )
     chosen_signatures = []
     slate, creators = [], Counter()
     learned_channels, learned_scores = {}, {}
-    target_unrelated = (
-        min(2, sum(not related(i, profile) for i in pool)) if policy_version < 3 else 0
-    )
+    target_unrelated = 0
     while pool and len(slate) < 10:
         need = target_unrelated - sum(not i["related"] for i in slate)
         eligible = (
@@ -181,7 +194,7 @@ def rank_slate(
             else pool
         ) or pool
         repeats = 0
-        if policy_version >= 4:
+        if policy_version == CURRENT_SCREENING_POLICY:
             overlaps = {
                 i["canonical_id"]: overlap_count(
                     signatures[i["canonical_id"]], chosen_signatures
@@ -250,7 +263,7 @@ def rank_slate(
                             "relaxed": repeats > 0,
                         }
                     }
-                    if policy_version >= 4
+                    if policy_version == CURRENT_SCREENING_POLICY
                     else {}
                 ),
                 **(
@@ -260,7 +273,7 @@ def rank_slate(
                 ),
             }
         )
-        if policy_version >= 4:
+        if policy_version == CURRENT_SCREENING_POLICY:
             chosen_signatures.append(signatures[chosen["canonical_id"]])
         creators[chosen.get("creator_id") or chosen["canonical_id"]] += 1
         pool.remove(chosen)

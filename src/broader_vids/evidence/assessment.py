@@ -2,51 +2,38 @@ import json
 import math
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import time
 from functools import partial
 
-from broader_vids.evidence.service import atomic_json, evidence_root, verify_bundle
+from broader_vids.evidence.service import (
+    _require_current_rubric,
+    atomic_json,
+    evidence_root,
+    verify_bundle,
+)
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.evidence.failures import failure_details, save_failure
 from broader_vids.policy import Policy
 from broader_vids.worker_context import resolve_worker_settings
-from broader_vids.evidence.scoring import caption_penalty, adjusted_quality
+from broader_vids.evidence.scoring import (
+    RUBRIC_VERSION,
+    caption_penalty,
+    adjusted_quality,
+)
 from broader_vids.storage import utc_now
 from broader_vids.processes import run_bounded
 from broader_vids.recommendations.originality import context_identity
 
 
 CRITERIA = ("substance", "directness", "originality", "visuals")
-RUBRIC_VERSION = 4
 
 
 def current_card(card):
-    retired = {
-        key.replace("_", " ").casefold()
-        for key in card["criteria"]
-        if key not in CRITERIA
-    }
-    result = {**card, "criteria": {key: card["criteria"][key] for key in CRITERIA}}
-    if retired:
-        for field in ("summary", "overall_rationale"):
-            sentences = re.split(r"(?<=[.!?])\s+", card[field])
-            result[field] = (
-                " ".join(
-                    s
-                    for s in sentences
-                    if not any(key in s.casefold() for key in retired)
-                )
-                or "Historical assessment; see the retained criterion observations."
-            )
-        result["unknowns"] = [
-            s
-            for s in card["unknowns"]
-            if not any(key in s.casefold() for key in retired)
-        ]
-    return result
+    from broader_vids.learning.topic_labels import readable_card_topics
+
+    return readable_card_topics(card)
 
 
 def scorecard_schema():
@@ -134,6 +121,8 @@ def scorecard_schema():
 
 
 def validate_card(card, evidence_ids, mode, rubric_version=RUBRIC_VERSION):
+    if rubric_version != RUBRIC_VERSION:
+        raise ValueError("Unsupported quality rubric version.")
     required = set(scorecard_schema()["required"]) - {"audience", "topics"}
     if not isinstance(card, dict) or set(card) not in (
         required,
@@ -151,8 +140,6 @@ def validate_card(card, evidence_ids, mode, rubric_version=RUBRIC_VERSION):
         isinstance(s, str) for s in card["unknowns"]
     ):
         raise ValueError("Scorecard unknowns must be an explicit text list.")
-    if rubric_version not in {1, 2, 3, RUBRIC_VERSION}:
-        raise ValueError("Unsupported quality rubric version.")
     if "audience" in card:
         audience = card["audience"]
         if (
@@ -177,24 +164,8 @@ def validate_card(card, evidence_ids, mode, rubric_version=RUBRIC_VERSION):
         from broader_vids.learning.annotations import validate_topics
 
         validate_topics(card["topics"], evidence_ids)
-    if not isinstance(card["criteria"], dict) or not set(CRITERIA).issubset(
-        card["criteria"]
-    ):
+    if not isinstance(card["criteria"], dict) or set(card["criteria"]) != set(CRITERIA):
         raise ValueError("The scorecard must cover each quality criterion.")
-    extra = set(card["criteria"]) - set(CRITERIA)
-    if extra and (
-        rubric_version != 1
-        or any(
-            not isinstance(card["criteria"][k], dict)
-            or card["criteria"][k].get("status") != "unknown"
-            or card["criteria"][k].get("grade") is not None
-            or card["criteria"][k].get("observations") != []
-            for k in extra
-        )
-    ):
-        raise ValueError(
-            "Only unassessed retired criteria can be reused from the original rubric."
-        )
     for name, criterion in card["criteria"].items():
         if not isinstance(criterion, dict) or set(criterion) != {
             "status",
@@ -300,9 +271,15 @@ def assessment_prompt(run, mode, cues, frames):
 
 Audio quality is not assessed. Captions and frames support the existing content criteria; missing captions receive only the separate caller-applied deduction.
 
-Rubric: substance means relevant explanatory depth and supported examples; directness means coherent, to-the-point progression with little needless repetition; originality means observed contribution, not proven authorship; visuals means purposeful presentation rather than unnecessary montage. Slides and talking heads can be appropriate. Stock/meme/AI visual assets and translated reposts are uncertain soft predictors, not exclusions. Authorship, provenance and factual accuracy cannot be certified from sparse evidence. Caption-only mode must leave visuals UNKNOWN. Never treat missing evidence as a zero or neutral grade.
+Rubric: substance means substantial content relevant to the video's purpose, including explanatory depth and supported examples where appropriate; directness means relevant, focused content with little needless repetition; originality means observed contribution, not proven authorship; visuals means purposeful presentation rather than unnecessary montage. Slides and talking heads can be appropriate. Stock/meme/AI visual assets and translated reposts are uncertain soft predictors, not exclusions. Authorship, provenance and factual accuracy cannot be certified from sparse evidence. Caption-only mode must leave visuals UNKNOWN. Never treat missing evidence as a zero or neutral grade.
 
-Assess what the video actually explains. A software demonstration does not establish that it teaches the underlying algorithm. Reward explained reasoning and worked examples under substance. Note essential explanations deferred to other lessons. Course membership alone does not lower quality. A short, complete explanation can score highly. Judge missing explanation from the evidence, not duration alone.
+First identify the video's apparent purpose from the evidence: instruction, demonstration, documentation, visual experience, or entertainment. Judge substance and directness against that purpose. For travel films, substance can be concrete coverage of places, activities and distinctive details. For crafts or games, it can be visible execution, development or outcomes. Do not require narration, factual instruction, worked examples or a lesson from a noninstructional video. Assess the content shown, not its instructional potential. Avoid double-counting: substance concerns what is shown; visuals concerns how clearly and purposefully it is presented.
+
+For directness, assess the relevance and focus of the sampled material. Relevant title/chapter context and concrete on-topic scenes can support a provisional grade even when full-video continuity and pacing remain unknown. Do not require proof of all transitions or the absence of filler throughout the unseen video. Temporal gaps reduce confidence and widen the interval; they do not automatically make sampled substance or focus unassessable. Explain that the judgment applies to the samples. Attractive visuals alone do not establish substantive content. A title card alone, generic unrelated scenes or unreadable slides can remain insufficient.
+
+Sparse stills cannot establish musical performance quality, motion continuity or unheard speech. Do not assume that a missing caption track means no narration. Leave unsupported sound, speech, factual accuracy and full-video pacing claims unknown. These limits do not erase supported visual-content judgments. Leave the overall score null when the sampled substance or focus itself remains unsupported.
+
+For instructional videos, reward explained reasoning and supported examples under substance. A software demonstration does not establish that it teaches the underlying algorithm. Note essential explanations deferred to other lessons only when the video's instructional purpose requires them. Course membership alone does not lower quality. A short, complete explanation can score highly. Judge missing explanation from the evidence, not duration alone.
 
 When frames support the judgment, assess readable text, useful contrast, framing, and legible diagrams under visuals. A phone recording or simple slide format alone does not lower quality. Explain concrete barriers to understanding. Do not infer AI generation from production style or voice. Creator reputation does not guarantee any criterion grade.
 
@@ -319,11 +296,11 @@ If substance and directness can be assessed, give a provisional content_quality 
 Mode: """
         + mode
         + (
-            "\nNo transcript or audio is supplied. Assess this video's visible substance, presentation and progression using the supplied frames, including legible burned-in text. Missing captions do not prove silence, no conversation, or low quality. Do not invent speech, sound quality or unseen continuity. Cite F... IDs and leave unsupported criteria unknown; give a provisional numeric score only when visible substance and directness are supported. The caller applies a separate 10-point missing-caption deduction; do not apply that deduction in your score."
+            "\nNo transcript or audio is supplied. Assess this video's visible substance, presentation and sampled focus using the supplied frames, including legible burned-in text. Missing captions do not prove silence, no conversation, or low quality. Do not invent speech, sound quality or unseen continuity. Cite F... IDs and leave unsupported criteria unknown; give a provisional numeric score only when visible substance and directness are supported. The caller applies a separate 10-point missing-caption deduction; do not apply that deduction in your score."
             if not cues
             else ""
         )
-        + "\nReturn concrete content-based specific topics and broad subjects in topics. Each label must contain 1–120 characters, preferably 1–5 words. Topics rationale must contain 1–1000 characters and audience rationale 1–600 characters. Use short, reusable English labels and cite supplied evidence. Put the main narrow subject first, before supporting techniques. Labels must contain names only, without reasoning or editing notes. Do not substitute retrieval queries for the video's actual subject. Distinguish operating a software tool from explaining its underlying algorithms."
+        + "\nReturn concrete content-based specific topics and broad subjects in topics. Each label must contain 1–120 characters, preferably 1–5 words. Topics rationale must contain 1–1000 characters and audience rationale 1–600 characters. Use short, reusable English labels and cite supplied evidence. Put the main narrow subject first, before supporting techniques. Labels must contain subject names only, at most 12 words each, without reasoning, citations, URLs, instructions, or editing notes. Put citation IDs only in evidence_ids. Do not substitute retrieval queries for the video's actual subject. Distinguish operating a software tool from explaining its underlying algorithms."
         + (
             "\nCorrect the previous response's validation failure: "
             + run["state"]["failure"]["reason"]
@@ -516,10 +493,10 @@ def assess_evidence(
         raise ValueError("Assessment mode must be baseline, augmented or both.")
     with store.lease(identifier, owner=lease_owner) as owner:
         run = store.get(identifier)
-        if run["settings"].get("kind") != "evidence" or run["state"]["phase"] not in {
-            "prepared",
-            "completed",
-        }:
+        if run["settings"].get("kind") != "evidence":
+            raise ValueError("Not an evidence run.")
+        _require_current_rubric(run["settings"])
+        if run["state"]["phase"] not in {"prepared", "completed"}:
             raise ValueError(
                 "Prepare a caption/frame evidence bundle before assessment."
             )

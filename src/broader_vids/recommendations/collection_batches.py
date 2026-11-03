@@ -18,10 +18,19 @@ from broader_vids.recommendations.metadata import (
 )
 from broader_vids.recommendations.ranking import fair_buffer
 from broader_vids.recommendations.screening import rejection_reason, screening_score
+from broader_vids.recommendations.screening import CURRENT_SCREENING_POLICY
+from broader_vids.recommendations.personalization import (
+    blended_screening_score,
+    compile_screening_learning,
+)
 
 
 def collect_batches(store, run, http, remaining, save, *, refill, snapshot_collector):
     state, settings = run["state"], run["settings"]
+    if settings.get("screening_policy_version") != CURRENT_SCREENING_POLICY:
+        raise ValueError(
+            "This recommendation uses an unsupported screening policy; start a new round."
+        )
     policy = settings["collection_policy"]
     if policy != default_collection_policy():
         raise ValueError(
@@ -37,6 +46,10 @@ def collect_batches(store, run, http, remaining, save, *, refill, snapshot_colle
     seen = set(collection["seen"])
     seen.update(item["canonical_id"] for item in state["buffer"])
     states = video_states(store, run["platform"])
+    from broader_vids.recommendations.learning_snapshot import round_learning
+
+    learning = round_learning(store, run)
+    compiled_learning = compile_screening_learning(learning)
 
     def deficits():
         counts = Counter(
@@ -140,7 +153,13 @@ def collect_batches(store, run, http, remaining, save, *, refill, snapshot_colle
             ]
             for item in values:
                 item["engagement_score"] = rates[item["canonical_id"]]
-                item["screening_score"] = screening_score(item)
+                base_score = screening_score(item)
+                if compiled_learning is not None:
+                    item["screening_score"], item["screening_detail"] = (
+                        blended_screening_score(base_score, item, compiled_learning)
+                    )
+                else:
+                    item["screening_score"] = base_score
             values.sort(
                 key=lambda item: (-item["screening_score"], item["canonical_id"])
             )

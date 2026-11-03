@@ -214,10 +214,11 @@ def policy_summary(policy):
 
 
 def initialize_round(store, run, remaining):
-    if "creator_rules" in run["state"]:
-        return
     if run["settings"].get("creator_policy_version") != 1:
-        run["state"]["creator_rules"] = {}
+        raise ValueError(
+            "Unsupported creator policy; start a new recommendation round."
+        )
+    if "creator_rules" in run["state"]:
         return
     if run["platform"] == "bilibili":
         from broader_vids.blacklist import sync_blacklist

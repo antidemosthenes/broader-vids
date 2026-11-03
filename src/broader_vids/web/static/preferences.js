@@ -52,6 +52,15 @@ export function createPreferences({ busy, changed, getProfile }) {
           .reduce((a, b) => a + b, 0)
           .toLocaleString(),
       ],
+      ["Exploration topics", value.exploration_nodes.toLocaleString()],
+      [
+        "Watched video IDs",
+        `${value.watched_videos.toLocaleString()} (${value.watched_by_platform.youtube.toLocaleString()} YouTube, ${value.watched_by_platform.bilibili.toLocaleString()} Bilibili)`,
+      ],
+      [
+        "Manual creator exclusions",
+        `${(value.creator_exclusions ?? 0).toLocaleString()} (${(value.creator_exclusions_by_platform?.youtube ?? 0).toLocaleString()} YouTube, ${(value.creator_exclusions_by_platform?.bilibili ?? 0).toLocaleString()} Bilibili); replaces local manual lists`,
+      ],
     ]) {
       const term = document.createElement("dt"),
         detail = document.createElement("dd");
@@ -174,7 +183,11 @@ export function createPreferences({ busy, changed, getProfile }) {
       resetTransfer();
       interestStatus.textContent =
         "Imported interests are ready. Edit them here, then select Save.";
-      status.textContent = `Preferences imported. Recovery file: ${result.backup_path}`;
+      const creatorExclusions = result.creator_exclusions ?? 0,
+        creatorsByPlatform = result.creator_exclusions_by_platform || {},
+        creatorNoun = creatorExclusions === 1 ? "exclusion" : "exclusions";
+      const creatorResult = `Manual creator lists replaced with ${creatorExclusions.toLocaleString()} ${creatorNoun} (${(creatorsByPlatform.youtube ?? 0).toLocaleString()} YouTube, ${(creatorsByPlatform.bilibili ?? 0).toLocaleString()} Bilibili).`;
+      status.textContent = `Preferences imported. Restored watched status for ${result.watched_videos.toLocaleString()} video IDs. ${creatorResult} Recovery file: ${result.backup_path}`;
       if (visible) {
         find("page").scrollTop = 0;
         input.focus({ preventScroll: true });

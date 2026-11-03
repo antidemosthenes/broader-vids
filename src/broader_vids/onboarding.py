@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import hashlib
 import json
+import re
 
 from broader_vids.evidence.service import atomic_json
 from broader_vids.storage import utc_now
@@ -112,11 +113,12 @@ def configure(store, platform):
     return value
 
 
-def complete(store, *, model=None, effort=None, asr_model=None):
+def complete(store, *, model=None, effort=None, asr_model=None, skill_namespace=None):
     from broader_vids.preflight import preflight
 
     if asr_model not in (None, "tiny", "base", "small"):
         raise ValueError("Choose tiny, base, or small for requested transcription.")
+    actions = next_steps(asr_model=asr_model, skill_namespace=skill_namespace)
     previous = status(store.root)
     report = preflight(
         store,
@@ -129,6 +131,7 @@ def complete(store, *, model=None, effort=None, asr_model=None):
     )
     if report["status"] != "ready":
         return report
+    guidance = completion_message(report, actions)
     with store.lease(LOCK):
         if status(store.root) != previous:
             raise ValueError(
@@ -140,14 +143,51 @@ def complete(store, *, model=None, effort=None, asr_model=None):
         **report,
         "onboarding": value,
         "self_check": "passed",
-        "next_steps": next_steps(asr_model=asr_model),
+        "next_steps": actions,
+        "next_steps_message": guidance,
     }
 
 
-def next_steps(*, asr_model=None):
+def completion_message(report, actions):
+    platform = {
+        "youtube": "YouTube",
+        "bilibili": "Bilibili",
+        "both": "YouTube and Bilibili",
+    }[report["platform"]]
+    sections = [
+        f"Broader Vids is ready for {platform}. Self-check: passed.",
+        f"Data directory: `{report['data_directory']}`. This directory is separate from the plugin and remains after uninstall.",
+    ]
+    warnings = [
+        f"- {name}: {check['status']}. {check.get('remedy') or ''}".rstrip()
+        for name, check in report.get("warnings", {}).items()
+        if check["status"] != "available"
+    ]
+    if warnings:
+        sections.append("Optional tools (setup can continue):\n" + "\n".join(warnings))
+    for name, action in actions.items():
+        sections.append(
+            f"**{name.capitalize()}** — `{action['skill_invocation']}`\n\n"
+            f"{action['description']}\n\n"
+            f'Say: "{action["request"]}"'
+        )
+    sections.append(
+        "Reset and Clean require a preview and confirmation. Stop active recommendations, sign-in, and the dashboard before applying either action."
+    )
+    return "\n\n".join(sections)
+
+
+def next_steps(*, asr_model=None, skill_namespace=None):
+    if skill_namespace is not None and (
+        not isinstance(skill_namespace, str)
+        or re.fullmatch(r"[a-z][a-z0-9-]{0,63}", skill_namespace) is None
+    ):
+        raise ValueError(
+            "The skill namespace must be a lowercase plugin name with letters, digits, or hyphens."
+        )
     actions = {
         "dashboard": {
-            "description": "The local dashboard lets you edit broader interests, rate videos, manage exclusions, and use optional calibration. Preferences combines interest editing with import and export. Token usage reports remain separate.",
+            "description": "The local dashboard lets you edit interests, rate videos, manage exclusions, and use optional calibration. Open Preferences, then Import/Export to transfer interests, learned weights, watched video IDs, compact topic coverage, and manual creator exclusions. Other video history, tag rules, and account-specific blacklists stay on this device.",
             "request": "Use Broader Vids to open my dashboard.",
             "skill_name": "broader-vids-dashboard",
         },
@@ -162,7 +202,7 @@ def next_steps(*, asr_model=None):
             "skill_name": "broader-vids-reset",
         },
         "clean": {
-            "description": "Remove the complete managed data directory, including tools and sign-in. Keep the plugin installed. Preview before applying.",
+            "description": "Remove the complete managed data directory, including tools and sign-in. Keep the plugin installed. Preview before applying. Run setup before reuse.",
             "request": "Use Broader Vids to remove all of its local data.",
             "skill_name": "broader-vids-clean",
         },
@@ -173,5 +213,9 @@ def next_steps(*, asr_model=None):
             transcription_model=asr_model,
         )
     for action in actions.values():
-        action["skill_invocation"] = "$" + action["skill_name"]
+        action["skill_invocation"] = (
+            "$"
+            + (skill_namespace + ":" if skill_namespace else "")
+            + action["skill_name"]
+        )
     return actions

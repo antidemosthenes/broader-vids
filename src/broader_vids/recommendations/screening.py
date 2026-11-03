@@ -5,14 +5,19 @@ from broader_vids.recommendations.originality import provenance
 
 
 DEFAULT_INSPECTION_LIMIT = 35
+CURRENT_SCREENING_POLICY = 5
 
 
 def inspection_limit(settings):
-    limit = settings.get("inspection_limit", 50)
-    if settings.get("screening_policy_version", 2) < 3:
-        return 50
-    if type(limit) is not int or not 1 <= limit <= 100:
-        raise ValueError("The saved inspection limit must be an integer from 1 to 100.")
+    if settings.get("screening_policy_version") != CURRENT_SCREENING_POLICY:
+        raise ValueError(
+            "This recommendation uses an unsupported screening policy; start a new round."
+        )
+    limit = settings.get("inspection_limit")
+    if limit != DEFAULT_INSPECTION_LIMIT:
+        raise ValueError(
+            "This recommendation uses an unsupported inspection limit; start a new round."
+        )
     return limit
 
 

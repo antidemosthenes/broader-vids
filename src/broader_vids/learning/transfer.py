@@ -14,13 +14,25 @@ from broader_vids.learning.features import FEATURE_VERSION, CRITERION_WEIGHTS
 from broader_vids.learning.inference import cholesky, work_scope, check_work
 from broader_vids.learning.posterior import portable_model
 from broader_vids.policy import Policy
-from broader_vids.preferences import ALIASES, platform_lock
+from broader_vids.preferences import ALIASES, canonical_identity, platform_lock
 from broader_vids.storage import utc_now
 
 
 FORMAT = "broader-vids.preferences"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_PARAMETERS = 384
+MAX_WATCHED_VIDEOS = 100_000
+MAX_CREATOR_EXCLUSIONS = 10_000
+
+
+def _coverage():
+    from broader_vids.exploration.coverage import (
+        export_summary,
+        import_summary,
+        validate_summary,
+    )
+
+    return export_summary, import_summary, validate_summary
 
 
 def _digest(value):
@@ -108,6 +120,14 @@ def validate_bundle(bundle):
     check_work()
     from broader_vids.learning.service import MODEL_VERSION
 
+    if (
+        not isinstance(bundle, dict)
+        or type(bundle.get("version")) is not int
+        or bundle["version"] != 4
+    ):
+        raise ValueError(
+            "Only preference format 4 is supported. Use a current Broader Vids export."
+        )
     _keys(
         bundle,
         (
@@ -121,13 +141,16 @@ def validate_bundle(bundle):
             "preferences",
             "parameters",
             "checksum",
+            "watched_video_ids",
+            "exploration_summary",
+            "creator_exclusions",
         ),
         "Preference file",
     )
     if (
         bundle["format"] != FORMAT
         or type(bundle["version"]) is not int
-        or bundle["version"] != 1
+        or bundle["version"] != 4
         or type(bundle["model_version"]) is not int
         or bundle["model_version"] != MODEL_VERSION
         or type(bundle["feature_version"]) is not int
@@ -144,6 +167,49 @@ def validate_bundle(bundle):
         != _digest({k: v for k, v in bundle.items() if k != "checksum"})
     ):
         raise ValueError("The preference file checksum or metadata is invalid.")
+    watched = bundle["watched_video_ids"]
+    if not isinstance(watched, list) or len(watched) > MAX_WATCHED_VIDEOS:
+        raise ValueError("Watched exclusions require at most 100,000 video IDs.")
+    seen = set()
+    for key in watched:
+        check_work()
+        if (
+            not _label(key, 80)
+            or canonical_identity(key)["canonical_id"] != key
+            or key in seen
+        ):
+            raise ValueError("Watched exclusions require distinct canonical video IDs.")
+        seen.add(key)
+    _, _, validate_summary = _coverage()
+    validate_summary(bundle["exploration_summary"])
+    from broader_vids.creators import creator_id
+
+    rules = bundle["creator_exclusions"]
+    _keys(rules, ("youtube", "bilibili"), "Creator exclusions")
+    total = 0
+    for platform, entries in rules.items():
+        if not isinstance(entries, list):
+            raise ValueError("Creator exclusions require platform-separated lists.")
+        total += len(entries)
+        if total > MAX_CREATOR_EXCLUSIONS:
+            raise ValueError("Creator exclusions exceed the 10,000-rule limit.")
+        seen_creators = set()
+        for entry in entries:
+            check_work()
+            _keys(entry, ("creator_id", "name"), "Creator exclusion")
+            identifier, name = entry["creator_id"], entry["name"]
+            if (
+                not isinstance(identifier, str)
+                or creator_id(platform, identifier) != identifier
+                or identifier in seen_creators
+                or not isinstance(name, str)
+                or len(name) > 300
+                or name != name.strip()
+            ):
+                raise ValueError(
+                    "Creator exclusions require distinct stable IDs and bounded display names."
+                )
+            seen_creators.add(identifier)
     _keys(bundle["preferences"], ("interests",), "Preferences")
     interests = bundle["preferences"]["interests"]
     if (
@@ -280,7 +346,58 @@ def _deadline(deadline):
         raise ValueError("Preference processing reached its time allowance.")
 
 
-def _snapshot(store, **overrides):
+def _manual_creators(store):
+    rules = {"youtube": [], "bilibili": []}
+    count = 0
+    for platform, identifier, name in store.db.execute(
+        "SELECT platform,creator_id,name FROM creator_exclusions WHERE source='manual' ORDER BY platform,creator_id"
+    ):
+        count += 1
+        if count > MAX_CREATOR_EXCLUSIONS:
+            raise ValueError("Creator exclusions exceed the 10,000-rule limit.")
+        rules[platform].append({"creator_id": identifier, "name": name.strip()})
+    return {"fingerprint": _digest(rules), "rules": rules}
+
+
+def _transfer_revision(store, epoch=None, creator_fingerprint=None):
+    from broader_vids.learning.service import change_epoch
+
+    if epoch is None:
+        epoch = change_epoch(store)
+    if creator_fingerprint is None:
+        creator_fingerprint = _manual_creators(store)["fingerprint"]
+    return _digest({"learning": epoch, "creator_rules": creator_fingerprint})
+
+
+def _replace_creators(store, rules, timestamp, *, current):
+    if all(
+        {entry["creator_id"]: entry["name"] for entry in current[platform]}
+        == {entry["creator_id"]: entry["name"] for entry in rules[platform]}
+        for platform in ("youtube", "bilibili")
+    ):
+        return
+
+    def rows():
+        for platform, entries in rules.items():
+            for entry in entries:
+                check_work()
+                yield platform, entry["creator_id"], entry["name"], timestamp
+
+    store.db.execute("DELETE FROM creator_exclusions WHERE source='manual'")
+    store.db.executemany(
+        "INSERT INTO creator_exclusions VALUES(?,?,'manual','',?,?)", rows()
+    )
+    store.db.execute("UPDATE creator_policy SET revision=revision+1 WHERE id=1")
+
+
+def _snapshot(
+    store,
+    *,
+    include_watched=False,
+    include_exploration=False,
+    include_creators=False,
+    **overrides,
+):
     from broader_vids.learning.service import source_data
 
     if store.db.in_transaction:
@@ -289,12 +406,34 @@ def _snapshot(store, **overrides):
         )
     store.db.execute("BEGIN")
     try:
-        return source_data(store, **overrides)
+        result = [source_data(store, **overrides)]
+        if include_watched:
+            result.append(
+                [
+                    row[0]
+                    for row in store.db.execute(
+                        "SELECT canonical_id FROM video_state WHERE watched=1 ORDER BY canonical_id"
+                    )
+                ]
+            )
+        if include_exploration:
+            export_summary, _, _ = _coverage()
+            result.append(export_summary(store))
+        if include_creators:
+            result.append(_manual_creators(store))
+        return tuple(result) if len(result) > 1 else result[0]
     finally:
         store.db.rollback()
 
 
-def _bundle(data, snapshot=None):
+def _bundle(
+    data,
+    snapshot=None,
+    *,
+    watched_video_ids,
+    exploration_summary,
+    creator_exclusions,
+):
     from broader_vids.learning.service import train, MODEL_VERSION
 
     deadline = time.monotonic() + 60
@@ -325,7 +464,7 @@ def _bundle(data, snapshot=None):
         }
         value = {
             "format": FORMAT,
-            "version": 1,
+            "version": 4,
             "model_version": MODEL_VERSION,
             "feature_version": FEATURE_VERSION,
             "policy": _policy(),
@@ -333,7 +472,10 @@ def _bundle(data, snapshot=None):
             "engine_version": __version__,
             "preferences": {"interests": data["profile"]["interests"]},
             "parameters": parameters,
+            "watched_video_ids": list(watched_video_ids),
         }
+        value["exploration_summary"] = exploration_summary
+        value["creator_exclusions"] = creator_exclusions
         value["checksum"] = _digest(value)
         validate_bundle(value)
         if len(_encode(value)) > MAX_BYTES:
@@ -349,8 +491,16 @@ def _cached_snapshot(store, data):
 
 
 def export_preferences(store):
-    data = _snapshot(store)
-    return _bundle(data, _cached_snapshot(store, data))
+    data, watched, exploration, manual = _snapshot(
+        store, include_watched=True, include_exploration=True, include_creators=True
+    )
+    return _bundle(
+        data,
+        _cached_snapshot(store, data),
+        watched_video_ids=watched,
+        exploration_summary=exploration,
+        creator_exclusions=manual["rules"],
+    )
 
 
 def _encode(bundle):
@@ -384,12 +534,26 @@ def write_export(path, bundle, *, overwrite=False):
     return destination
 
 
-def preview_import(store, bundle, *, _validated=False):
-    from broader_vids.learning.service import change_epoch
+def _creator_summary(bundle):
+    rules = bundle.get("creator_exclusions", {})
+    counts = {
+        platform: len(rules.get(platform, [])) for platform in ("youtube", "bilibili")
+    }
+    return {
+        "creator_exclusions_mode": "replace",
+        "creator_exclusions": sum(counts.values()),
+        "creator_exclusions_by_platform": counts,
+    }
 
+
+def preview_import(store, bundle, *, _validated=False):
     deadline = time.monotonic() + 20
     with work_scope(lambda: _deadline(deadline)):
-        parameters = (bundle if _validated else validate_bundle(bundle))["parameters"]
+        bundle = bundle if _validated else validate_bundle(bundle)
+        parameters = bundle["parameters"]
+        from broader_vids.exploration.coverage import validate_merge
+
+        validate_merge(store, bundle["exploration_summary"])
     return {
         "compatible": True,
         "interests": bundle["preferences"]["interests"],
@@ -398,16 +562,26 @@ def preview_import(store, bundle, *, _validated=False):
         "preference_cells": {
             key: len(value) for key, value in parameters["structured"]["groups"].items()
         },
-        "revision": _digest(change_epoch(store)),
+        "revision": _transfer_revision(store),
         "checksum": bundle["checksum"],
         "mode": "replace",
+        "watched_videos": len(bundle["watched_video_ids"]),
+        "watched_by_platform": {
+            platform: sum(
+                key.startswith(platform + ":") for key in bundle["watched_video_ids"]
+            )
+            for platform in ("youtube", "bilibili")
+        },
+        "exploration_nodes": len(
+            bundle.get("exploration_summary", {}).get("nodes", [])
+        ),
+        **_creator_summary(bundle),
     }
 
 
 def import_preferences(store, bundle, *, expected_revision=None, _validated=False):
     from broader_vids.learning.service import (
         LEARNING_LOCK,
-        change_epoch,
         prune_models,
         train,
     )
@@ -420,14 +594,30 @@ def import_preferences(store, bundle, *, expected_revision=None, _validated=Fals
     with ExitStack() as locks:
         for key in (platform_lock("youtube"), platform_lock("bilibili"), LEARNING_LOCK):
             locks.enter_context(store.lease(key))
-        data = _snapshot(store)
-        revision = _digest(data["epoch"])
+        data, watched, exploration, manual = _snapshot(
+            store, include_watched=True, include_exploration=True, include_creators=True
+        )
+        revision = _transfer_revision(store, data["epoch"], manual["fingerprint"])
         if expected_revision is not None and expected_revision != revision:
             raise ValueError(
                 "Preferences changed after the preview. Preview the file again."
             )
+        from broader_vids.exploration.coverage import validate_merge
+
+        deadline = time.monotonic() + 20
+        with work_scope(lambda: _deadline(deadline)):
+            validate_merge(store, bundle["exploration_summary"])
         backup = store.root / "backups" / f"preferences-{uuid.uuid4().hex}.json"
-        write_export(backup, _bundle(data, _cached_snapshot(store, data)))
+        write_export(
+            backup,
+            _bundle(
+                data,
+                _cached_snapshot(store, data),
+                watched_video_ids=watched,
+                exploration_summary=exploration,
+                creator_exclusions=manual["rules"],
+            ),
+        )
         committed = False
         identifier = uuid.uuid4().hex
         try:
@@ -458,19 +648,47 @@ def import_preferences(store, bundle, *, expected_revision=None, _validated=Fals
                 model_id = _digest(restored_data)
                 serialized = json.dumps(snapshot)
                 check_work()
-            with store.db:
+            commit_deadline = time.monotonic() + 20
+            with work_scope(lambda: _deadline(commit_deadline)), store.db:
                 store.db.execute("BEGIN IMMEDIATE")
-                if _digest(change_epoch(store)) != revision:
+                if _transfer_revision(store) != revision:
                     raise ValueError(
-                        "Feedback changed during import. Preview the file again."
+                        "Feedback or creator rules changed during import. Preview the file again."
                     )
                 store.db.execute(
                     "INSERT INTO user_profile VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload",
                     (profile_revision, json.dumps(payload)),
                 )
+                _, import_summary, _ = _coverage()
+                import_summary(store, bundle["exploration_summary"])
+                timestamp = utc_now()
+
+                def watched_rows():
+                    for index, key in enumerate(bundle["watched_video_ids"]):
+                        if index % 64 == 0:
+                            check_work()
+                        identity = canonical_identity(key)
+                        yield (
+                            key,
+                            identity["platform"],
+                            json.dumps(identity),
+                            timestamp,
+                        )
+
+                store.db.executemany(
+                    "INSERT INTO video_state VALUES(?,?,?,1,0,0,?) "
+                    "ON CONFLICT(canonical_id) DO UPDATE SET watched=1,updated_at=excluded.updated_at WHERE video_state.watched=0",
+                    watched_rows(),
+                )
+                _replace_creators(
+                    store,
+                    bundle["creator_exclusions"],
+                    timestamp,
+                    current=manual["rules"],
+                )
                 store.create(
                     "both",
-                    {"kind": "preference_import", "format_version": 1},
+                    {"kind": "preference_import", "format_version": bundle["version"]},
                     {
                         "parameters": bundle["parameters"],
                         "cutoff_action": baseline["cutoff_action"],
@@ -487,6 +705,7 @@ def import_preferences(store, bundle, *, expected_revision=None, _validated=Fals
                     (model_id, utc_now(), serialized),
                 )
                 prune_models(store, model_id)
+                check_work()
             committed = True
         finally:
             if not committed:
@@ -504,4 +723,6 @@ def import_preferences(store, bundle, *, expected_revision=None, _validated=Fals
             "backup_path": str(backup),
             "snapshot_id": model_id,
             "mode": "replace",
+            "watched_videos": len(bundle["watched_video_ids"]),
+            **_creator_summary(bundle),
         }

@@ -21,8 +21,7 @@ Use the files under its `docs/` directory:
 - `REFERENCE.md` explains commands, arguments, access, and recovery.
 - `ARCHITECTURE.md` describes the engine and state boundaries.
 
-The engine supports manual recommendations through the installed plugin.
-Daily scheduling is a separate, opt-in feature and is not enabled by installation.
+The engine runs recommendation rounds when the user requests them.
 
 ## Select the engine and state
 
@@ -71,7 +70,11 @@ An ordinary recommendation request alone does not authorize bypassing this remin
 
 Bilibili recommendations use the verified isolated browser automatically.
 Use `recommend both --workers 4` for an explicit request for both platforms.
-This command shares a thirty-minute allowance across the platform jobs.
+This command has no overall time limit by default.
+Do not stop a round just because thirty minutes elapsed.
+Individual readiness, discovery, download, and assessment operations retain timeouts.
+Request, media, and model-call limits remain effective.
+Use `--max-seconds` only when the user explicitly requests a total time limit.
 Planning and quality workers use the invoking Codex chat's selected model and reasoning effort through the authenticated Codex CLI.
 The engine reads the current thread's turn metadata and saves that pair when creating the run.
 Continuation retains the saved pair.
@@ -113,17 +116,26 @@ Stop collection at the saved time, request and candidate limits.
 Report fewer than 100 eligible entries as incomplete without starting quality assessment.
 A complete final list contains ten videos per platform.
 Report a partial result as partial.
+Show all requested platform lists before the final candidate-failure summary.
+Use each report's `candidate_failures` to identify skipped videos and downloads recovered by retries.
+Include video links, actual attempt counts, and brief reasons. Do not claim four attempts when a saved limit stopped retries earlier.
+Check `download_outcome` before describing a download as failed. A completed download can still have an unsupported assessment.
+For `assessment_insufficient_evidence`, summarize the saved assessment rationale and missing evidence.
+A successful download does not need all four attempts. Do not download it again solely because its quality score is unknown.
+Do not stop or ask to continue only because the report marks a candidate unavailable.
+Keep nonblocking candidate failures in the final summary instead of interrupting the recommendation request.
 When a round pauses, present its provisional preview if the digest contains one.
 Identify the preview as an assessed subset rather than a published recommendation list.
 Report the first failure and remaining allowances before proposing continuation.
 New rounds allow 320 metadata requests per platform, including blacklist sync and collection refills.
 A request cap does not guarantee 100 eligible videos.
-If a request cap is exhausted, report accepted counts, group deficits, and any saved unfinished batch.
+If the request cap stops collection, report accepted counts, group deficits, and any saved unfinished batch.
 Only increase that cap when the user requests or approves an increase.
 Use `continue RUN_ID --max-requests N`, up to 1,000, to apply that explicit increase.
 Use the parent batch ID for a two-platform round.
 The increase retains request use, elapsed time, rules, model settings, and completed platform results.
-Do not reset or increase a time allowance to recover a request-budget pause.
+Do not change an explicit time allowance to recover a request-budget pause.
+Legacy checkpoints with the former default 1800-second cap continue without that cap.
 
 ## Preserve access and evidence limits
 
@@ -137,22 +149,35 @@ Stop on access challenges or unknown response schemas.
 For a YouTube sign-in or verification pause, show the saved recovery link and access-review instructions.
 Do not skip the challenged candidate, switch clients, or retry the challenge automatically.
 Normal browser sign-in is not imported automatically.
-Continue only after the user requests continuation and access is restored.
-YouTube watch-page metadata uses one-second pacing within the existing time allowance.
+Continue only after the user requests it and restores access.
+YouTube watch-page metadata uses one-second pacing. Pacing counts toward an explicit total allowance when one exists.
 Do not treat failed access as an empty result or a negative quality label.
+YouTube and Bilibili use the same policy: at most three retries after the initial attempt for recoverable candidate exceptions.
+This covers video metadata, downloads, and candidate processing.
+Report up to four total download attempts.
+Byte or time limits can stop retries earlier.
+Do not claim four attempts when a saved limit stops them.
+The retry count persists across continuation. Do not keep an exhausted candidate pending or restart its allowance.
+Existing image, model-call, request, and media limits can stop retries earlier.
+Retries share the existing time and byte allowance, use offered routes, and resume partial files.
+Exhausted downloads become unavailable without blocking other assessments.
+Size limits, cancellation, and access challenges do not receive automatic retries.
 
 Prefer native captions before optional `--asr-model base` transcription.
 When captions remain unavailable, continue with augmented visual assessment and the recorded ten-point quality deduction.
 Do not infer silence or invent speech evidence.
-The initial evidence uses four frames.
-An evidence job allows at most eight submitted images and two assessment calls.
+A creator can leave a video without a separate caption track. This does not establish whether narration is present.
+Visual travel and demonstration content can support quality assessment through sampled substance and focus.
+New evidence uses up to four distinct frames with captions, or eight without captions.
+New evidence jobs allow at most sixteen submitted images across two assessment calls.
+Older jobs keep their saved image limits.
 Use one augmented assessment for routine new recommendation evidence.
 Do not repeat the paired assessment experiment for every candidate.
 
 Use verified playable durations.
 Exclude videos of sixty seconds or less and videos longer than ninety minutes.
 Keep the download resolution limit at 720 pixels on the short edge.
-The exact Bilibili tag `视频翻译` excludes final selection while its built-in rule is enabled.
+The exact Bilibili tag `视频翻译` excludes final selection while the engine uses its built-in rule.
 Treat source links and translation disclosures as evidence, not automatic proof of copying.
 Leave unsupported originality properties unknown.
 
@@ -160,7 +185,8 @@ Leave unsupported originality properties unknown.
 
 Use host subagents only when user permissions and host capabilities permit delegation.
 Runtime delegation does not authorize repository development subagents.
-All child work shares the parent time, request, media, and model allowances.
+All child work shares the parent's request, media, and model allowances.
+An explicit parent time allowance also applies to all child work.
 Assign distinct tasks.
 Check child results before the engine saves recommendations.
 The current isolated assessment worker has tools disabled.
@@ -179,6 +205,9 @@ Present recommendations directly in chat, grouped by platform.
 Use linked titles, durations, scores, and brief reasons from the local digests under `recommendations/RUN_ID/`.
 Keep local digest links as supporting artifacts.
 Include incomplete assessments, source limits, and pending entries.
+When you report `pending_now`, state that it includes published recommendations that remain unwatched and undismissed.
+It includes videos in the current list.
+Do not call it a reserve unless the data shows additional recommendations beyond published entries.
 Use the packaged [dashboard skill](../broader-vids-dashboard/SKILL.md) when the user wants browser review controls.
 `dashboard open --no-browser` returns the verified local URL without blocking the command.
 The local dashboard does not publish content to the internet.
@@ -201,7 +230,6 @@ Do not infer creator exclusions from a low rating.
 Use content-based AI topics and cited audience levels rather than retrieval queries.
 Leave unsupported audience levels unknown.
 Use `learn label-videos --max-videos 60 --max-seconds 900` to label retained older evidence when needed.
-Use `learn migrate-feedback` only when the user requests migration of retired binary votes.
 
 Use watch and dismissal commands only for explicit user actions.
 Opening a link does not mark a video watched.

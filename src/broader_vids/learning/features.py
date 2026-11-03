@@ -2,6 +2,7 @@ import math
 
 from broader_vids.exploration.domains import normalized
 from broader_vids.recommendations.originality import provenance
+from broader_vids.learning.topic_labels import readable_topics
 
 
 FEATURE_VERSION = 1
@@ -67,7 +68,7 @@ def capture(item, observation=None):
             else "unknown",
         }
         coverage += weight if assessed else 0
-    semantic = observation.get("topics") or {}
+    semantic = readable_topics(observation.get("topics") or {})
     if semantic.get("specific"):
         topics = [normalized(label) for label in semantic["specific"]]
     if semantic.get("broad"):

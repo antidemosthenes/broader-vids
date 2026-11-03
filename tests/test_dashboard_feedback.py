@@ -1,4 +1,5 @@
 from contextlib import closing, contextmanager
+import atexit
 import json
 import os
 import sys
@@ -7,8 +8,9 @@ import threading
 import unittest
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
 except ImportError:
+    expect = None
     sync_playwright = None
 
 from broader_vids.learning.features import capture
@@ -17,6 +19,49 @@ from broader_vids.preferences import set_profile
 from broader_vids.storage import Store
 from broader_vids.web.server import make_server
 from test_learning import example
+
+
+_playwright = None
+_browser = None
+
+
+def _dashboard_browser():
+    global _playwright, _browser
+    if _browser is not None and _browser.is_connected():
+        return _browser
+    _stop_dashboard_browser()
+    _playwright = sync_playwright().start()
+    try:
+        _browser = _playwright.chromium.launch(
+            headless=True,
+            **({"channel": "msedge"} if sys.platform == "win32" else {}),
+        )
+    except BaseException:
+        _playwright.stop()
+        _playwright = None
+        raise
+    return _browser
+
+
+def _stop_dashboard_browser():
+    global _playwright, _browser
+    if _browser is not None:
+        try:
+            _browser.close()
+        except Exception:
+            pass
+        _browser = None
+    if _playwright is not None:
+        try:
+            _playwright.stop()
+        except Exception:
+            pass
+        finally:
+            _playwright = None
+
+
+if sync_playwright:
+    atexit.register(_stop_dashboard_browser)
 
 
 @contextmanager
@@ -95,22 +140,20 @@ def dashboard_fixture(*, provisional=False):
         )
         thread.start()
         try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(
-                    headless=True,
-                    **({"channel": "msedge"} if sys.platform == "win32" else {}),
+            context = _dashboard_browser().new_context(
+                viewport={"width": 1440, "height": 900}
+            )
+            try:
+                page = context.new_page()
+                page.set_default_timeout(8000)
+                page.goto(
+                    f"http://127.0.0.1:{server.server_port}",
+                    wait_until="domcontentloaded",
                 )
-                try:
-                    page = browser.new_page(viewport={"width": 1440, "height": 900})
-                    page.set_default_timeout(8000)
-                    page.goto(
-                        f"http://127.0.0.1:{server.server_port}",
-                        wait_until="domcontentloaded",
-                    )
-                    page.locator(".video-row").first.wait_for()
-                    yield page, directory
-                finally:
-                    browser.close()
+                page.locator(".video-row").first.wait_for()
+                yield page, directory
+            finally:
+                context.close()
         finally:
             server.shutdown()
             server.server_close()
@@ -322,8 +365,8 @@ class DashboardFeedbackTests(unittest.TestCase):
                     "button", name="Exclusions", exact=True
                 ).click()
                 page.get_by_role("tab", name="Bilibili", exact=True).click()
-                self.assertEqual(
-                    page.locator(".connection-fields dd").nth(0).inner_text(), "Synced"
+                expect(page.locator(".connection-fields dd").nth(0)).to_have_text(
+                    "Synced"
                 )
                 self.assertNotIn(
                     "T22:36", page.locator(".connection-fields dd").nth(2).inner_text()

@@ -1,10 +1,11 @@
+from broader_vids.learning.topic_labels import readable_card_topics
 import json
 from pathlib import Path
 
 from broader_vids.evidence.assessment import validate_card
 from broader_vids.evidence.service import verify_bundle
 from broader_vids.policy import Policy
-from broader_vids.evidence.scoring import adjusted_quality
+from broader_vids.evidence.scoring import RUBRIC_VERSION, adjusted_quality
 from broader_vids.recommendations.originality import context_identity
 
 
@@ -35,15 +36,16 @@ def cached_quality(store, evidence_run):
             "frame_sha256": [f["sha256"] for f in frames],
             **context_identity(run["settings"].get("originality_context")),
         }
-        if observation["evidence_identity"] != identity or observation.get(
-            "rubric_version"
-        ) not in {1, 2, 3, 4}:
+        if (
+            observation["evidence_identity"] != identity
+            or observation.get("rubric_version") != RUBRIC_VERSION
+        ):
             raise ValueError("Cached scorecard evidence identity or rubric differs.")
         cues = json.loads(
             Path(state["caption_excerpt"]["path"]).read_text(encoding="utf-8")
         )
         card = validate_card(
-            observation["card"],
+            readable_card_topics(observation["card"]),
             {c["id"] for c in cues}
             | {f["id"] for f in frames}
             | {
@@ -88,3 +90,26 @@ def cached_quality(store, evidence_run):
             ],
         }
     return None
+
+
+def unscored_quality(run):
+    assessment = run["state"].get("assessments", {}).get("augmented")
+    if assessment is None or assessment.get("overall_quality") is not None:
+        return None
+    card = assessment.get("card", {})
+    explanation = card.get("overall_rationale") or card.get("summary")
+    reason = "Quality remains unknown after evidence preparation."
+    if explanation:
+        reason += " " + explanation[:1000]
+    return {
+        "status": "unavailable",
+        "evidence_run": run["id"],
+        "reason": reason,
+        "failure": {
+            "stage": "assessment",
+            "scope": "candidate",
+            "category": "insufficient_evidence",
+            "reason": reason,
+            "retryable": False,
+        },
+    }

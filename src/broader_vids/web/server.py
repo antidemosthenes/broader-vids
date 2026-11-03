@@ -56,6 +56,7 @@ def score_details(store, item):
         **evidence,
         "summary": card["summary"],
         "unknowns": card["unknowns"],
+        "topics": card.get("topics"),
     }
     result["quality_breakdown"] = {
         "content_quality": card["content_quality"],

@@ -34,7 +34,7 @@ def video(index, query, primary=None, *, title=None):
     return item, observation
 
 
-def rank(records, version=4):
+def rank(records, version=5):
     return rank_slate(
         [item for item, _ in records],
         {item["canonical_id"]: observation for item, observation in records},
@@ -52,14 +52,14 @@ class TopicDiversityTests(unittest.TestCase):
                 {"query": f"Search topic {index // 7}", "domains": ["mathematics"]}
             ]
         selected, _ = screen(
-            items, [], {}, {"interests": ["mathematics"]}, policy_version=4
+            items, [], {}, {"interests": ["mathematics"]}, policy_version=5
         )
         counts = Counter(next(iter(query_keys(item))) for item in selected)
         self.assertEqual(len(selected), 35)
         self.assertEqual(len(counts), 14)
         self.assertEqual(set(counts.values()), {2, 3})
-        old, _ = screen(items, [], {}, {"interests": ["mathematics"]}, policy_version=3)
-        self.assertLess(len({next(iter(query_keys(item))) for item in old}), 14)
+        with self.assertRaisesRegex(ValueError, "Unsupported screening policy"):
+            screen(items, [], {}, {"interests": ["mathematics"]}, policy_version=3)
 
     def test_repeated_queries_do_not_displace_distinct_assessed_topics(self):
         records = [
@@ -74,11 +74,8 @@ class TopicDiversityTests(unittest.TestCase):
             sum("query:mapo tofu recipe" in query_keys(item) for item in result), 1
         )
         self.assertFalse(any(item["selection_diversity"]["relaxed"] for item in result))
-        old = rank(records, version=3)
-        self.assertTrue(
-            all("query:mapo tofu recipe" in query_keys(item) for item in old)
-        )
-        self.assertNotIn("selection_diversity", old[0])
+        with self.assertRaisesRegex(ValueError, "Unsupported scoring policy"):
+            rank(records, version=3)
 
     def test_primary_topic_variants_match_across_queries_without_capping_broad_domains(
         self,

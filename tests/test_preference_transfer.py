@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from broader_vids.learning.depth import integrate
+from broader_vids.learning.depth import integrate, fit_depth
 from broader_vids.learning.feedback import save_detail, details
 from broader_vids.learning.inference import fit_logistic, fit_sparse, predict
 from broader_vids.learning.posterior import portable_model, restored_model
@@ -32,7 +32,9 @@ from broader_vids.preferences import (
     user_action,
 )
 from broader_vids.storage import Store
-from broader_vids.creators import set_exclusion
+from broader_vids.creators import set_exclusion, snapshot as creator_snapshot
+from broader_vids.blacklist import sync_blacklist
+from test_creator_exclusions import Browser
 from test_learning import example
 from broader_vids.learning.features import capture
 
@@ -141,6 +143,21 @@ class PosteriorTransferTests(unittest.TestCase):
         expanded = [("introductory", "deeper")] * 9 + [("advanced", "suitable")] * 4
         counted = [("introductory", "deeper", 9), ("advanced", "suitable", 4)]
         a, b = integrate(expanded), integrate(counted)
+        fitted = fit_depth(
+            [
+                {
+                    "dimension": "depth",
+                    "split": "train",
+                    "target": "topology",
+                    "level": level,
+                    "value": response,
+                }
+                for level, response in expanded
+            ]
+        )["topology"]
+        self.assertEqual(fitted["counts"], [[9, 0, 0], [0, 0, 0], [0, 4, 0]])
+        self.assertAlmostEqual(fitted["mean"], a["mean"], places=10)
+        self.assertAlmostEqual(fitted["sd"], a["sd"], places=10)
         self.assertAlmostEqual(a["mean"], b["mean"], places=10)
         self.assertAlmostEqual(a["sd"], b["sd"], places=10)
         for level in a["predictions"]:
@@ -248,13 +265,33 @@ class PreferenceTransferTests(unittest.TestCase):
                 return train(data)
 
             with patch("broader_vids.learning.service.train", side_effect=prepare):
-                with self.assertRaisesRegex(ValueError, "Feedback changed"):
+                with self.assertRaisesRegex(ValueError, "changed during import"):
                     import_preferences(store, bundle)
             self.assertNotIn("baseline", source_data(store))
             self.assertEqual(
                 details(store)[example(1)["canonical_id"]]["topic_interest"]["value"],
                 "low",
             )
+            self.assertEqual(
+                list((store.root / "backups").glob("preferences-*.json")), []
+            )
+
+            def change_manual_rule(data):
+                with closing(Store(directory)) as other:
+                    set_exclusion(
+                        other, "bilibili", "123", True, "Concurrent manual rule"
+                    )
+                return train(data)
+
+            with patch(
+                "broader_vids.learning.service.train", side_effect=change_manual_rule
+            ):
+                with self.assertRaisesRegex(ValueError, "changed during import"):
+                    import_preferences(store, bundle)
+            self.assertEqual(
+                creator_snapshot(store, "bilibili")["excluded_ids"], ["123"]
+            )
+            self.assertNotIn("baseline", source_data(store))
             self.assertEqual(
                 list((store.root / "backups").glob("preferences-*.json")), []
             )
@@ -348,7 +385,22 @@ class PreferenceTransferTests(unittest.TestCase):
                     target, parse_bundle(raw), expected_revision=preview["revision"]
                 )
                 self.assertTrue(result["imported"])
-                self.assertEqual(preserved(target), local_before)
+                retained = {
+                    k: v
+                    for k, v in preserved(target).items()
+                    if k not in {"creator_exclusions", "creator_policy"}
+                }
+                self.assertEqual(
+                    retained,
+                    {
+                        k: v
+                        for k, v in local_before.items()
+                        if k not in {"creator_exclusions", "creator_policy"}
+                    },
+                )
+                self.assertEqual(
+                    creator_snapshot(target, "youtube")["excluded_ids"], []
+                )
                 self.assertEqual(
                     get_profile(target)["excluded_tags"]["bilibili"], ["易语言"]
                 )
@@ -389,6 +441,215 @@ class PreferenceTransferTests(unittest.TestCase):
                 exported_again = export_preferences(target)
                 self.assertEqual(bundle["parameters"], exported_again["parameters"])
                 self.assertEqual(bundle["preferences"], exported_again["preferences"])
+
+    def test_manual_creator_rules_replace_and_survive_blacklist_sync(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            with closing(Store(a)) as source, closing(Store(b)) as target:
+                set_profile(source, ["mathematics"])
+                set_exclusion(
+                    source, "youtube", "UC" + "a" * 22, True, "Source creator"
+                )
+                set_exclusion(source, "bilibili", "3", True, "Manual overlap")
+                sync_blacklist(source, context=Browser({1: [3, 9]}, total=2))
+                bundle = parse_bundle(json.dumps(export_preferences(source)))
+                self.assertEqual(bundle["version"], 4)
+                self.assertEqual(
+                    bundle["creator_exclusions"]["bilibili"],
+                    [{"creator_id": "3", "name": "Manual overlap"}],
+                )
+                self.assertNotIn("account_id", json.dumps(bundle))
+                self.assertNotIn("bilibili_blacklist", json.dumps(bundle))
+                set_profile(target, ["physics"])
+                set_exclusion(target, "youtube", "UC" + "b" * 22, True, "Local creator")
+                set_exclusion(target, "bilibili", "4", True, "Local Bilibili creator")
+                sync_blacklist(target, context=Browser({1: [3, 5]}, total=2))
+                preview = preview_import(target, bundle)
+                self.assertEqual(preview["creator_exclusions"], 2)
+                self.assertEqual(
+                    preview["creator_exclusions_by_platform"],
+                    {"youtube": 1, "bilibili": 1},
+                )
+                sync_blacklist(target, context=Browser({1: [3, 6]}, total=2))
+                result = import_preferences(
+                    target, bundle, expected_revision=preview["revision"]
+                )
+                self.assertEqual(result["creator_exclusions"], 2)
+                self.assertEqual(result["creator_exclusions_mode"], "replace")
+                self.assertEqual(
+                    creator_snapshot(target, "youtube")["excluded_ids"],
+                    ["UC" + "a" * 22],
+                )
+                self.assertEqual(
+                    creator_snapshot(target, "bilibili")["excluded_ids"],
+                    ["3", "6"],
+                )
+                backup = parse_bundle(
+                    Path(result["backup_path"]).read_text(encoding="utf-8")
+                )
+                self.assertEqual(
+                    backup["creator_exclusions"]["bilibili"],
+                    [{"creator_id": "4", "name": "Local Bilibili creator"}],
+                )
+                revision = creator_snapshot(target, "bilibili")["revision"]
+                import_preferences(target, bundle)
+                self.assertEqual(
+                    creator_snapshot(target, "bilibili")["revision"], revision
+                )
+                sync_blacklist(target, context=Browser({1: [8]}, total=1))
+                self.assertEqual(
+                    creator_snapshot(target, "bilibili")["excluded_ids"],
+                    ["3", "8"],
+                )
+                self.assertEqual(
+                    export_preferences(target)["parameters"], bundle["parameters"]
+                )
+                for version in (1, 2, 3):
+                    legacy = copy.deepcopy(bundle)
+                    legacy["version"] = version
+                    legacy.pop("creator_exclusions")
+                    if version < 3:
+                        legacy.pop("exploration_summary")
+                    if version < 2:
+                        legacy.pop("watched_video_ids")
+                    legacy["checksum"] = digest(
+                        {k: v for k, v in legacy.items() if k != "checksum"}
+                    )
+                    before = creator_snapshot(target, "bilibili")
+                    with self.assertRaisesRegex(ValueError, "Only preference format 4"):
+                        parse_bundle(json.dumps(legacy))
+                    self.assertEqual(creator_snapshot(target, "bilibili"), before)
+                empty = copy.deepcopy(bundle)
+                empty["creator_exclusions"] = {"youtube": [], "bilibili": []}
+                empty["checksum"] = digest(
+                    {k: v for k, v in empty.items() if k != "checksum"}
+                )
+                import_preferences(target, parse_bundle(json.dumps(empty)))
+                self.assertEqual(
+                    creator_snapshot(target, "youtube")["excluded_ids"], []
+                )
+                self.assertEqual(
+                    creator_snapshot(target, "bilibili")["excluded_ids"], ["8"]
+                )
+                import_preferences(target, backup)
+                self.assertEqual(
+                    creator_snapshot(target, "youtube")["excluded_ids"],
+                    ["UC" + "b" * 22],
+                )
+                self.assertEqual(
+                    creator_snapshot(target, "bilibili")["excluded_ids"], ["4", "8"]
+                )
+
+    def test_watched_ids_restore_screening_exclusions_without_restoring_history(self):
+        from broader_vids.preferences import video_states, pending_videos
+        from broader_vids.recommendations.screening import rejection_reason
+
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            with closing(Store(a)) as source, closing(Store(b)) as target:
+                seed(source)
+                key = example(1)["canonical_id"]
+                bili = "bilibili:BV1Z6H56oEcQ:p2"
+                user_action(source, key, "watched")
+                user_action(source, bili, "watched")
+                bundle = parse_bundle(json.dumps(export_preferences(source)))
+                self.assertEqual(bundle["version"], 4)
+                self.assertIn("exploration_summary", bundle)
+                self.assertEqual(set(bundle["watched_video_ids"]), {key, bili})
+                self.assertNotIn(example(2)["canonical_id"], json.dumps(bundle))
+                self.assertNotIn("https:", json.dumps(bundle))
+                seed(target)
+                local_key = example(4)["canonical_id"]
+                user_action(target, local_key, "watched")
+                user_action(target, key, "dismiss")
+                before = preserved(target)
+                preview = preview_import(target, bundle)
+                self.assertEqual(preview["watched_videos"], 2)
+                self.assertEqual(
+                    preview["watched_by_platform"], {"youtube": 1, "bilibili": 1}
+                )
+                result = import_preferences(
+                    target, bundle, expected_revision=preview["revision"]
+                )
+                self.assertEqual(result["watched_videos"], 2)
+                states = video_states(target)
+                self.assertTrue(states[key]["watched"])
+                self.assertTrue(states[key]["dismissed"])
+                previous_payload = json.loads(
+                    next(row[2] for row in before["video_state"] if row[0] == key)
+                )
+                self.assertEqual(states[key]["payload"], previous_payload)
+                self.assertTrue(states[local_key]["watched"])
+                self.assertEqual(
+                    (states[bili]["watched"], states[bili]["recommended"]), (1, 0)
+                )
+                self.assertFalse(
+                    any(
+                        item["canonical_id"] == bili
+                        for item in pending_videos(target, "bilibili")
+                    )
+                )
+                self.assertEqual(
+                    rejection_reason({"canonical_id": bili}, states),
+                    "watched_or_dismissed",
+                )
+                after = preserved(target)
+                for table in before:
+                    if table != "video_state":
+                        self.assertEqual(before[table], after[table], table)
+                restored = export_preferences(target)
+                self.assertEqual(
+                    set(restored["watched_video_ids"]), {key, bili, local_key}
+                )
+                self.assertEqual(bundle["parameters"], restored["parameters"])
+                backup = parse_bundle(
+                    Path(result["backup_path"]).read_text(encoding="utf-8")
+                )
+                self.assertEqual(backup["watched_video_ids"], [local_key])
+                user_action(target, bili, "unwatched")
+                self.assertNotIn(bili, export_preferences(target)["watched_video_ids"])
+                import_preferences(target, bundle)
+                self.assertTrue(video_states(target)[bili]["watched"])
+
+    def test_obsolete_preferences_are_rejected_and_import_failure_rolls_back(
+        self,
+    ):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            seed(store)
+            key = example(1)["canonical_id"]
+            user_action(store, key, "watched")
+            bundle = export_preferences(store)
+            legacy = copy.deepcopy(bundle)
+            legacy["version"] = 1
+            legacy.pop("watched_video_ids")
+            legacy.pop("exploration_summary")
+            legacy.pop("creator_exclusions")
+            legacy["checksum"] = digest(
+                {k: v for k, v in legacy.items() if k != "checksum"}
+            )
+            with self.assertRaisesRegex(ValueError, "Only preference format 4"):
+                parse_bundle(json.dumps(legacy))
+            self.assertEqual(export_preferences(store)["watched_video_ids"], [key])
+            bundle["watched_video_ids"].append("bilibili:BV1Z6H56oEcQ:p2")
+            bundle["creator_exclusions"]["bilibili"].append(
+                {"creator_id": "123", "name": "Imported creator"}
+            )
+            bundle["checksum"] = digest(
+                {k: v for k, v in bundle.items() if k != "checksum"}
+            )
+            set_exclusion(store, "bilibili", "456", True, "Keep this rule on rollback")
+            before = preserved(store)
+            baseline = source_data(store)["epoch"]["imported_baseline"]
+            backups = sorted((store.root / "backups").glob("*.json"))
+            with patch.object(
+                store, "create", side_effect=RuntimeError("Fixture commit failure")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Fixture commit failure"):
+                    import_preferences(store, bundle)
+            self.assertEqual(preserved(store), before)
+            self.assertEqual(source_data(store)["epoch"]["imported_baseline"], baseline)
+            self.assertEqual(sorted((store.root / "backups").glob("*.json")), backups)
 
     def test_new_and_edited_feedback_learn_without_recounting_existing_rows(self):
         with (
@@ -482,6 +743,10 @@ class PreferenceTransferTests(unittest.TestCase):
             self.assertEqual(
                 list((store.root / "backups").glob("preferences-*.json")), []
             )
+            revision = preview_import(store, bundle)["revision"]
+            set_exclusion(store, "bilibili", "456", True, "New manual exclusion")
+            with self.assertRaisesRegex(ValueError, "after the preview"):
+                import_preferences(store, bundle, expected_revision=revision)
             before = preserved(store)
             with patch(
                 "broader_vids.learning.service.train",
@@ -492,6 +757,145 @@ class PreferenceTransferTests(unittest.TestCase):
             self.assertEqual(preserved(store), before)
             self.assertNotIn("baseline", source_data(store))
 
+    def test_exploration_summary_roundtrip_merges_bounded_usage_idempotently(self):
+        from broader_vids.exploration.coverage import memory, record_search
+        from broader_vids.exploration.domains import (
+            node_id,
+            nodes,
+            put_node,
+            seed_interests,
+        )
+
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            with closing(Store(a)) as source, closing(Store(b)) as target:
+                seed(source)
+                seed_interests(source)
+                roots = nodes(source)
+                parent = next(
+                    node for node in roots.values() if node["label"] == "mathematics"
+                )
+                source_node = node_id("topology")
+                put_node(
+                    source,
+                    {
+                        **parent,
+                        "id": source_node,
+                        "label": "topology",
+                        "parents": [parent["id"]],
+                        "ancestors": [parent["id"]],
+                        "depth": 2,
+                        "origin": "subdivision",
+                    },
+                )
+                record_search(source, "source", source_node)
+                record_search(source, "source", source_node)
+                source.db.commit()
+                bundle = export_preferences(source)
+                serialized = json.dumps(bundle)
+                self.assertEqual(bundle["version"], 4)
+                self.assertGreaterEqual(bundle["exploration_summary"]["sequence"], 1)
+                for private in ("queries", "ancestors", "domain_observations"):
+                    self.assertNotIn(private, serialized)
+                self.assertNotIn("canonical_id", serialized)
+
+                seed(target)
+                seed_interests(target)
+                local_node = next(iter(nodes(target)))
+                record_search(target, "local", local_node)
+                record_search(target, "local", local_node)
+                record_search(target, "local", local_node)
+                target.db.commit()
+                preview = preview_import(target, bundle)
+                self.assertEqual(
+                    preview["exploration_nodes"],
+                    len(bundle["exploration_summary"]["nodes"]),
+                )
+                import_preferences(
+                    target, bundle, expected_revision=preview["revision"]
+                )
+                import_preferences(target, bundle)
+
+                self.assertIn(source_node, nodes(target))
+                self.assertIn(local_node, nodes(target))
+                usage = memory(target)["usage"]
+                self.assertEqual(usage[source_node]["searches"], 2)
+                self.assertEqual(usage[local_node]["searches"], 3)
+
+    def test_exploration_import_failure_rolls_back_profile_and_coverage(self):
+        from broader_vids.exploration.coverage import (
+            import_summary as apply_summary,
+            memory,
+            record_search,
+        )
+        from broader_vids.exploration.domains import nodes, seed_interests
+        from broader_vids.preferences import video_states
+
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            with closing(Store(a)) as source, closing(Store(b)) as target:
+                seed(source)
+                seed_interests(source)
+                record_search(source, "source", next(iter(nodes(source))))
+                watched_id = example(1)["canonical_id"]
+                user_action(source, watched_id, "watched")
+                source.db.commit()
+                bundle = export_preferences(source)
+                seed(target)
+                seed_interests(target)
+                before_profile = get_profile(target)
+                before_nodes = nodes(target)
+                before_memory = memory(target)
+                before_videos = video_states(target)
+                with patch(
+                    "broader_vids.exploration.coverage.import_summary",
+                    side_effect=RuntimeError("coverage import failed"),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "coverage import failed"):
+                        import_preferences(target, bundle)
+                self.assertEqual(get_profile(target), before_profile)
+                self.assertEqual(nodes(target), before_nodes)
+                self.assertEqual(memory(target), before_memory)
+                self.assertEqual(video_states(target), before_videos)
+                self.assertEqual(
+                    list((target.root / "backups").glob("preferences-*.json")), []
+                )
+
+                merged = {"value": False}
+
+                def import_then_fail_deadline(store, summary):
+                    apply_summary(store, summary)
+                    merged["value"] = True
+
+                from broader_vids.learning import transfer
+
+                original_deadline = transfer._deadline
+
+                def fail_after_merge(deadline):
+                    if merged["value"]:
+                        raise ValueError(
+                            "Preference processing reached its time allowance."
+                        )
+                    original_deadline(deadline)
+
+                with (
+                    patch(
+                        "broader_vids.exploration.coverage.import_summary",
+                        side_effect=import_then_fail_deadline,
+                    ),
+                    patch(
+                        "broader_vids.learning.transfer._deadline",
+                        side_effect=fail_after_merge,
+                    ),
+                ):
+                    with self.assertRaisesRegex(ValueError, "time allowance"):
+                        import_preferences(target, bundle)
+                self.assertEqual(get_profile(target), before_profile)
+                self.assertEqual(nodes(target), before_nodes)
+                self.assertEqual(memory(target), before_memory)
+                self.assertEqual(video_states(target), before_videos)
+                self.assertEqual(
+                    list((target.root / "backups").glob("preferences-*.json")), []
+                )
+
     def test_invalid_and_modified_files_are_rejected(self):
         with (
             tempfile.TemporaryDirectory() as directory,
@@ -501,7 +905,42 @@ class PreferenceTransferTests(unittest.TestCase):
             original = export_preferences(store)
             for mutate in (
                 lambda b: b.update(history=[]),
+                lambda b: b.update(watched_video_ids="youtube:0000000001A"),
+                lambda b: b.update(watched_video_ids=[example(1)["canonical_id"]] * 2),
+                lambda b: b.update(
+                    watched_video_ids=["https://www.youtube.com/watch?v=0000000001A"]
+                ),
+                lambda b: b.update(watched_video_ids=["bilibili:BV1Z6H56oEcQ:p01"]),
+                lambda b: b.update(watched_video_ids=[None]),
+                lambda b: b.update(watched_video_ids=["unknown:123"]),
+                lambda b: b.update(watched_video_ids=["youtube:0000000001A"] * 100001),
+                lambda b: b.update(creator_exclusions=[]),
+                lambda b: b["creator_exclusions"].update(
+                    youtube=[{"creator_id": "123", "name": "Invalid channel"}]
+                ),
+                lambda b: b["creator_exclusions"].update(
+                    bilibili=[{"creator_id": "003", "name": "Noncanonical account"}]
+                ),
+                lambda b: b["creator_exclusions"].update(
+                    bilibili=[{"creator_id": "3", "name": "Duplicate"}] * 2
+                ),
+                lambda b: b["creator_exclusions"].update(
+                    bilibili=[{"creator_id": "3", "name": "Too many"}] * 10001
+                ),
+                lambda b: b["creator_exclusions"].update(
+                    bilibili=[{"creator_id": "3", "name": "x" * 301}]
+                ),
+                lambda b: b["creator_exclusions"].update(
+                    bilibili=[
+                        {
+                            "creator_id": "3",
+                            "name": "Untrusted account",
+                            "account_id": "99",
+                        }
+                    ]
+                ),
                 lambda b: b.update(model_version=0),
+                lambda b: b["exploration_summary"].update(usage={"invalid": {}}),
                 lambda b: b.update(feature_version=True),
                 lambda b: b["parameters"]["models"].update(interest=None),
                 lambda b: b["parameters"]["models"]["interest"]["covariance"][

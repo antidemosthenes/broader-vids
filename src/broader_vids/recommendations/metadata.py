@@ -6,6 +6,7 @@ import time
 
 from broader_vids.evidence.browser import bilibili_browser, browser_cookie_jar
 from broader_vids.evidence.media import EvidencePending, public_error
+from broader_vids.time_budget import report_limit
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp, RequestGate
 from broader_vids.creators import enrich
 from broader_vids.storage import Store
@@ -90,7 +91,7 @@ class SnapshotPool:
                 "elapsed": 0,
                 "settings": {
                     **self.http.run["settings"],
-                    "max_seconds": seconds,
+                    "max_seconds": report_limit({"max_seconds": seconds}),
                 },
             }
             client = PublicHttp(

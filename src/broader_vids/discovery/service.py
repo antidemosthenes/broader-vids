@@ -33,6 +33,7 @@ def create_discovery(
     creator_rules=None,
     assessment_model=None,
     reasoning_effort=None,
+    planning_policy=2,
 ):
     if platform not in {"youtube", "bilibili"}:
         raise ValueError("Unsupported discovery platform.")
@@ -44,6 +45,8 @@ def create_discovery(
         raise ValueError("Use 1–10 creators and 1–5 pages per creator.")
     if type(max_planning_calls) is not int or not 0 <= max_planning_calls <= 2:
         raise ValueError("Exploration permits zero to two planning calls per round.")
+    if planning_policy != 2:
+        raise ValueError("Unsupported exploration policy; start a new discovery round.")
     hierarchical = not curated and bank_path is None and get_profile(store) is not None
     if hierarchical:
         from broader_vids.worker_context import resolve_worker_settings
@@ -97,7 +100,7 @@ def create_discovery(
         "client_version": None,
     }
     if hierarchical:
-        state["exploration"] = new_plan(store, seed)
+        state["exploration"] = new_plan(store, seed, policy_version=planning_policy)
     return store.create(platform, settings, state)
 
 
@@ -286,10 +289,13 @@ def execute_discovery(
     cancel_event=None,
     usage_owner=None,
 ):
+    initial = store.get(run_id)
+    if initial["settings"].get("kind") != "discovery":
+        raise ValueError("This command requires a discovery run.")
+    _validate_discovery_policy(initial)
     with store.lease(run_id):
         run = store.get(run_id)
-        if run["settings"].get("kind") != "discovery":
-            raise ValueError("This command requires a discovery run.")
+        _validate_discovery_policy(run)
         if run["status"] == "completed":
             return run
         if max_seconds is not None:
@@ -366,6 +372,21 @@ def execute_discovery(
                     if run["platform"] == "youtube"
                     else provider.search(task["query"])
                 )
+                if (
+                    state.get("exploration", {}).get("policy_version", 1) >= 2
+                    and task.get("fallback_query")
+                    and task["fallback_query"] != task["query"]
+                    and not any(anchor_hits(item, task) for item in items[:10])
+                ):
+                    task["initial_query"] = task["query"]
+                    task["query"] = task["fallback_query"]
+                    save()
+                    items, cursor = (
+                        provider.search(task["query"], state["client_version"])
+                        if run["platform"] == "youtube"
+                        else provider.search(task["query"])
+                    )
+                    task["query_simplified"] = True
                 merge_page(run, items, "search", task, http.last_receipt, cursor)
                 state["index"] += 1
                 observe_query(store, run, task, items, http.last_receipt)
@@ -418,7 +439,7 @@ def execute_discovery(
             checks = discovery_checks(store, run)
             run.update(
                 status="completed" if all(checks.values()) else "insufficient",
-                reason="Discovery checks passed; evidence inspection is Phase 2."
+                reason="Discovery checks passed; evidence inspection is the next step."
                 if all(checks.values())
                 else "Collection finished but discovery coverage checks remain unmet.",
             )
@@ -499,6 +520,14 @@ def discovery_checks(store, run):
     return checks
 
 
+def _validate_discovery_policy(run):
+    exploration = run["state"].get("exploration")
+    if exploration is not None and exploration.get("policy_version") != 2:
+        raise ValueError(
+            "This discovery run uses an unsupported exploration policy; start a new discovery round."
+        )
+
+
 def discovery_report(store, run_id):
     run = store.get(run_id)
     if run["settings"].get("kind") != "discovery":
@@ -543,7 +572,7 @@ def discovery_report(store, run_id):
             "Query intent and anchor matches are retrieval hints, not verified semantic relevance or quality.",
             "Bilibili creator expansion uses owner-ID-verified public search, not complete archive enumeration.",
             "Published labels are platform text, not independently verified upload dates.",
-            "Bilibili card duration may describe an archive; playable parts and full-video login access require Phase 2.",
+            "Bilibili card duration may describe an archive; evidence preparation verifies the playable part and full-video access.",
             "Discovery does not inspect media or apply quality, profile or recommendation-history scores.",
         ],
     }
@@ -560,7 +589,7 @@ def write_discovery_report(store, run_id):
         "",
         f"Candidates: {report['candidate_count']}; creators: {report['creator_count']}; requests: {report['http_requests']}.",
         "",
-        "These are unranked candidates for Phase 2 inspection, not recommendations.",
+        "These are unranked discovery candidates for evidence inspection.",
         "",
     ]
     for index, item in enumerate(report["shortlist"], 1):

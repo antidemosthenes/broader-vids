@@ -5,7 +5,7 @@ import unittest
 
 from broader_vids.learning.feedback import save_detail
 from broader_vids.learning.service import capture_rating
-from broader_vids.preferences import set_profile, user_action
+from broader_vids.preferences import set_profile, user_action, current_recommendation_id
 from broader_vids.storage import Store
 from broader_vids.web.server import dashboard_state
 from test_learning import example
@@ -95,6 +95,13 @@ class DashboardRoundTests(unittest.TestCase):
             self.assertEqual(data["id"], newer)
             self.assertFalse(data["provisional"])
             self.assertNotEqual(published, newer)
+            queries = []
+            store.db.set_trace_callback(queries.append)
+            self.assertEqual(current_recommendation_id(store, "youtube"), newer)
+            store.db.set_trace_callback(None)
+            self.assertEqual(len(queries), 1)
+            empty, _ = make_round(store, "bilibili", items=False)
+            self.assertEqual(current_recommendation_id(store, "bilibili"), empty)
             run = store.get(newer)
             run["state"]["preview"] = [example(2)]
             store.save(run)

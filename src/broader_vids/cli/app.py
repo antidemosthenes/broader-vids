@@ -24,7 +24,6 @@ from broader_vids.evidence.service import (
 )
 from broader_vids.evidence.reports import (
     evidence_report,
-    pilot_report,
     write_evidence_report,
 )
 from broader_vids.evidence.assessment import assess_evidence
@@ -39,7 +38,6 @@ from broader_vids.recommendations.reports import (
     recommendation_report,
     write_recommendation_report,
 )
-from broader_vids.readiness import release_gate
 
 
 def emit(value):
@@ -199,8 +197,12 @@ def main(argv=None):
                         model=args.model,
                         effort=args.effort,
                         asr_model=args.asr_model,
+                        skill_namespace=args.skill_namespace,
                     )
-                    emit(report)
+                    if args.format == "chat" and report.get("self_check") == "passed":
+                        print(report["next_steps_message"])
+                    else:
+                        emit(report)
                     return 0 if report["status"] == "ready" else 2
                 return 0
             if args.command == "preflight":
@@ -324,11 +326,6 @@ def main(argv=None):
                         )
                     )
                     ensure_model(store)
-                    return 0
-                if args.operation == "migrate-feedback":
-                    from broader_vids.learning.migration import migrate_binary_feedback
-
-                    emit(migrate_binary_feedback(store))
                     return 0
 
                 if args.operation == "repair-evidence":
@@ -548,22 +545,6 @@ def main(argv=None):
                 args.command in {"continue", "report"}
                 and store.get(args.run_id)["settings"].get("kind") == "evidence"
             ):
-                if (
-                    args.command == "evidence"
-                    and args.evidence_command == "pilot-report"
-                ):
-                    report = pilot_report(store)
-                    emit(
-                        {
-                            "phase_two_complete": report["phase_two_complete"],
-                            "verified_videos": report["verified_videos"],
-                            "totals": report["totals"],
-                            "report_path": str(
-                                store.root / "evidence" / "pilot-report.md"
-                            ),
-                        }
-                    )
-                    return 0
                 if args.command == "evidence" and args.evidence_command == "prepare":
                     run_id = create_evidence(
                         store,
@@ -629,6 +610,7 @@ def main(argv=None):
                         args.max_seconds,
                         args.creators,
                         args.creator_pages,
+                        planning_policy=2,
                         curated=args.curated,
                         seed=args.seed,
                         max_planning_calls=args.max_planning_calls,
@@ -686,10 +668,6 @@ def main(argv=None):
                         for r in store.list_runs()
                     ]
                 )
-                return 0
-            if args.command == "gate":
-                gate = release_gate(store)
-                emit(gate)
                 return 0
             raise ValueError(
                 "This saved job type belongs to a retired research workflow."

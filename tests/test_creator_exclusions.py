@@ -211,7 +211,7 @@ class CreatorExclusionTests(unittest.TestCase):
         self.assertEqual(run["state"]["creator_rules"], saved)
         self.assertEqual(pending_videos(self.store, "youtube"), [])
 
-    def test_legacy_round_does_not_adopt_new_rules(self):
+    def test_unsupported_creator_policy_does_not_change_rules(self):
         set_exclusion(self.store, "youtube", CHANNEL, True)
         run = self.store.get(
             create_recommendation(
@@ -222,8 +222,9 @@ class CreatorExclusionTests(unittest.TestCase):
             )
         )
         run["settings"].pop("creator_policy_version")
-        initialize_round(self.store, run, lambda: 60)
-        self.assertEqual(run["state"]["creator_rules"], {})
+        with self.assertRaisesRegex(ValueError, "Unsupported creator policy"):
+            initialize_round(self.store, run, lambda: 60)
+        self.assertNotIn("creator_rules", run["state"])
 
     def test_calibration_creator_resolves_an_existing_minimal_video_record(self):
         item = candidate(1)

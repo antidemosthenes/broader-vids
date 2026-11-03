@@ -5,7 +5,9 @@ from broader_vids.discovery.languages import search_query, simplified
 from broader_vids.storage import utc_now
 
 
-def proposal_schema():
+def proposal_schema(policy_version=2):
+    if policy_version != 2:
+        raise ValueError("Unsupported exploration policy; start a new discovery round.")
     text = {"type": "string"}
     texts = {"type": "array", "items": text}
     queries = {
@@ -23,7 +25,7 @@ def proposal_schema():
             "additionalProperties": False,
         }
 
-    return obj(
+    result = obj(
         {
             "existing_queries": {
                 "type": "array",
@@ -45,17 +47,46 @@ def proposal_schema():
         }
     )
 
+    for name in ("existing_queries", "proposals"):
+        item = result["properties"][name]["items"]
+        item["properties"]["fallback_queries"] = queries
+        item["required"].append("fallback_queries")
+    return result
+
 
 def proposal_prompt(
-    current, selected, recent, profile, needed, allow_refinements, language_errors=None
+    current,
+    selected,
+    recent,
+    profile,
+    needed,
+    allow_refinements,
+    language_errors=None,
+    policy_version=2,
 ):
+    if policy_version != 2:
+        raise ValueError("Unsupported exploration policy; start a new discovery round.")
+    selected_ids = {node["id"] for node in selected}
+    ordered = sorted(
+        current.values(),
+        key=lambda node: (node["id"] not in selected_ids, node["depth"], node["id"]),
+    )
+    context_map, used = [], 0
+    for node in ordered:
+        entry = {
+            key: node[key]
+            for key in ("id", "label", "aliases", "parents", "depth", "status")
+        }
+        size = len(json.dumps(entry, ensure_ascii=False).encode("utf-8"))
+        if used + size > 96 * 1024:
+            continue
+        context_map.append(entry)
+        used += size
     data = {
         "interests": profile["interests"],
         "selected": selected,
-        "map": [
-            {k: n[k] for k in ("id", "label", "aliases", "parents", "depth", "status")}
-            for n in current.values()
-        ],
+        "map": context_map,
+        "map_is_partial": len(context_map) < len(current),
         "recent": recent,
         "needed": needed,
         "allow_refinements": allow_refinements,
@@ -69,14 +100,14 @@ def proposal_prompt(
         "Translate search keywords even when interests or hierarchy labels use a different language. "
         "Keep the same selected concept and search intent in both language variants. "
         "Use Chinese wording for Bilibili, retaining Latin technical names only where useful. "
-        "Existing queries may use a narrower example within the named topic. "
+        "The program already selected each existing concept. Keep exactly that concept; do not substitute a customary game, city, recipe, or experiment. Provide fallback_queries as the shortest English and Simplified Chinese wording for that same concept. "
         "Choose a different concrete subtopic from each node's recent queries when useful alternatives exist. "
         "Do not default all interests to tutorials, theory, or exam preparation. "
         "Include practical, cultural, creative, and performance content where the interest supports it. "
         "Propose up to needed coherent, searchable concepts, each with useful English/Chinese queries, "
         "aliases, anchors and a short novelty explanation. Prefer domains unrelated to current interests, "
         "selected topics and recent coverage; do not disguise a subfield as an unrelated domain. "
-        "Check the full map for aliases or semantic duplicates; avoid renaming or trivial query variants. "
+        "Check the provided map for aliases or semantic duplicates; avoid renaming or trivial query variants. The program also checks all stored aliases. "
         "Unrelated new roots have empty parents. Never invent videos or claim search success. "
         "If allow_refinements is true, unresolved novelty may instead use meaningful local subdivisions "
         "of active map nodes, with their exact parent IDs; cross-domain concepts may have multiple parents. "
@@ -107,6 +138,12 @@ def query_fields(value):
     ]
 
 
+def fallback_queries(value, default):
+    return query_fields(
+        {"queries": value.get("fallback_queries", default), "anchors": ["subject"]}
+    )[0]
+
+
 def validate_response(response, current, selected, allow_refinements, needed):
     if not isinstance(response, dict):
         raise ValueError("Exploration response must be an object.")
@@ -127,6 +164,8 @@ def validate_response(response, current, selected, allow_refinements, needed):
         if query["node_id"] in updates:
             raise ValueError("Duplicate existing-node query.")
         updates[query["node_id"]] = query_fields(query)
+        if "fallback_queries" in query:
+            fallback_queries(query, query["queries"])
     known = {
         normalized(alias)
         for node in current.values()
@@ -165,6 +204,9 @@ def validate_response(response, current, selected, allow_refinements, needed):
             ancestors = set(parents)
             for parent in parents:
                 ancestors.update(current[parent]["ancestors"])
+            depth = 1 + max((current[p]["depth"] for p in parents), default=0)
+            if depth > 32 or len(current) + len(accepted) >= 1024:
+                raise ValueError("The bounded exploration hierarchy is full.")
             accepted.append(
                 {
                     "id": node_id(label),
@@ -177,11 +219,12 @@ def validate_response(response, current, selected, allow_refinements, needed):
                     )
                     if parents
                     else [label],
-                    "depth": 1 + max((current[p]["depth"] for p in parents), default=0),
+                    "depth": depth,
                     "origin": "subdivision" if parents else "exploration",
                     "status": "proposed",
                     "created_at": utc_now(),
                     "queries": query_pair,
+                    "fallback_queries": fallback_queries(proposal, query_pair),
                     "anchors": anchors,
                     "novelty_reason": reason,
                     "novelty_verified": False,

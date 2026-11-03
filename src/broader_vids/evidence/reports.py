@@ -1,3 +1,4 @@
+from broader_vids.learning.topic_labels import readable_card_topics
 import html
 import json
 from pathlib import Path
@@ -17,8 +18,8 @@ def evidence_checks(store, run):
             and state["metadata"].get("source") == "yt_dlp_playable_unit"
         ),
         "within_resource_limits": 0 < len(state["frames"]) <= 8
-        and state["submitted_images"] <= 8
-        and state["model_calls"] <= 2,
+        and state["submitted_images"] <= run["settings"].get("max_images", 8)
+        and state["model_calls"] <= run["settings"].get("max_model_calls", 2),
         "verified_bundle": False,
         "valid_scorecards": False,
     }
@@ -44,7 +45,7 @@ def evidence_checks(store, run):
             ):
                 return checks
             validate_card(
-                assessment["card"],
+                readable_card_topics(assessment["card"]),
                 {cue["id"] for cue in cues} | {frame["id"] for frame in frames},
                 mode,
                 assessment["rubric_version"],
@@ -53,109 +54,6 @@ def evidence_checks(store, run):
     except (ValueError, KeyError, TypeError, OSError):
         pass
     return checks
-
-
-def pilot_report(store, write=True):
-    rows = []
-    totals = {
-        "media_download_bytes": 0,
-        "caption_download_bytes": 0,
-        "submitted_images": 0,
-        "model_calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "transcription_seconds": 0,
-        "preparation_seconds": 0,
-    }
-    completed = {"youtube": set(), "bilibili": set()}
-    for run in store.iter_runs(kind="evidence"):
-        state = run["state"]
-        checks = evidence_checks(store, run)
-        if all(checks.values()):
-            completed[run["platform"]].add(run["settings"]["identity"]["canonical_id"])
-        for key in totals:
-            totals[key] += state["resources"].get(key, state.get(key, 0))
-        paired = {}
-        for mode, assessment in state["assessments"].items():
-            usage = assessment["usage"]
-            tokens = usage.get("token_usage") or {}
-            totals["input_tokens"] += tokens.get("input_tokens", 0)
-            totals["output_tokens"] += tokens.get("output_tokens", 0)
-            paired[mode] = {
-                "quality": assessment["overall_quality"],
-                "usage": usage,
-                "visual_status": assessment["card"]["criteria"]["visuals"]["status"],
-                "summary": assessment["card"]["summary"],
-            }
-        if {"baseline", "augmented"}.issubset(paired):
-            first, second = (
-                paired["baseline"]["usage"].get("token_usage"),
-                paired["augmented"]["usage"].get("token_usage"),
-            )
-            paired["observed_input_token_difference"] = (
-                second.get("input_tokens", 0) - first.get("input_tokens", 0)
-                if first and second
-                else None
-            )
-        rows.append(
-            {
-                "run_id": run["id"],
-                "platform": run["platform"],
-                "canonical_id": run["settings"]["identity"]["canonical_id"],
-                "status": run["status"],
-                "reason": run["reason"],
-                "title": (state["metadata"] or {}).get("title"),
-                "checks": checks,
-                "comparison": paired,
-            }
-        )
-    report = {
-        "generated_at": utc_now(),
-        "phase_two_complete": all(len(values) >= 3 for values in completed.values()),
-        "verified_videos": {
-            platform: len(values) for platform, values in completed.items()
-        },
-        "totals": totals,
-        "runs": rows,
-        "limitations": [
-            "Token totals are reported Codex usage and include CLI/system overhead; missing usage is not estimated.",
-            "Transfer counters exclude extractor metadata, inline-caption fetches and model-weight downloads.",
-            "Paired numeric differences include model variability and are not a causal estimate of frame benefit.",
-            "Frame evidence can support visual judgments; it does not establish asset provenance.",
-            "These six development examples do not calibrate the quality score or justify scaling to all candidates automatically.",
-        ],
-    }
-    if not write:
-        return report
-    root = store.root / "evidence"
-    root.mkdir(parents=True, exist_ok=True)
-    atomic_json(root / "pilot-report.json", report)
-    lines = [
-        "# Phase 2 evidence trial",
-        "",
-        f"Complete: {report['phase_two_complete']}; verified videos: {report['verified_videos']}",
-        "",
-        "| Video | Status | Caption quality | Augmented quality | Extra input tokens observed |",
-        "| --- | --- | ---: | ---: | ---: |",
-    ]
-    for row in rows:
-        pair = row["comparison"]
-        lines.append(
-            f"| {html.escape(row['title'] or row['canonical_id']).replace('|', '/')} | {row['status']} | {pair.get('baseline', {}).get('quality')} | {pair.get('augmented', {}).get('quality')} | {pair.get('observed_input_token_difference')} |"
-        )
-    lines.extend(
-        [
-            "",
-            "## Reported resources",
-            "",
-            json.dumps(totals, indent=2),
-            "",
-            *report["limitations"],
-            "",
-        ]
-    )
-    (root / "pilot-report.md").write_text("\n".join(lines), encoding="utf-8")
-    return report
 
 
 def evidence_report(store, identifier):

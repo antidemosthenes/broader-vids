@@ -9,6 +9,7 @@ from broader_vids.recommendations.collection import (
     collect_eligible_buffer,
     refill_candidates,
 )
+from broader_vids.recommendations.collection_policy import default_collection_policy
 from broader_vids.recommendations.screening import rejection_reason
 from broader_vids.storage import Store, utc_now
 from test_recommendations import candidate
@@ -112,79 +113,6 @@ class ScreeningPolicyTests(unittest.TestCase):
                 self.assertIsNotNone(rejection_reason(item))
             item["engagement"][key] = original
 
-    def test_refill_replaces_rejected_candidates_until_100_pass(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            closing(Store(directory)) as store,
-        ):
-            profile = set_profile(store, ["mathematics"])
-            bad = [{**candidate(i), "duration_seconds": 60} for i in range(1, 21)]
-            run = {
-                "platform": "youtube",
-                "settings": {"use_browser": False, "profile": profile},
-                "state": {
-                    "buffer": [],
-                    "candidate_pool": bad + [candidate(i) for i in range(21, 101)],
-                },
-            }
-            refills, snapshots = [], []
-
-            def refill(store, run, remaining, save):
-                refills.append(True)
-                run["state"]["candidate_pool"].extend(
-                    candidate(i) for i in range(101, 121)
-                )
-                return True
-
-            def snapshot(http, item):
-                snapshots.append(item["canonical_id"])
-                return {
-                    **item["engagement"],
-                    "duration_seconds": 300,
-                    "observed_at": utc_now(),
-                }
-
-            collect_eligible_buffer(
-                store,
-                run,
-                None,
-                lambda: 100,
-                lambda: None,
-                refill=refill,
-                snapshot_collector=snapshot,
-            )
-            self.assertEqual(len(run["state"]["buffer"]), 100)
-            self.assertEqual(len(run["state"]["screening_rejections"]), 20)
-            self.assertEqual(len(snapshots), 100)
-            self.assertEqual(len(refills), 1)
-            self.assertEqual(run["state"]["pool_index"], 120)
-
-    def test_exhaustion_does_not_start_quality_with_fewer_than_100(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            closing(Store(directory)) as store,
-        ):
-            profile = set_profile(store, ["mathematics"])
-            run = {
-                "platform": "youtube",
-                "settings": {"use_browser": False, "profile": profile},
-                "state": {"buffer": [], "candidate_pool": [candidate(1)]},
-            }
-            with self.assertRaisesRegex(EvidencePending, "Only 1/100"):
-                collect_eligible_buffer(
-                    store,
-                    run,
-                    None,
-                    lambda: 100,
-                    lambda: None,
-                    refill=lambda *a: False,
-                    snapshot_collector=lambda h, i: {
-                        **i["engagement"],
-                        "observed_at": utc_now(),
-                    },
-                )
-            self.assertEqual(len(run["state"]["buffer"]), 1)
-
     def test_search_continuation_preserves_origins_and_uses_parent_budget(self):
         with (
             tempfile.TemporaryDirectory() as directory,
@@ -248,17 +176,22 @@ class ScreeningPolicyTests(unittest.TestCase):
             profile = set_profile(store, ["mathematics"])
             run = {
                 "platform": "youtube",
-                "settings": {"use_browser": False, "profile": profile},
+                "settings": {
+                    "use_browser": False,
+                    "profile": profile,
+                    "screening_policy_version": 5,
+                    "collection_policy": default_collection_policy(),
+                },
                 "state": {"buffer": [], "candidate_pool": [candidate(1)]},
             }
-            with self.assertRaisesRegex(EvidencePending, "Only 0/100"):
+            with self.assertRaisesRegex(EvidencePending, "Collection cannot fill"):
                 collect_eligible_buffer(
                     store,
                     run,
                     None,
                     lambda: 100,
                     lambda: None,
-                    refill=lambda *a: False,
+                    refill=lambda *a, **kw: False,
                     snapshot_collector=lambda h, i: {
                         **i["engagement"],
                         "duration_seconds": 60,
