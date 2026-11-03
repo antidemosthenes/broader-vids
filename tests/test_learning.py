@@ -648,26 +648,29 @@ class CalibrationSelectionTests(unittest.TestCase):
         self.store = Store(self.directory.name)
         set_profile(self.store, ["math"])
         self.observations = {}
-        for platform in ("youtube", "bilibili"):
-            items = [candidate(i, platform) for i in range(1, 31)]
-            self.store.create(
-                platform,
-                {"kind": "recommendation"},
-                {"shortlist": items, "buffer": items},
-            )
-            for item in items:
-                key = self.store.create(
+        with self.store.db:
+            for platform in ("youtube", "bilibili"):
+                items = [candidate(i, platform) for i in range(1, 31)]
+                self.store.create(
                     platform,
-                    {
-                        "kind": "evidence",
-                        "identity": {"canonical_id": item["canonical_id"]},
-                    },
-                    {"assessments": {"augmented": {}}},
+                    {"kind": "recommendation"},
+                    {"shortlist": items, "buffer": items},
+                    commit=False,
                 )
-                self.observations[key] = {
-                    **example()["quality_evidence"],
-                    "evidence_run": key,
-                }
+                for item in items:
+                    key = self.store.create(
+                        platform,
+                        {
+                            "kind": "evidence",
+                            "identity": {"canonical_id": item["canonical_id"]},
+                        },
+                        {"assessments": {"augmented": {}}},
+                        commit=False,
+                    )
+                    self.observations[key] = {
+                        **example()["quality_evidence"],
+                        "evidence_run": key,
+                    }
 
     def tearDown(self):
         self.store.close()

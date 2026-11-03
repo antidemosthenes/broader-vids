@@ -768,7 +768,12 @@ Only one browser-test file runs at a time. Other workers continue core tests.
 Each file keeps its own process and temporary profile.
 Layout checks run by default. Inspection screenshots require `BROADER_VIDS_TEST_SCREENSHOTS=1`.
 It returns a nonzero exit code when a test or worker fails.
-The GitHub Actions test step uses two workers.
+The GitHub Actions test step uses three workers. Browser-test files remain serial.
+Recommendation and calibration fixtures create seed records in one transaction.
+Production requests and checkpoint tests retain their normal durability checks.
+The ordinary checks workflow cancels superseded checks for the same source branch.
+Its group also combines overlapping push and pull-request checks. Fork branches use separate repository names.
+The release workflow keeps its separate publication controls.
 Use a smaller group for a change in one area:
 
 ```powershell
@@ -804,7 +809,7 @@ uv run --no-sync playwright install --with-deps chromium
 ```
 
 The GitHub Actions workflows install the matching headless shell before the test step.
-CI uses `scripts/test.py --jobs 2 --verbose` and limits that step to ten minutes.
+CI uses `scripts/test.py --jobs 3 --verbose` and limits that step to ten minutes.
 The runner reports active files every fifteen seconds. Timeout reports include the last running test.
 CI uses the runner scratch directory for temporary profiles.
 Path tests compare resolved paths. Reset and Clean tests use the exact directory shown by each preview.

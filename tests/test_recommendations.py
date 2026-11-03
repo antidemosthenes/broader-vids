@@ -246,23 +246,26 @@ class RecommendationTests(unittest.TestCase):
         self.directory.cleanup()
 
     def source(self):
-        identifier = self.store.create(
-            "youtube",
-            {"kind": "discovery"},
-            {
-                "phase": "finished",
-                "candidates": {i["canonical_id"]: i for i in self.items},
-            },
-        )
-        for item in self.items:
-            self.store.create(
+        with self.store.db:
+            identifier = self.store.create(
                 "youtube",
+                {"kind": "discovery"},
                 {
-                    "kind": "evidence",
-                    "identity": {"canonical_id": item["canonical_id"]},
+                    "phase": "finished",
+                    "candidates": {i["canonical_id"]: i for i in self.items},
                 },
-                {},
+                commit=False,
             )
+            for item in self.items:
+                self.store.create(
+                    "youtube",
+                    {
+                        "kind": "evidence",
+                        "identity": {"canonical_id": item["canonical_id"]},
+                    },
+                    {},
+                    commit=False,
+                )
         return identifier
 
     def insert_pending(self, items):
