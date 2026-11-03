@@ -1,0 +1,46 @@
+name: checks
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check runtime dependency files are tracked
+        run: |
+          git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: uv sync --locked --extra evidence
+      - name: Install Chromium headless shell and dependencies
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
+      - run: npm ci --ignore-scripts
+      - run: uv run --no-sync ruff check src tests scripts
+      - run: uv run --no-sync ruff format --check src tests scripts
+      - name: Run isolated tests in parallel without a live Codex chat
+        run: uv run --no-sync scripts/test.py --jobs 2 --verbose
+        timeout-minutes: 10
+        env:
+          BROADER_VIDS_TEST_BROWSER: chromium
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+          CODEX_THREAD_ID: ""
+          CODEX_SESSION_ID: ""
+      - run: npm test
+      - run: npm run check:web
+      - run: uv build --wheel --out-dir python
+      - run: npm pack --ignore-scripts
+      - run: uv run --no-sync scripts/verify_package.py

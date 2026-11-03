@@ -1,3 +1,6 @@
 *
 !*.whl
+!core-requirements.txt
+!evidence-requirements.txt
+!asr-requirements.txt
 

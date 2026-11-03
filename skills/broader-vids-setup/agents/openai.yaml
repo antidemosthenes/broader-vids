@@ -1,0 +1,4 @@
+interface:
+  display_name: "Set up Broader Vids"
+  short_description: "Prepare local video recommendations and feedback"
+  default_prompt: "Use $broader-vids-setup to prepare my local video recommendations."

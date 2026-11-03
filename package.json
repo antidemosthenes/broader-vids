@@ -1,11 +1,48 @@
 {
-  "name": "deepvids",
-  "version": "0.1.0-alpha.2",
-  "description": "Codex skill and local video discovery feasibility experiments",
+  "name": "broader-vids",
+  "version": "0.1.0",
+  "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
   "license": "MIT",
-  "engines": { "node": ">=20" },
-  "bin": { "deepvids": "bin/deepvids.cjs" },
-  "files": ["bin/", "python/deepvids-0.1.0a2-*.whl", "skills/", "plugin.json", ".claude-plugin/marketplace.json", "LICENSE", "README.md", "docs/PLAN.md", "docs/PHASES.md", "docs/FEASIBILITY.md", "docs/SAMPLING_DATABASES.md", "docs/DISCOVERY_REASSESSMENT.md"],
-  "scripts": { "test": "node --test tests/launcher.test.cjs" }
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "broader-vids": "bin/broader-vids.cjs"
+  },
+  "files": [
+    "bin/",
+    "python/broader_vids-0.1.0-*.whl",
+    "python/core-requirements.txt",
+    "python/evidence-requirements.txt",
+    "python/asr-requirements.txt",
+    "skills/",
+    "plugin.json",
+    "LICENSE",
+    "README.md",
+    "docs/WORKFLOW.md",
+    "docs/ARCHITECTURE.md",
+    "docs/SCORING.md",
+    "docs/REFERENCE.md"
+  ],
+  "scripts": {
+    "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs",
+    "check:web": "prettier --check src/broader_vids/web/static",
+    "release:prepare": "uv run --no-sync scripts/release.py prepare"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antidemosthenes/broader-vids.git"
+  },
+  "homepage": "https://github.com/antidemosthenes/broader-vids#readme",
+  "bugs": {
+    "url": "https://github.com/antidemosthenes/broader-vids/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "tag": "latest"
+  }
 }
-

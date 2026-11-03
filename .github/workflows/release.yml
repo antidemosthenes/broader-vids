@@ -1,0 +1,173 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Check the trusted repository
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$REPOSITORY" != "antidemosthenes/broader-vids" ]]; then
+            echo "Unexpected repository: $REPOSITORY" >&2
+            exit 1
+          fi
+      - name: Validate and resolve the selected tag
+        id: resolve
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Release tag must use stable vX.Y.Z syntax." >&2
+            exit 1
+          fi
+          git init source
+          cd source
+          git remote add origin "https://github.com/antidemosthenes/broader-vids.git"
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          sha="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: uv sync --locked --extra evidence
+      - run: npm ci --ignore-scripts
+      - name: Install Chromium headless shell and dependencies
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
+      - name: Check runtime dependency files are tracked
+        run: |
+          git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
+      - run: uv run --no-sync ruff check src tests scripts
+      - run: uv run --no-sync ruff format --check src tests scripts
+      - name: Run isolated tests in parallel without a live Codex chat
+        run: uv run --no-sync scripts/test.py --jobs 2 --verbose
+        timeout-minutes: 10
+        env:
+          BROADER_VIDS_TEST_BROWSER: chromium
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+          CODEX_THREAD_ID: ""
+          CODEX_SESSION_ID: ""
+      - run: npm test
+      - run: npm run check:web
+      - run: uv build --wheel --out-dir python
+      - run: npm pack --ignore-scripts
+      - run: uv run --no-sync scripts/verify_package.py
+
+  prepare:
+    needs: [resolve, checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Check release tag and package version
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RESOLVED_SHA"
+          uv sync --locked --extra evidence
+          uv run --no-sync scripts/release.py check --tag "$RELEASE_TAG"
+      - name: Check registry version is unused
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: uv run --no-sync scripts/release.py available --tag "$RELEASE_TAG"
+      - run: npm ci --ignore-scripts
+      - run: npm run release:prepare
+      - name: Verify prepared artifacts
+        run: uv run --no-sync scripts/release.py verify --artifacts-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-${{ inputs.tag }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [resolve, prepare]
+    runs-on: ubuntu-latest
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - name: Confirm npm supports trusted publishing
+        run: |
+          node -e "const [major, minor, patch] = process.argv[1].split('.').map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) process.exit(1)" "$(npm --version)"
+      - name: Confirm tag still resolves to the tested source
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RESOLVED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RESOLVED_SHA"
+          uv sync --locked
+          uv run --no-sync scripts/release.py check --tag "$RELEASE_TAG"
+          uv run --no-sync scripts/release.py available --tag "$RELEASE_TAG"
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-release-${{ inputs.tag }}
+          path: dist
+      - name: Verify exact artifacts before publishing
+        run: uv run --no-sync scripts/release.py verify --artifacts-dir dist
+      - name: Publish the verified tarball through npm trusted publishing
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          archive="dist/broader-vids-${RELEASE_TAG#v}.tgz"
+          test -f "$archive"
+          npm publish "$archive" --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Broader Vids clean"
+  short_description: "Remove local data and tools safely"
+  default_prompt: "Use $broader-vids-clean to preview removal of all Broader Vids local data."

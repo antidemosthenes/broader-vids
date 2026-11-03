@@ -1,91 +1,114 @@
-# Deepvids
+# Broader Vids
 
-Independent YouTube and Bilibili recommendations, built in five verified phases.
+Broader Vids provides an alternative recommendation algorithm for YouTube and Bilibili.
+It combines your interests, exploration of unfamiliar topics, video quality, and feedback.
 
-**Current stage:** Phase 1 is incomplete and work stops at discovery. ChinaOpen and YouNiverse were rejected as dated; no suitable current replacement has been verified for both platforms. Phase 2 has not started. See [the reassessment](docs/DISCOVERY_REASSESSMENT.md). See [the phase roadmap](docs/PHASES.md) and [implementation plan](docs/PLAN.md).
+**The plugin learns from your dashboard ratings and calibrates its internal scoring model weights to your preferences.**
+You can manually exclude creators and tags from future rounds.
+Each complete round recommends ten videos per selected platform.
 
-The earlier platform-wide random-ID methods did not pass their feasibility checks. Historical catalogs remain test fixtures and cannot satisfy discovery readiness; see [the earlier findings](docs/FEASIBILITY.md) and [catalog research](docs/SAMPLING_DATABASES.md).
+The plugin runs locally through Codex CLI or Codex in the ChatGPT desktop app.
+Recommendations appear in chat. A local dashboard provides ratings, exclusions, and preferences.
 
-## Local development
+## Install the plugin
 
-Use Python 3.12+ through UV:
+Requirements: Windows, PowerShell, Node.js 20 or later with npm, UV, and Codex CLI authenticated with ChatGPT.
+Installation and recommendations require internet access.
+Choose one installation method. Neither method requires a checkout, build, or local folder selection.
 
-```powershell
-uv sync
-uv run deepvids doctor
-uv run deepvids simulate
-uv run --no-sync python -m unittest discover -s tests -v
-```
+### From GitHub in the ChatGPT desktop app
 
-If UV's default cache is unavailable, set `UV_CACHE_DIR` to a writable directory or use `uv --cache-dir .cache/uv ...`.
+1. Open the plugin marketplace controls in Codex.
+2. Select **Add marketplace** and its repository or Git URL option.
+3. Enter `https://github.com/antidemosthenes/broader-vids`.
+4. Add or sync the marketplace.
+5. Select **Broader Vids** and install it.
+6. Start a new conversation.
 
-## Historical catalog fixtures
+The GitHub repository supplies the catalog. Its plugin entry downloads the complete package from npm.
 
-These commands test import and sampling mechanics only; the sources are rejected for recommendation discovery.
+### From GitHub in Codex CLI
 
-```powershell
-uv run deepvids --data-dir .localdata catalog fetch chinaopen
-uv run deepvids --data-dir .localdata catalog fetch youniverse --max-download-mib 8 --preview-rows 2000
-uv run deepvids --data-dir .localdata catalog list
-uv run deepvids --data-dir .localdata catalog sample CATALOG_ID --count 100 --seed 20261024
-uv run deepvids --data-dir .localdata gate
-```
-
-The ChinaOpen fetch imports the complete URL-list response. YouNiverse fetches at most 8 MiB and imports the first 2,000 metadata rows as a development preview. Sampling is uniform without replacement over distinct links in the imported catalog; the preview is not a representative sample of all YouNiverse or YouTube. Source hashes, scope and selection limits are saved with each catalog and draw. The draw artifact contains the actual candidate URLs; `--show-items` also prints them.
-
-Local imports accept ChinaOpen TSV or YouNiverse gzip JSONL files:
+Run these commands in PowerShell:
 
 ```powershell
-uv run deepvids --data-dir .localdata catalog import youniverse C:\data\yt_metadata_en.jsonl.gz --scope source_snapshot
+codex plugin marketplace add antidemosthenes/broader-vids --sparse .agents/plugins
+codex plugin add broader-vids@broader-vids
 ```
 
-A complete YouNiverse snapshot must match its published file checksum. Imports stream records and publish atomically; malformed compressed files leave no usable partial catalog. Large full-source import performance has not been benchmarked. Each import has a one-hour processing budget. Catalog draws are raw candidates; availability, duration exclusions and quality inspection happen in later phases. ChinaOpen links default to the first part unless their URL specifies a part.
+Start a new conversation after installation.
 
-## Earlier sampling experiments
+### From npm
+
+Run this command in PowerShell:
 
 ```powershell
-uv run deepvids --data-dir .localdata experiment youtube --seed 20261024 --queries 10 --max-requests 30 --max-seconds 120
-uv run deepvids --data-dir .localdata probe bilibili --aid 170001
-uv run deepvids --data-dir .localdata search-control --video-id dQw4w9WgXcQ
-uv run deepvids --data-dir .localdata experiment bilibili --seed-aid 170001 --seed-aid 205634870 --seed-aid 4550175 --seed-aid 114868162141203 --seed-provenance "Public reference IDs; dispersed coverage not established"
-uv run deepvids --data-dir .localdata status
-uv run deepvids --data-dir .localdata continue RUN_ID
-uv run deepvids --data-dir .localdata report RUN_ID
-uv run deepvids --data-dir .localdata gate
+npx --yes broader-vids@0.1.0 plugin install
 ```
 
-Example starting archives are public reference IDs, not evidence of a representative initialization; supply verified dispersed IDs and provenance for a substantive Bilibili trial. Small smoke tests do not count as full feasibility sessions.
+This command registers an npm-backed marketplace and installs the plugin through Codex.
+It installs the skills and dashboard, not only the terminal launcher.
+It does not require the GitHub catalog.
+Restart the desktop app or start a new Codex CLI conversation after installation.
 
-Network work is anonymous and bounded. Access challenges, throttling and ambiguous failures pause a run. Continue retains its random state and pending query/proposal. Sampling does not inspect cookies, download media, call a model, or personalize discovery. Reports contain provisional metadata populations and known coverage limitations, never a claim of exact global uniformity.
+The app's Add marketplace field accepts repository URLs, not npm package names.
+Use the npm command above for that installation route.
+See the [official packaging guide](https://developers.openai.com/plugins/build/plugins) for supported plugin sources.
 
-Reports and SQLite state live under the chosen data directory. Without an override, the default is `%LOCALAPPDATA%/deepvids` on Windows. Keep experimental results out of source control.
+## Set up and request recommendations
 
-## Local and npm packaging
+Use this procedure for either platform or both:
 
-```powershell
-uv build --out-dir python
-npm pack --ignore-scripts
-```
+1. Start a new conversation. Invoke the setup skill from the table below.
+2. Choose YouTube, Bilibili, or both.
+3. Choose calibrated starter preferences, enter your interests, or import a preference file.
+4. Complete the dependency and access checks. Setup gives repair steps for required failures.
+5. Invoke the recommendation skill. Review the links and summaries in chat.
+6. Open the dashboard to mark watched videos and rate their topic, subject, depth, and quality.
+7. Request another round when you want more recommendations.
 
-The tarball contains the wheel, launcher and Codex skill. To use a packed/local package:
+Existing profiles can keep their saved preferences during setup.
+Saving ratings updates the local preference and quality models.
+Their learned weights affect screening and final ranking in later rounds.
+Creator and tag exclusions apply to the next new round.
+The dashboard **Preferences** page lets you edit interests and import or export preferences and learned weights.
+Before a new round, incomplete feedback prompts you to open the dashboard or continue.
 
-```powershell
-node bin/deepvids.cjs setup
-node bin/deepvids.cjs doctor
-```
+Both platforms support manual creator and tag exclusions.
+YouTube tag rules match available creator-supplied keyword tags, which differ from visible hashtags.
+Bilibili rules match its video tags.
+Search queries use English for YouTube and Simplified Chinese for Bilibili.
 
-After building the wheel, register the local source in Codex:
+| Action | Skill command | Purpose |
+| --- | --- | --- |
+| Setup | `$broader-vids-setup` | Choose platforms and preferences, install required tools, and check access. |
+| Recommendations | `$broader-vids` | Request a round for your saved platforms. |
+| Dashboard | `$broader-vids-dashboard` | Rate videos, manage exclusions, and edit preferences. |
+| Reset | `$broader-vids-reset` | Preview removal of preferences, weights, ratings, and histories while keeping tools and sign-in. |
+| Clean | `$broader-vids-clean` | Preview removal of all managed local data, including tools and sign-in. |
 
-```powershell
-codex plugin marketplace add C:\path\to\deepvids
-codex plugin add deepvids@deepvids-local
-```
+Use the command names shown by your host's skill menu.
+Some hosts add the plugin namespace, such as `$broader-vids:broader-vids-dashboard`.
+You can also ask: “Use Broader Vids to recommend videos” or “Use Broader Vids to open my dashboard.”
+Reset and Clean require confirmation. Neither action uninstalls the plugin.
 
-The catalog also travels with the npm package; its package directory can be registered as the local source. Host activation is a separate local setup step. The Claude Code runtime adapter remains a later milestone.
+## Bilibili access and exclusions
 
-Setup requires UV and installs only the bundled wheel into an external versioned environment. An npm installation also exposes `deepvids setup`. No postinstall script or model API key is used. No package has been published to npm.
+Bilibili requires manual sign-in for full-video evidence.
+Setup opens a separate browser window.
+Keep that window open after sign-in and return to chat to report completion.
+The plugin verifies the session and closes the window.
+You can switch accounts later from the dashboard.
 
-## Sampling limitations
+Bilibili imports your account blacklist after verified sign-in and before new rounds.
+Imported creator exclusions combine with your manual exclusions.
+A failed sync preserves the last complete copy.
+Use **Sync blacklist** in the dashboard to retry.
 
-Historical catalogs inherit their collection dates, creator/language selection and other omissions. Exact local sampling does not certify platform-wide coverage or playback availability. The earlier YouTube prefix and Bilibili ID-space experiments remain available for research, with their limitations preserved. The `gate` command reports catalog readiness and the remaining phases; completing Phase 1 cannot unlock recommendations.
+The default 视频翻译 tag exclusion can be removed in the dashboard.
 
+See the [workflow](docs/WORKFLOW.md) for recommendation steps and the [scoring guide](docs/SCORING.md) for ranking and learning.
+The [reference](docs/REFERENCE.md) covers terminal commands, troubleshooting, local builds, and maintenance.
+The [architecture](docs/ARCHITECTURE.md) describes the launcher, engine, and local storage.
+
+License: [MIT](LICENSE).

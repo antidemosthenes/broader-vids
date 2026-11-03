@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="broader-vids-token" content="__TOKEN__" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Broader Vids · Your video library</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
+    <script type="module" src="/static/dashboard.js"></script>
+  </head>
+  <body>
+    <aside class="navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">b.</span
+        ><strong>Broader Vids</strong
+        ><span class="brand-caption">A wider view</span>
+      </div>
+      <nav aria-label="Main navigation">
+        <button data-view="recommendations" aria-current="page">
+          <span aria-hidden="true">◉</span>Recommendations</button
+        ><button data-view="exclusions">
+          <span aria-hidden="true">⊘</span>Exclusions</button
+        ><button data-view="calibration">
+          <span aria-hidden="true">◇</span>Calibration
+        </button>
+      </nav>
+      <div class="navigation-tools">
+        <button
+          id="preferences-open"
+          class="button quiet"
+          data-view="preferences"
+          disabled
+        >
+          Preferences
+        </button>
+        <button id="token-usage-open" class="button quiet">Token usage</button>
+        <button id="help-open" class="button quiet">Help</button>
+      </div>
+    </aside>
+    <main>
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">YOUR LIBRARY</p>
+          <h1 id="page-title">Recommendations</h1>
+          <p id="page-subtitle" class="muted">Finding your saved videos…</p>
+        </div>
+        <div class="platform-switch" role="tablist" aria-label="Video platform">
+          <button role="tab" data-platform="youtube" aria-selected="true">
+            YouTube</button
+          ><button
+            role="tab"
+            data-platform="bilibili"
+            aria-selected="false"
+            tabindex="-1"
+          >
+            Bilibili
+          </button>
+        </div>
+        <button id="preferences-back" class="button quiet" hidden>Back</button>
+      </header>
+      <p id="status" class="app-status" role="status" aria-live="polite"></p>
+      <div id="workspace" class="workspace">
+        <section id="list-pane" class="list-pane" aria-label="Video list">
+          <div class="list-toolbar">
+            <span id="list-label"></span
+            ><button id="pending-toggle" class="button quiet small" hidden>
+              Earlier unwatched
+            </button>
+          </div>
+          <p id="round-notice" class="note" role="status" hidden></p>
+          <ol id="video-list" class="video-list"></ol>
+          <div id="empty-list" class="empty-state" hidden></div>
+        </section>
+        <aside id="inspector" class="inspector" aria-label="Video review">
+          <div class="inspector-toolbar">
+            <span id="review-position">Video review</span>
+            <div>
+              <button
+                id="review-previous"
+                class="button quiet small"
+                aria-label="Previous video"
+              >
+                ←</button
+              ><button
+                id="review-next"
+                class="button quiet small"
+                aria-label="Next video"
+              >
+                →
+              </button>
+            </div>
+          </div>
+          <div id="inspector-body" class="inspector-body">
+            <div class="review-placeholder">
+              <span aria-hidden="true">◇</span>
+              <h2>A closer look</h2>
+              <p>Select Rate beside a video to review it here.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+      <section
+        id="management"
+        class="management"
+        aria-label="Exclusion management"
+        hidden
+      ></section>
+      <section
+        id="preferences-page"
+        class="preferences-page"
+        aria-label="Preferences"
+        hidden
+      >
+        <div class="preferences-layout">
+          <section class="preference-panel" aria-labelledby="interests-title">
+            <h2 id="interests-title">Broader interests</h2>
+            <p id="interests-description" class="muted">
+              Edit the interests shared by YouTube and Bilibili.
+            </p>
+            <form id="interests-form" class="interests-copy">
+              <label for="interests-input">Your interests</label>
+              <textarea
+                id="interests-input"
+                rows="8"
+                maxlength="6440"
+                required
+                spellcheck="false"
+                aria-describedby="interests-format interests-description"
+              ></textarea>
+              <p id="interests-format" class="note small-text">
+                Enter one interest per line. Use 1–40 interests, with at most 80
+                characters each.
+              </p>
+              <p class="note small-text">
+                Saving keeps your ratings, calibration, and history. Start a new
+                recommendation round after changing this list.
+              </p>
+              <div class="interests-actions">
+                <button
+                  id="interests-reload"
+                  class="button quiet"
+                  type="button"
+                >
+                  Reload saved interests
+                </button>
+                <button
+                  id="interests-save"
+                  class="button primary"
+                  type="submit"
+                >
+                  Save
+                </button>
+              </div>
+              <p
+                id="interests-status"
+                class="preference-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </form>
+          </section>
+          <div class="preferences-transfer">
+            <section class="preference-panel" aria-labelledby="import-heading">
+              <h2 id="import-heading">Import preferences</h2>
+              <p class="muted">
+                Restore interests, learned weights, watched video IDs, bounded
+                exploration coverage, and manual creator exclusions. Coverage
+                transfers topic summaries, not video records. A matching watched
+                ID will not enter a new recommendation list. Older files may
+                omit watched IDs, coverage, or creator rules. Manual creator
+                lists replace this profile's manual lists. An empty imported
+                list clears that platform's manual rules. Files without creator
+                rules keep the current lists. Bilibili blacklist entries stay
+                tied to the signed-in account and are refetched when you sync
+                with Bilibili. Other video history, ratings, and tag rules stay
+                local.
+              </p>
+              <div class="preference-file">
+                <input
+                  id="preferences-file"
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label="Preference file"
+                  hidden
+                />
+                <button id="preferences-choose" class="button">
+                  Choose file
+                </button>
+                <span id="preferences-filename" class="muted"
+                  >No file selected</span
+                >
+              </div>
+              <div id="preferences-preview" hidden>
+                <dl id="preferences-summary" class="preference-summary"></dl>
+                <p class="note small-text">
+                  Import replaces learned parameters, interests, and manual
+                  creator lists. It merges watched video IDs and exploration
+                  coverage. Older files without creator rules keep the local
+                  manual lists. Bilibili blacklist entries stay account-bound
+                  and are refetched when you sync with Bilibili. A recovery file
+                  is saved first.
+                </p>
+                <p
+                  id="preferences-draft-warning"
+                  class="preferences-warning"
+                  hidden
+                >
+                  Import will replace your unsaved interest edits.
+                </p>
+                <div class="transfer-actions">
+                  <button
+                    id="preferences-import"
+                    class="button primary"
+                    disabled
+                  >
+                    Import preferences
+                  </button>
+                </div>
+              </div>
+              <p
+                id="preferences-status"
+                class="preference-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </section>
+            <section class="preference-panel" aria-labelledby="export-heading">
+              <h2 id="export-heading">Export preferences</h2>
+              <p class="muted">
+                Download your saved interests, learned weights, watched video
+                IDs, bounded exploration coverage, and manual creator exclusions
+                as a JSON file. Coverage contains topic summaries, not video
+                records. Bilibili blacklist entries stay tied to the signed-in
+                account and are refetched when you sync with Bilibili. Other
+                video history, ratings, and tag rules are not included.
+              </p>
+              <p id="preferences-export-warning" class="note small-text" hidden>
+                Save your interest edits before exporting.
+              </p>
+              <button id="preferences-export" class="button">
+                Export preferences
+              </button>
+              <p
+                id="preferences-export-status"
+                class="preference-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+    <dialog
+      id="review-dialog"
+      class="review-dialog"
+      aria-labelledby="mobile-review-title"
+    >
+      <header class="dialog-toolbar">
+        <button id="review-back" class="button quiet">← Back</button>
+        <h2 id="mobile-review-title">Video review</h2>
+        <div>
+          <button
+            id="mobile-previous"
+            class="button quiet small"
+            aria-label="Previous video"
+          >
+            ←</button
+          ><button
+            id="mobile-next"
+            class="button quiet small"
+            aria-label="Next video"
+          >
+            →
+          </button>
+        </div>
+      </header>
+      <div id="mobile-review-body" class="dialog-body"></div>
+    </dialog>
+    <dialog
+      id="details-dialog"
+      class="details-dialog"
+      aria-labelledby="details-title"
+    >
+      <header class="dialog-toolbar">
+        <h2 id="details-title">Score details</h2>
+        <button id="details-close" class="button quiet">Close</button>
+      </header>
+      <div id="details-body" class="dialog-body technical"></div>
+    </dialog>
+    <dialog
+      id="token-usage-dialog"
+      class="token-usage-dialog"
+      aria-labelledby="token-usage-title"
+    >
+      <header class="dialog-toolbar">
+        <h2 id="token-usage-title">Token usage</h2>
+        <button id="token-usage-close" class="button quiet">Close</button>
+      </header>
+      <div class="dialog-body">
+        <label class="field-label"
+          >Recommendation round<select
+            id="token-usage-run"
+            class="select-input"
+          ></select
+        ></label>
+        <p
+          id="token-usage-status"
+          class="field-status"
+          role="status"
+          aria-live="polite"
+        ></p>
+        <div id="token-usage-content"></div>
+      </div>
+    </dialog>
+    <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title">
+      <header class="dialog-toolbar">
+        <h2 id="help-title">Make it yours</h2>
+        <button id="help-close" class="button quiet">Close</button>
+      </header>
+      <div class="dialog-body help-copy">
+        <h3>Four separate judgments</h3>
+        <p>
+          Rate the specific topic, depth, video quality, and broader subject
+          independently. You can leave any field empty. Medium interest means
+          indifference. Medium quality means acceptable quality.
+        </p>
+        <p>
+          Check the AI topic label. Correct it when needed. Video level
+          describes the material; depth describes how it fits you. A video can
+          be good and too basic.
+        </p>
+        <h3>Watch at your pace</h3>
+        <p>
+          Opening a video does not mark it watched. Unwatched videos compete
+          with new candidates in the next inspection pool. Dismiss removes a
+          video from that pool without creating a preference rating. Restore
+          reverses dismissal.
+        </p>
+        <h3>Choose your sources</h3>
+        <p>
+          Creator exclusions apply to the next new round. Current cards stay
+          visible. Imported Bilibili exclusions are managed on Bilibili.
+        </p>
+        <h3>Optional calibration</h3>
+        <p>
+          Start with recommendations and add feedback as you watch. Calibration
+          holds extra examples when you request them. It starts empty for a new
+          profile.
+        </p>
+        <p>
+          Drafts stay in this tab while you navigate. Use Save to keep a rating
+          after closing the page.
+        </p>
+      </div>
+    </dialog>
+  </body>
+</html>

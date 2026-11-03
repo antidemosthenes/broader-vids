@@ -3,20 +3,37 @@ requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "deepvids"
-version = "0.1.0a2"
-description = "Reproducible sampling experiments for independent video recommendations"
+name = "broader-vids"
+version = "0.1.0"
+description = "Curated live discovery for independent video recommendations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = []
+dependencies = [
+    "opencc-python-reimplemented==0.1.7",
+]
 
 [dependency-groups]
-dev = ["PyYAML==6.0.3"]
+dev = [
+    "numpy==2.5.4",
+    "PyYAML==6.0.3",
+    "ruff==0.14.3",
+]
 
 [project.scripts]
-deepvids = "deepvids.cli:main"
+broader-vids = "broader_vids.cli:main"
+
+[project.optional-dependencies]
+evidence = [
+    "imageio-ffmpeg>=0.6.0",
+    "pillow>=13.0.0",
+    "playwright>=1.64.1",
+    "yt-dlp[default]>=2026.10.21",
+]
+asr = [
+    "faster-whisper>=1.2.1",
+]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/deepvids"]
+packages = ["src/broader_vids"]
 

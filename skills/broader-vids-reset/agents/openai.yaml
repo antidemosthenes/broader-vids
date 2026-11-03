@@ -1,0 +1,4 @@
+interface:
+  display_name: "Broader Vids reset"
+  short_description: "Start fresh while keeping tools and sign-in"
+  default_prompt: "Use $broader-vids-reset to preview a fresh start for my Broader Vids profile."

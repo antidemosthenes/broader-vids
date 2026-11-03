@@ -1,0 +1,4 @@
+interface:
+  display_name: "Broader Vids dashboard"
+  short_description: "Open local video feedback and exclusion controls"
+  default_prompt: "Use $broader-vids-dashboard to open my video feedback dashboard."

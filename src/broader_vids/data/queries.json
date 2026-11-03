@@ -1,0 +1,501 @@
+{
+  "version": 2,
+  "purpose": "Broad development curriculum, not an inferred personal profile; intents describe retrieval objectives, not verified video contents.",
+  "families": [
+    {
+      "id": "banach-finance",
+      "intent": "intersection",
+      "domains": [
+        "mathematics",
+        "finance"
+      ],
+      "purpose": "Seek an explicit connection that broad finance and math searches can bury.",
+      "youtube": [
+        "Banach spaces mathematical finance",
+        "functional analysis asset pricing"
+      ],
+      "bilibili": [
+        "巴拿赫空间 金融",
+        "泛函分析 金融应用"
+      ],
+      "anchors": [
+        [
+          "banach",
+          "functional analysis",
+          "巴拿赫",
+          "泛函分析"
+        ],
+        [
+          "finance",
+          "financial",
+          "pricing",
+          "金融",
+          "定价"
+        ]
+      ]
+    },
+    {
+      "id": "entropy-inference",
+      "intent": "intersection",
+      "domains": [
+        "physics",
+        "statistics"
+      ],
+      "purpose": "Connect thermodynamic entropy and statistical inference.",
+      "youtube": [
+        "maximum entropy statistical inference thermodynamics",
+        "statistical mechanics Bayesian inference"
+      ],
+      "bilibili": [
+        "最大熵原理 统计推断",
+        "统计物理 贝叶斯"
+      ],
+      "anchors": [
+        [
+          "entropy",
+          "thermodynamic",
+          "mechanics",
+          "熵",
+          "物理"
+        ],
+        [
+          "inference",
+          "bayes",
+          "statistic",
+          "推断",
+          "贝叶斯",
+          "统计"
+        ]
+      ]
+    },
+    {
+      "id": "music-fourier",
+      "intent": "intersection",
+      "domains": [
+        "mathematics",
+        "music"
+      ],
+      "purpose": "Discover mathematical explanations of musical timbre and harmony.",
+      "youtube": [
+        "Fourier analysis musical timbre explained",
+        "mathematics harmony overtones"
+      ],
+      "bilibili": [
+        "傅里叶分析 音色",
+        "泛音 音乐 数学"
+      ],
+      "anchors": [
+        [
+          "fourier",
+          "math",
+          "傅里叶",
+          "数学"
+        ],
+        [
+          "music",
+          "timbre",
+          "harmon",
+          "音乐",
+          "音色",
+          "泛音"
+        ]
+      ]
+    },
+    {
+      "id": "causal-health",
+      "intent": "intersection",
+      "domains": [
+        "statistics",
+        "public-health"
+      ],
+      "purpose": "Connect causal reasoning with interpretation of health studies.",
+      "youtube": [
+        "causal inference epidemiology confounding explained",
+        "Simpson paradox medical studies"
+      ],
+      "bilibili": [
+        "因果推断 流行病学 混杂",
+        "辛普森悖论 医学"
+      ],
+      "anchors": [
+        [
+          "causal",
+          "confound",
+          "simpson",
+          "因果",
+          "混杂",
+          "辛普森"
+        ],
+        [
+          "health",
+          "medical",
+          "epidemi",
+          "医学",
+          "流行病"
+        ]
+      ]
+    },
+    {
+      "id": "materials-history",
+      "intent": "intersection",
+      "domains": [
+        "materials",
+        "history"
+      ],
+      "purpose": "Connect materials and manufacturing mechanisms with historical artifacts.",
+      "youtube": [
+        "ancient Roman concrete material science explained",
+        "archaeology metallurgy iron steel history"
+      ],
+      "bilibili": [
+        "古罗马 混凝土 材料 原理",
+        "考古 冶金 钢铁"
+      ],
+      "anchors": [
+        [
+          "concrete",
+          "material",
+          "metallurg",
+          "混凝土",
+          "材料",
+          "冶金"
+        ],
+        [
+          "roman",
+          "ancient",
+          "history",
+          "archaeolog",
+          "罗马",
+          "古代",
+          "历史",
+          "考古"
+        ]
+      ]
+    },
+    {
+      "id": "networks-ecology",
+      "intent": "intersection",
+      "domains": [
+        "ecology",
+        "mathematics"
+      ],
+      "purpose": "Connect network structure with ecosystem behavior.",
+      "youtube": [
+        "ecological networks food web stability explained",
+        "graph theory ecology ecosystems"
+      ],
+      "bilibili": [
+        "生态网络 食物网 稳定性",
+        "图论 生态系统"
+      ],
+      "anchors": [
+        [
+          "network",
+          "graph",
+          "网络",
+          "图论"
+        ],
+        [
+          "ecolog",
+          "ecosystem",
+          "food web",
+          "生态",
+          "食物网"
+        ]
+      ]
+    },
+    {
+      "id": "functional-analysis",
+      "intent": "deep",
+      "domains": [
+        "mathematics"
+      ],
+      "purpose": "Discover substantive explanations of a specific mathematical concept.",
+      "youtube": [
+        "Banach space completeness intuition examples",
+        "functional analysis bounded linear operators intuition"
+      ],
+      "bilibili": [
+        "巴拿赫空间 完备性 直观",
+        "泛函分析 有界线性算子"
+      ],
+      "anchors": [
+        [
+          "banach",
+          "functional",
+          "operator",
+          "巴拿赫",
+          "泛函",
+          "算子"
+        ]
+      ]
+    },
+    {
+      "id": "semiconductor-physics",
+      "intent": "deep",
+      "domains": [
+        "physics",
+        "engineering"
+      ],
+      "purpose": "Explore physical mechanisms rather than product announcements.",
+      "youtube": [
+        "MOSFET semiconductor band diagram explanation",
+        "transistor physics inversion channel explained"
+      ],
+      "bilibili": [
+        "MOSFET 能带图 工作原理",
+        "晶体管 反型沟道 原理"
+      ],
+      "anchors": [
+        [
+          "mosfet",
+          "semiconductor",
+          "transistor",
+          "半导体",
+          "晶体管"
+        ]
+      ]
+    },
+    {
+      "id": "language-change",
+      "intent": "deep",
+      "domains": [
+        "linguistics"
+      ],
+      "purpose": "Discover evidence and mechanisms of historical language change.",
+      "youtube": [
+        "historical linguistics sound change reconstruction examples",
+        "comparative method language reconstruction"
+      ],
+      "bilibili": [
+        "历史语言学 音变 比较法",
+        "语言 重建 比较法"
+      ],
+      "anchors": [
+        [
+          "linguist",
+          "sound change",
+          "language",
+          "语言",
+          "音变"
+        ]
+      ]
+    },
+    {
+      "id": "optics",
+      "intent": "deep",
+      "domains": [
+        "physics"
+      ],
+      "purpose": "Explore a specific optical mechanism and its demonstration.",
+      "youtube": [
+        "diffraction Fourier optics aperture explanation",
+        "interference diffraction experimental demonstration"
+      ],
+      "bilibili": [
+        "衍射 傅里叶光学 孔径",
+        "干涉 衍射 实验 原理"
+      ],
+      "anchors": [
+        [
+          "diffraction",
+          "optics",
+          "interference",
+          "衍射",
+          "光学",
+          "干涉"
+        ]
+      ]
+    },
+    {
+      "id": "restoration",
+      "intent": "horizon",
+      "domains": [
+        "craft",
+        "conservation"
+      ],
+      "purpose": "Include process-focused material outside the technical curriculum.",
+      "youtube": [
+        "painting conservation restoration process explained",
+        "traditional joinery hand tool technique explanation"
+      ],
+      "bilibili": [
+        "油画 修复 过程 讲解",
+        "传统 榫卯 手工 技法"
+      ],
+      "anchors": [
+        [
+          "restor",
+          "conserv",
+          "joinery",
+          "修复",
+          "榫卯"
+        ]
+      ]
+    },
+    {
+      "id": "field-observation",
+      "intent": "horizon",
+      "domains": [
+        "natural-history"
+      ],
+      "purpose": "Seek observation and explanation outside the usual technical domains.",
+      "youtube": [
+        "bird migration navigation field research explained",
+        "fungal ecology forest field observation"
+      ],
+      "bilibili": [
+        "候鸟 迁徙 导航 研究",
+        "真菌 生态 野外 观察"
+      ],
+      "anchors": [
+        [
+          "bird",
+          "migration",
+          "fung",
+          "ecolog",
+          "候鸟",
+          "迁徙",
+          "真菌",
+          "生态"
+        ]
+      ]
+    },
+    {
+      "id": "travel-landscapes",
+      "intent": "deep",
+      "domains": [
+        "travel",
+        "geography"
+      ],
+      "purpose": "Understand a destination through its geography and local travel experience.",
+      "youtube": [
+        "Japan rural railway travel geography",
+        "Silk Road travel local culture documentary"
+      ],
+      "bilibili": [
+        "日本 乡村 铁路 旅行 地理",
+        "丝绸之路 旅行 当地 文化"
+      ],
+      "anchors": [
+        [
+          "travel",
+          "journey",
+          "railway",
+          "旅行",
+          "旅游",
+          "铁路"
+        ]
+      ]
+    },
+    {
+      "id": "food-technique",
+      "intent": "deep",
+      "domains": [
+        "food"
+      ],
+      "purpose": "Explore culinary technique and why a preparation works.",
+      "youtube": [
+        "cooking food science emulsification technique",
+        "regional Chinese cooking technique explained"
+      ],
+      "bilibili": [
+        "烹饪 乳化 原理 技法",
+        "地方菜 制作 技法 原理"
+      ],
+      "anchors": [
+        [
+          "cook",
+          "food",
+          "cuisine",
+          "烹饪",
+          "美食",
+          "菜"
+        ]
+      ]
+    },
+    {
+      "id": "algorithms-games",
+      "intent": "intersection",
+      "domains": [
+        "computer-science",
+        "games"
+      ],
+      "purpose": "Connect algorithm design with game mechanics and implementation.",
+      "youtube": [
+        "game pathfinding A star algorithm visual explanation",
+        "procedural generation games algorithms explained"
+      ],
+      "bilibili": [
+        "游戏 寻路 A星 算法 原理",
+        "程序化生成 游戏 算法 原理"
+      ],
+      "anchors": [
+        [
+          "algorithm",
+          "procedural",
+          "pathfinding",
+          "算法",
+          "寻路",
+          "生成"
+        ],
+        [
+          "game",
+          "游戏"
+        ]
+      ]
+    },
+    {
+      "id": "systems-computing",
+      "intent": "deep",
+      "domains": [
+        "computer-science"
+      ],
+      "purpose": "Explain a concrete computer-systems mechanism.",
+      "youtube": [
+        "operating system virtual memory page table explained",
+        "database index B tree visual explanation"
+      ],
+      "bilibili": [
+        "虚拟内存 页表 操作系统 原理",
+        "数据库 索引 B树 原理"
+      ],
+      "anchors": [
+        [
+          "memory",
+          "database",
+          "system",
+          "内存",
+          "数据库",
+          "系统"
+        ]
+      ]
+    },
+    {
+      "id": "music-analysis",
+      "intent": "deep",
+      "domains": [
+        "music"
+      ],
+      "purpose": "Explain composition, harmony or performance through musical examples.",
+      "youtube": [
+        "music theory modal interchange examples analysis",
+        "rhythm polyrhythm performance explanation"
+      ],
+      "bilibili": [
+        "音乐 和声 调式借用 作品 分析",
+        "复节奏 演奏 原理 讲解"
+      ],
+      "anchors": [
+        [
+          "music",
+          "rhythm",
+          "harmony",
+          "音乐",
+          "节奏",
+          "和声"
+        ]
+      ]
+    }
+  ]
+}

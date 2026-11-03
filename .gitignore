@@ -9,3 +9,15 @@ python/*.tar.gz
 *.tgz
 *.egg-info/
 
+.ruff_cache/
+node_modules/
+.env
+.env.*
+!.env.example
+
+/AGENTS.md
+.agents/skills/
+.codex/
+/my-plan.md
+
+.test-tmp/
