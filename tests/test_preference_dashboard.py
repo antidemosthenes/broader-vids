@@ -10,7 +10,12 @@ from broader_vids.cli import main
 from broader_vids.learning.transfer import export_preferences
 from broader_vids.learning.feedback import save_detail
 from broader_vids.storage import Store
-from test_dashboard_feedback import dashboard_fixture, open_first, sync_playwright
+from test_dashboard_feedback import (
+    dashboard_fixture,
+    expect,
+    open_first,
+    sync_playwright,
+)
 from test_preference_transfer import preserved
 
 
@@ -169,9 +174,25 @@ class PreferenceDashboardTests(unittest.TestCase):
             management.get_by_role("button", name="Remove", exact=True).click()
             page.get_by_text("No creator exclusions on YouTube.", exact=True).wait_for()
 
-            page.get_by_role("button", name="Preferences", exact=True).click()
-            preferences = page.get_by_role("region", name="Preferences", exact=True)
-            preferences.get_by_label("Preference file", exact=True).set_input_files(
+            pending = []
+
+            def hold_interests(route):
+                pending.append(route)
+
+            page.route("**/api/interests", hold_interests)
+            try:
+                with page.expect_request("**/api/interests"):
+                    page.get_by_role("button", name="Preferences", exact=True).click()
+                preferences = page.get_by_role("region", name="Preferences", exact=True)
+                field = preferences.get_by_label("Preference file", exact=True)
+                self.assertTrue(field.is_disabled())
+                pending.pop().continue_()
+                expect(field).to_be_enabled()
+            finally:
+                for route in pending:
+                    route.abort()
+                page.unroute("**/api/interests", hold_interests)
+            field.set_input_files(
                 {
                     "name": "preferences.json",
                     "mimeType": "application/json",
