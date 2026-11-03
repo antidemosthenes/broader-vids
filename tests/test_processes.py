@@ -4,6 +4,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import threading
 import os
@@ -159,8 +160,8 @@ class ProcessTests(unittest.TestCase):
         process.poll.return_value = None
         process.kill.side_effect = OSError("fixture cleanup failure")
         with (
-            patch("broader_vids.processes.os.name", "nt"),
             patch("broader_vids.windows_job.WindowsJob") as job,
+            patch("broader_vids.processes.os", SimpleNamespace(name="nt")),
             patch("broader_vids.processes.subprocess.Popen", return_value=process),
         ):
             job.return_value.start.side_effect = OSError("fixture ownership failure")
