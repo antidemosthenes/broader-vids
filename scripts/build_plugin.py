@@ -55,6 +55,29 @@ def build(root):
                 raise ValueError("The package contains an unsafe path.")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(package.extractfile(member).read())
+    local = root / "dist/local-marketplace"
+    if local.resolve() != local:
+        raise ValueError("The local marketplace must not contain symbolic links.")
+    payload = local / "plugins/broader-vids"
+    if payload.resolve() != payload:
+        raise ValueError("The local plugin payload must not contain symbolic links.")
+    if payload.exists():
+        shutil.rmtree(payload)
+    shutil.copytree(destination, payload)
+    catalog = json.loads(
+        (root / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
+    )
+    catalog["name"] = "broader-vids-local"
+    catalog["interface"]["displayName"] = "Broader Vids (local)"
+    catalog["plugins"][0]["source"] = {
+        "source": "local",
+        "path": "./plugins/broader-vids",
+    }
+    catalog_path = local / ".agents/plugins/marketplace.json"
+    if catalog_path.resolve() != catalog_path:
+        raise ValueError("The local catalog must not contain symbolic links.")
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
     output = root / "dist" / f"broader-vids-{version}.zip"
     write_archive(destination, output)
     print(
@@ -62,6 +85,7 @@ def build(root):
             {
                 "plugin_directory": str(destination),
                 "zip": str(output),
+                "local_marketplace": str(local),
                 "version": version,
             },
             indent=2,

@@ -12,6 +12,9 @@ def main(archive_path):
     root = Path(__file__).resolve().parent.parent
     manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
     expected_python = manifest["version"].replace("-alpha.", "a")
+    from broader_vids.learning.presets import starter_preferences
+
+    starter_preferences()
     with tarfile.open(archive_path) as archive:
         names = archive.getnames()
         private = {
@@ -107,9 +110,12 @@ def main(archive_path):
         entry = next(
             item for item in catalog["plugins"] if item["name"] == plugin["name"]
         )
+        assert catalog["name"] == "broader-vids"
         assert entry["source"] == {
-            "source": "local",
-            "path": "./dist/plugins/broader-vids",
+            "source": "npm",
+            "package": "broader-vids",
+            "version": manifest["version"],
+            "registry": "https://registry.npmjs.org",
         }
         assert entry["policy"] == {
             "installation": "AVAILABLE",

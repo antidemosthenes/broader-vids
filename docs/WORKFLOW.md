@@ -7,10 +7,14 @@ See the [terminal reference](REFERENCE.md) for commands.
 ## 1. Complete setup and check readiness
 
 First-time setup introduces chat recommendations and the local dashboard.
-Choose YouTube, Bilibili, or both as your default.
-Setup asks separate questions for platforms, preference import or manual interest entry, and the corresponding text input.
+Choose the included starter preset, enter interests manually, or import preferences.
+The starter preset uses sanitized interests, model parameters, and uncertainty from the owner's export.
+It contains no watched IDs, video history, topic coverage, or creator exclusions.
 An import asks for the full local JSON file path.
-Existing profiles can keep their saved preferences.
+For an existing profile, choose whether to keep or change its preferences.
+Keep preserves the saved preferences and sources. It skips source selection.
+Change lets you choose the starter preset, manual interests, or an import.
+Then choose YouTube, Bilibili, or both as your sources.
 The host shows question controls when available. A text-only host asks the same questions in chat.
 Setup waits for each submitted answer before dependent work.
 After opening Bilibili sign-in, setup asks whether you signed in, need help, or are still signing in.
@@ -54,7 +58,9 @@ Examples include mathematics, physics, travel, food, games, and music.
 Broader Vids stores these choices in your local profile.
 Production recommendations start from these interests and learn from normal feedback.
 The installed setup skill records your chosen local profile directory.
-It preserves an existing calibrated profile when you select that directory.
+It preserves an existing profile when you choose to keep its preferences.
+To start fresh from an existing profile, use Reset and complete its preview and confirmation.
+Then restart setup.
 A separate calibration list is optional.
 Search activity does not add a preference automatically.
 

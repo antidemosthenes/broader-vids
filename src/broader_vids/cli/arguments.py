@@ -234,6 +234,15 @@ def parser():
         action="store_true",
         help="Create a recovery file and apply the replacement",
     )
+    preset = profile_commands.add_parser(
+        "preset", help="Preview or apply bundled calibrated starter preferences"
+    )
+    preset.add_argument("name", choices=("starter",))
+    preset.add_argument(
+        "--apply",
+        action="store_true",
+        help="Create a recovery file and apply the starter preset",
+    )
     profile_set = profile_commands.add_parser("set")
     profile_set.add_argument("--interest", action="append", required=True)
     video = commands.add_parser("video", help="Change watched or dismissed state")

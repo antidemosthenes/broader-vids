@@ -1,7 +1,7 @@
 # Terminal and maintenance reference
 
 Use the [README](../README.md) for the first installation.
-This reference explains individual functions, tests, distribution, and dependencies.
+This reference explains commands, local development, distribution, and dependencies.
 Examples use PowerShell in the source folder unless stated otherwise.
 
 ## Read command examples
@@ -137,11 +137,17 @@ The terminal provides the same interest update:
 ```powershell
 uv run --no-sync broader-vids profile show
 uv run --no-sync broader-vids profile set --interest mathematics --interest travel
+uv run --no-sync broader-vids profile preset starter
+uv run --no-sync broader-vids profile preset starter --apply
 ```
 
 `profile set` replaces the explicit interest list.
 Repeat `--interest` for every subject you want to retain.
 It does not infer interests from your watch history.
+The starter preset command previews its changes by default.
+Add `--apply` to import the preset and create the import backup.
+The preset includes sanitized interests, parameters, and parameter uncertainty.
+It excludes watched IDs, individual history, topic coverage, and creator exclusions.
 
 ## Export or import learned preferences
 
@@ -804,25 +810,20 @@ Browser tests reuse a browser process within each worker and create a fresh cont
 
 ### Install the local Codex plugin
 
-Build the wheel and npm archive from the source folder.
-Then build the clean marketplace payload:
+Run the release preparation command from the source folder:
 
 ```powershell
-uv run --no-sync scripts/build_plugin.py
-codex plugin marketplace add .
-codex plugin add broader-vids@broader-vids-local --json
-codex plugin list --json
+npm run release:prepare
+codex plugin marketplace add ./dist/local-marketplace
+codex plugin add broader-vids@broader-vids-local
 ```
 
-The repository catalog uses `.agents/plugins/marketplace.json`.
-Its source is the generated `dist/plugins/broader-vids` directory.
-The build script includes only files from the verified npm archive.
-It also creates a ZIP under `dist/`.
-The installed cache never needs the private working checkout.
-These operations install locally and do not publish anything.
+The command builds the Python wheel, packs and verifies the npm archive, builds the plugin ZIP and local marketplace, and writes `dist/release.json` and `dist/SHA256SUMS`.
+The generated local marketplace contains the installable plugin payload.
+These commands install locally and do not publish anything.
 
 Open a new desktop or CLI conversation after installation.
-For installation through the ChatGPT desktop app, follow [the README](../README.md#install-in-the-chatgpt-desktop-app).
+For installation through the ChatGPT desktop app, follow [the README](../README.md#install-from-the-codex-marketplace).
 Use the installed Broader Vids setup skill for guided setup.
 The host exposes the recommendation, setup, and dashboard skills through its skill menu.
 Their skill names include `broader-vids`, `broader-vids-setup`, `broader-vids-dashboard`, `broader-vids-reset`, and `broader-vids-clean`.
@@ -872,20 +873,48 @@ It does not stop a process based only on a PID or port.
 Private control records and bounded logs reside in the profile's `.dashboard/` directory.
 The foreground `serve` command remains available for terminal use.
 
-### Build package artifacts
+### Prepare a release
 
-Build local artifacts:
+The release preparation command creates and checks local release artifacts:
 
 ```powershell
-uv build --wheel --out-dir python
-npm pack --ignore-scripts
-uv run --no-sync scripts/verify_package.py
+npm run release:prepare
 ```
 
-UV builds the Python wheel.
-npm creates the local package archive.
-The package check compares source files, versions, links, and private-file exclusions.
-These commands do not upload artifacts.
+It builds a Python wheel, packs and verifies the npm archive, builds a plugin ZIP and generated `dist/local-marketplace`, and writes `dist/release.json` and `dist/SHA256SUMS`.
+It does not upload artifacts.
+
+The public npm package is `broader-vids@0.1.0`.
+The GitHub marketplace catalog uses the name `broader-vids` and pins its npm source to version `0.1.0`.
+Users install the marketplace plugin from the README instructions.
+The optional global npm install provides the CLI only and does not register Codex skills.
+
+### Publish a release
+
+The release workflow does not publish on push.
+An authorized maintainer must manually dispatch `.github/workflows/release.yml` with an existing `vX.Y.Z` tag.
+The tag must point to the intended release commit, and its version must match the package version.
+The `npm-release` protected environment uses GitHub OIDC and Node.js 24 with npm 11.5.1 or later.
+This workflow publishes the npm package only. It does not submit the marketplace catalog to a directory.
+
+For the first publish, prepare the artifacts and publish the tarball from a local npm session:
+
+```powershell
+npm login
+npm run release:prepare
+uv run --no-sync scripts/release.py verify --artifacts-dir dist
+uv run --no-sync scripts/release.py available --tag v0.1.0
+npm publish ./dist/broader-vids-0.1.0.tgz --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org
+```
+
+Complete any required npm two-factor authentication during this manual publish.
+Configure npm trusted publishing when the first CI publication is ready.
+Set its publisher owner to `antidemosthenes`, repository to `broader-vids`, workflow filename to `release.yml`, and environment to `npm-release`.
+The first successful CI publish must complete within two days after you create the trusted publisher configuration.
+The npm package must allow direct `npm publish` from the trusted publisher.
+Configure `npm-release` as a GitHub environment and set its reviewers according to your release policy.
+Reviewers require manual configuration in GitHub.
+The workflow uses no permanent npm token.
 
 From an unpacked package, install its external engine:
 

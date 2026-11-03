@@ -1,6 +1,6 @@
 {
   "name": "broader-vids",
-  "version": "0.1.0-alpha.17",
+  "version": "0.1.0",
   "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
   "license": "MIT",
   "engines": {
@@ -11,7 +11,7 @@
   },
   "files": [
     "bin/",
-    "python/broader_vids-0.1.0a17-*.whl",
+    "python/broader_vids-0.1.0-*.whl",
     "python/core-requirements.txt",
     "python/evidence-requirements.txt",
     "python/asr-requirements.txt",
@@ -26,9 +26,23 @@
   ],
   "scripts": {
     "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs",
-    "check:web": "prettier --check src/broader_vids/web/static"
+    "check:web": "prettier --check src/broader_vids/web/static",
+    "release:prepare": "uv run --no-sync scripts/release.py prepare"
   },
   "devDependencies": {
     "prettier": "3.6.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antidemosthenes/broader-vids.git"
+  },
+  "homepage": "https://github.com/antidemosthenes/broader-vids#readme",
+  "bugs": {
+    "url": "https://github.com/antidemosthenes/broader-vids/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org",
+    "tag": "latest"
   }
 }

@@ -396,6 +396,8 @@ Maintenance uses retained frames and captions without downloading replacement me
 
 Preference format 4 transfers interests, model version 8 parameters, watched video IDs, a bounded exploration summary, and manual creator exclusions.
 The engine rejects other preference formats before import changes the profile.
+The included starter preset provides sanitized interests, parameters, and parameter uncertainty from the owner's export.
+The preset excludes watched IDs, individual history, topic coverage, and creator exclusions.
 Import replaces manual creator lists independently of learned parameters. These rules never create negative ratings.
 Blacklist sync combines the account-specific blacklist with the current manual rules.
 The exploration summary contains at most 1,024 hierarchy nodes, aggregate counts, and relative round ages.

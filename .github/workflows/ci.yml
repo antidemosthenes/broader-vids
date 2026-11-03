@@ -7,15 +7,16 @@ permissions:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - name: Check runtime dependency files are tracked
         run: |
-          git ls-files --error-unmatch \
-            python/core-requirements.txt \
-            python/evidence-requirements.txt \
-            python/asr-requirements.txt
+          git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
         with:
           python-version: "3.13"
@@ -24,6 +25,7 @@ jobs:
           node-version: "24"
       - run: uv sync --locked --extra evidence
       - name: Install Chromium and Linux dependencies for dashboard tests
+        if: runner.os == 'Linux'
         run: uv run --no-sync playwright install --with-deps chromium
       - run: npm ci --ignore-scripts
       - run: uv run --no-sync ruff check src tests scripts

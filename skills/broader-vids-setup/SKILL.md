@@ -65,9 +65,10 @@ A path mentioned in an unrelated earlier conversation does not authorize a new i
 Use the questions in this order:
 
 1. `platform`: YouTube, Bilibili, or Both.
-2. `preference_source`: Type interests or Import preferences. Existing profiles can also keep saved preferences.
-3. `interests` for manual entry, or `import_path` for an import. Ask for the full file path in a text box.
-4. Ask `bilibili_signin` after opening a sign-in window when the user selects Bilibili.
+2. `existing_preferences` when present: Keep saved preferences or Change preferences. Keep skips preference-source and text questions.
+3. `preference_source` for a new profile or an explicit change: Use calibrated starter preferences, Start fresh and enter interests, or Import my preference file.
+4. `interests` for a fresh start, or `import_path` for an import. Ask for the full file path in a text box. The starter preset requires no file path.
+5. Ask `bilibili_signin` after opening a sign-in window when the user selects Bilibili.
 
 Keep paths and interests as literal data when calling the launcher.
 Never execute user input as shell code.
@@ -121,16 +122,23 @@ Do not use API billing as a fallback.
 ## Restore or set interests
 
 Run `profile show` before changing interests. Preserve existing interests and learned weights.
-Ask `preference_source` unless the user already supplied that choice for this setup.
+Ask `existing_preferences` when it is present. Keep preserves the current profile and skips preference questions.
+For a new profile or an explicit change, ask `preference_source` unless the user already supplied that choice for this setup.
 Never infer the choice from a saved or recently exported file.
 
-- **Type interests:** ask `interests` in a text box. Use `profile set` with one `--interest TOPIC` per supplied interest.
+- **Use calibrated starter preferences:** explain that this is an example user's calibrated profile, not an estimate of the new user's tastes.
+  It contains interests, learned parameters, and uncertainty, with no watched IDs, video history, exploration progress, or creator exclusions.
+  Preview with `profile preset starter`. Apply the requested selection with `profile preset starter --apply`.
+  Do not ask for a path or invent ratings. The dashboard lets the user edit the imported interests.
+- **Start fresh and enter interests:** ask `interests` in a text box. Use `profile set` with one `--interest TOPIC` per supplied interest.
+  A new profile uses default priors without learned feedback.
+  For an existing profile, use the Reset skill's preview and confirmation before a fresh start, then restart setup.
+  Editing interests alone does not reset learned parameters.
 - **Import preferences:** ask `import_path` in a text box before reading a file.
   Preview with `profile import FILE`, then apply the requested restore with `profile import FILE --apply`.
   Import accepts format 4 with learning model version 8 and feature version 1. It replaces learned parameters and both manual creator lists, and merges watched video IDs. It creates a recovery file.
   It does not import ratings, recommendation history, or other video history.
   Do not ask for manual interests after a successful import.
-- **Keep saved preferences:** preserve interests and learned weights. Skip both text questions.
 
 If a file is missing or invalid, explain the error and ask `import_path` again.
 If host permissions block access, keep the supplied path and ask the host to grant access.

@@ -348,7 +348,7 @@ The transcription process releases its model when it exits.
 ## Installation boundary
 
 The portable manifest points to five skills for recommendations, setup, the dashboard, Reset, and Clean.
-The repository marketplace points to a clean generated payload under `dist/`.
+The GitHub marketplace catalog uses the name `broader-vids` and pins its npm source to version `0.1.0`.
 The npm archive and plugin ZIP carry the same engine and public assets.
 The host installs a cache copy and does not need the working checkout's private files.
 Guided setup installs an external runtime through the Node launcher.
@@ -367,7 +367,7 @@ The loopback listener uses exclusive binding on Windows.
 An occupied preferred port causes a free-port fallback.
 
 The plugin runs on the user's computer. Recommendation rounds start on request.
-The current project does not provide a hosted dashboard or remote MCP service.
+The current project does not provide cloud execution, a hosted dashboard, or a remote MCP service.
 
 ## Profile lifecycle
 

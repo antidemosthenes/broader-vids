@@ -433,7 +433,7 @@ def main(argv=None):
                     else 2
                 )
             if args.command == "profile":
-                if args.profile_command in {"export", "import"}:
+                if args.profile_command in {"export", "import", "preset"}:
                     from broader_vids.learning.transfer import (
                         export_preferences,
                         import_preferences,
@@ -443,7 +443,16 @@ def main(argv=None):
                         MAX_BYTES,
                     )
 
-                    if args.profile_command == "export":
+                    if args.profile_command == "preset":
+                        from broader_vids.learning.presets import starter_preferences
+
+                        bundle = starter_preferences()
+                        emit(
+                            import_preferences(store, bundle, _validated=True)
+                            if args.apply
+                            else preview_import(store, bundle, _validated=True)
+                        )
+                    elif args.profile_command == "export":
                         bundle = export_preferences(store)
                         target = write_export(
                             args.file, bundle, overwrite=args.overwrite

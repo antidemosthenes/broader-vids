@@ -1,14 +1,16 @@
 {
-  "name": "broader-vids-local",
+  "name": "broader-vids",
   "interface": {
-    "displayName": "Broader Vids (local)"
+    "displayName": "Broader Vids"
   },
   "plugins": [
     {
       "name": "broader-vids",
       "source": {
-        "source": "local",
-        "path": "./dist/plugins/broader-vids"
+        "source": "npm",
+        "package": "broader-vids",
+        "version": "0.1.0",
+        "registry": "https://registry.npmjs.org"
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -47,7 +47,7 @@ wheels = [
 
 [[package]]
 name = "broader-vids"
-version = "0.1.0a17"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "opencc-python-reimplemented" },

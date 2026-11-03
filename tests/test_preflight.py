@@ -119,8 +119,9 @@ class PreflightTests(unittest.TestCase):
         )
         self.assertEqual(
             [o["value"] for o in questions["preference_source"]["options"]],
-            ["manual", "import"],
+            ["preset", "manual", "import"],
         )
+        self.assertNotIn("existing_preferences", questions)
         self.assertEqual(questions["import_path"]["input"], "text")
         self.assertEqual(questions["interests"]["input"], "text")
         self.assertEqual(
@@ -141,7 +142,7 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(report["saved_platform"], "both")
         self.assertEqual(
-            report["questions"]["preference_source"]["options"][-1],
+            report["questions"]["existing_preferences"]["options"][0],
             {"value": "keep", "label": "Keep saved preferences"},
         )
         self.assertEqual((self.store.root / "onboarding.json").read_bytes(), previous)

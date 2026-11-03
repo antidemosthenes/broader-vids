@@ -57,9 +57,11 @@ def setup_questions(store):
             "options": [{"value": value, "label": label} for value, label in options],
         }
 
-    sources = [("manual", "Type interests"), ("import", "Import preferences")]
-    if profile and profile.get("interests"):
-        sources.append(("keep", "Keep saved preferences"))
+    sources = [
+        ("preset", "Use calibrated starter preferences"),
+        ("manual", "Start fresh and enter interests"),
+        ("import", "Import my preference file"),
+    ]
     return {
         "version": 1,
         "requires_explicit_answer": True,
@@ -69,6 +71,19 @@ def setup_questions(store):
             "platform": choice(
                 "Which platforms should Broader Vids recommend?",
                 [("youtube", "YouTube"), ("bilibili", "Bilibili"), ("both", "Both")],
+            ),
+            **(
+                {
+                    "existing_preferences": choice(
+                        "Keep your saved preferences or change them?",
+                        [
+                            ("keep", "Keep saved preferences"),
+                            ("change", "Change preferences"),
+                        ],
+                    )
+                }
+                if profile and profile.get("interests")
+                else {}
             ),
             "preference_source": choice(
                 "How would you like to set your interests and preferences?", sources

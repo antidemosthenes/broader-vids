@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "broader-vids",
-  "version": "0.1.0-alpha.17",
+  "version": "0.1.0",
   "description": "Curated YouTube and Bilibili recommendations with bounded quality evidence and local watched/feedback state.",
   "license": "MIT",
   "extensions": {
@@ -13,10 +13,16 @@
         "longDescription": "Discover and assess videos locally, receive recommendations in chat, and use a local dashboard for feedback and exclusions. Requires Node.js, UV, and ChatGPT-authenticated Codex CLI access.",
         "developerName": "Broader Vids contributors",
         "category": "Productivity",
-        "capabilities": ["Read", "Write"],
-        "defaultPrompt": ["Set up Broader Vids for my video interests.", "Recommend YouTube and Bilibili videos.", "Open my Broader Vids dashboard."]
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": [
+          "Set up Broader Vids for my video interests.",
+          "Recommend YouTube and Bilibili videos.",
+          "Open my Broader Vids dashboard."
+        ]
       }
     }
   }
 }
-
