@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -181,8 +182,9 @@ def publication(version, archive):
 def verify_published(version, archive):
     version_tuple(version)
     expected = integrity(archive)
-    deadline = time.monotonic() + 60
-    for attempt in range(20):
+    deadline = time.monotonic() + 300
+    delay = 2
+    while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -201,11 +203,18 @@ def verify_published(version, archive):
             ) >= version_tuple(version):
                 return {"verified": True, "version": version, "integrity": expected}
         remaining = deadline - time.monotonic()
-        if remaining <= 0 or attempt == 19:
+        if remaining <= 0:
             break
-        time.sleep(min(2, remaining))
+        print(
+            f"Waiting for npm to expose broader-vids@{version} and its latest tag ({remaining:.0f}s remaining).",
+            file=sys.stderr,
+            flush=True,
+        )
+        time.sleep(min(delay, remaining))
+        delay = min(10, delay * 2)
     raise ValueError(
-        "The public registry did not expose the verified release within its verification allowance."
+        "Registry verification timed out after five minutes. "
+        "The package may still be processing. Check npm, then rerun the failed release jobs."
     )
 
 

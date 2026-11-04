@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 import shutil
 from string import Template
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -227,29 +228,44 @@ class ReleaseAutomationTests(unittest.TestCase):
             archive = Path(directory) / "release.tgz"
             archive.write_bytes(b"verified")
             existing = {"dist": {"integrity": release_ci.integrity(archive)}}
+            clock = SimpleNamespace(value=0.0)
+
+            def sleep(seconds):
+                clock.value += seconds
+
+            def processing(version, **kwargs):
+                if clock.value < 120:
+                    return None
+                if version == "latest":
+                    return {"version": "0.1.0" if clock.value < 140 else "0.1.1"}
+                return existing
+
             with (
                 patch.object(
                     release_ci,
-                    "registry",
-                    side_effect=[None, existing, {"version": "0.1.1"}],
+                    "time",
+                    SimpleNamespace(monotonic=lambda: clock.value, sleep=sleep),
                 ),
-                patch.object(release_ci.time, "sleep"),
+                patch.object(release_ci.sys, "stderr", io.StringIO()),
             ):
-                self.assertTrue(
-                    release_ci.verify_published("0.1.1", archive)["verified"]
-                )
-            with (
-                patch.object(release_ci, "registry", return_value=None) as read,
-                patch.object(release_ci.time, "sleep"),
-            ):
-                with self.assertRaisesRegex(ValueError, "allowance"):
-                    release_ci.verify_published("0.1.1", archive)
-                self.assertEqual(read.call_count, 20)
-            with patch.object(
-                release_ci, "registry", return_value={"dist": {"integrity": "wrong"}}
-            ):
-                with self.assertRaisesRegex(ValueError, "differs"):
-                    release_ci.verify_published("0.1.1", archive)
+                with patch.object(release_ci, "registry", side_effect=processing):
+                    self.assertTrue(
+                        release_ci.verify_published("0.1.1", archive)["verified"]
+                    )
+                    self.assertGreaterEqual(clock.value, 140)
+                    self.assertLess(clock.value, 300)
+                clock.value = 0
+                with patch.object(release_ci, "registry", return_value=None):
+                    with self.assertRaisesRegex(ValueError, "five minutes"):
+                        release_ci.verify_published("0.1.1", archive)
+                    self.assertEqual(clock.value, 300)
+                with patch.object(
+                    release_ci,
+                    "registry",
+                    return_value={"dist": {"integrity": "wrong"}},
+                ):
+                    with self.assertRaisesRegex(ValueError, "differs"):
+                        release_ci.verify_published("0.1.1", archive)
 
     def test_github_assets_upload_once_and_reject_existing_differences(self):
         with tempfile.TemporaryDirectory() as directory:

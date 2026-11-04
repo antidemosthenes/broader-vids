@@ -970,6 +970,10 @@ Publication jobs accept the intentionally skipped duplicate checks on automatic 
 They still require successful preparation and stop after cancellation. GitHub assets also require successful npm publication.
 Tag creation and GitHub release assets use separate jobs with `contents: write` permission.
 The workflow publishes the verified archive under `latest`, then checks public registry integrity.
+Registry verification allows up to five minutes for npm processing and tag propagation.
+The wait uses bounded requests and reports progress.
+A verification timeout can occur after npm accepts the package.
+Check the public version before retrying. Rerun failed jobs to reuse a matching published archive and finish the GitHub release.
 It creates a GitHub release with the archives, manifest, and checksums after npm publication succeeds.
 It retains workflow artifacts for seven days.
 
