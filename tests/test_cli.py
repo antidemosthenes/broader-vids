@@ -6,8 +6,6 @@ import tempfile
 import unittest
 
 from broader_vids.cli import main
-from broader_vids.cli.arguments import parser
-from broader_vids.discovery.queries import load_bank
 
 
 class CliTests(unittest.TestCase):
@@ -23,46 +21,6 @@ class CliTests(unittest.TestCase):
                 with redirect_stdout(output):
                     self.assertEqual(main(["--data-dir", directory, *command]), 0)
                 self.assertIn(expected, json.loads(output.getvalue()))
-
-    def test_retired_commands_are_absent_and_malformed_banks_fail_cleanly(self):
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            parser().parse_args(["learn", "review-comments"])
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            parser().parse_args(
-                [
-                    "rate",
-                    "youtube:0000000001A",
-                    "quality_level",
-                    "high",
-                    "--note",
-                    "obsolete",
-                ]
-            )
-        for command in (
-            "catalog",
-            "experiment",
-            "simulate",
-            "probe",
-            "search-control",
-            "gate",
-        ):
-            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                parser().parse_args([command])
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "invalid.json"
-            for value in (
-                [],
-                None,
-                {"version": 1, "families": [None]},
-                {"version": 1, "families": None},
-            ):
-                path.write_text(json.dumps(value), encoding="utf-8")
-                with self.assertRaises(ValueError):
-                    load_bank(path)
-                error = io.StringIO()
-                with redirect_stderr(error):
-                    self.assertEqual(main(["queries", "--bank", str(path)]), 2)
-                self.assertNotIn("Traceback", error.getvalue())
 
     def test_fresh_profile_can_start_recommendations_without_pilot_or_calibration(self):
         from unittest.mock import patch

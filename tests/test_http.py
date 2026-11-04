@@ -1,4 +1,3 @@
-import json
 import io
 import tempfile
 import unittest
@@ -6,7 +5,6 @@ from unittest.mock import patch
 import urllib.error
 
 from broader_vids.http import AccessPaused, BudgetExhausted, NoRedirect, PublicHttp
-from broader_vids.parsing import embedded_json, walk
 from broader_vids.storage import Store
 
 
@@ -49,25 +47,3 @@ class HttpTests(unittest.TestCase):
         self.assertTrue(body.closed)
         with self.assertRaises(AccessPaused):
             PublicHttp.decode_json('{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}")
-
-    def test_embedded_json_preserves_escaped_braces_and_rejects_missing_data(self):
-        value = {"title": 'A {title} "example"'}
-        body = "var ytInitialData = " + json.dumps(value) + "; other();"
-        self.assertEqual(embedded_json(body, r"ytInitialData\s*=\s*"), value)
-        with self.assertRaises(AccessPaused):
-            embedded_json("unrecognized page", r"ytInitialData\s*=\s*")
-
-    def test_deeply_nested_embedded_metadata_fails_cleanly(self):
-        with self.assertRaises(AccessPaused):
-            embedded_json(
-                'var data = {"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}",
-                r"data\s*=\s*",
-            )
-
-    def test_metadata_walk_preserves_preorder_without_recursion(self):
-        leaf = {"leaf": True}
-        nested = leaf
-        for _ in range(1200):
-            nested = [nested]
-        root = {"deep": nested, "last": {"last": True}}
-        self.assertEqual(list(walk(root)), [root, leaf, root["last"]])

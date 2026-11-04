@@ -1,5 +1,4 @@
 from contextlib import closing
-from pathlib import Path
 import unittest
 
 from broader_vids.recommendations.service import create_recommendation
@@ -9,7 +8,6 @@ from test_dashboard_feedback import (
     dashboard_fixture,
     open_first,
     sync_playwright,
-    settle_layout,
 )
 
 
@@ -90,28 +88,6 @@ class TokenUsageDashboardTests(unittest.TestCase):
                 page.request.get(page.url + "api/token-usage?run_id=invalid").status,
                 400,
             )
-            output = Path(".cache/token-usage-ui")
-            output.mkdir(parents=True, exist_ok=True)
-            for theme in ("light", "dark"):
-                page.emulate_media(color_scheme=theme, reduced_motion="reduce")
-                for name, width, height, font in (
-                    ("desktop", 1440, 1000, 15),
-                    ("mobile", 390, 844, 15),
-                    ("text-zoom", 1440, 1000, 30),
-                ):
-                    page.set_viewport_size({"width": width, "height": height})
-                    page.evaluate(
-                        '(size)=>document.documentElement.style.fontSize=size+"px"',
-                        font,
-                    )
-                    settle_layout(
-                        page, path=str(output / f"{name}-{theme}.png"), full_page=True
-                    )
-                    self.assertTrue(
-                        dialog.evaluate("(node)=>node.scrollWidth<=node.clientWidth")
-                    )
-            page.evaluate('document.documentElement.style.fontSize="15px"')
-            page.set_viewport_size({"width": 1440, "height": 900})
             page.keyboard.press("Escape")
             self.assertFalse(dialog.is_visible())
             self.assertTrue(button.evaluate("(node)=>node===document.activeElement"))

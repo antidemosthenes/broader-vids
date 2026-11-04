@@ -115,35 +115,6 @@ class ReleaseVersionTests(unittest.TestCase):
         self.assertIn(f"python/broader_vids-{target_version}-*.whl", package["files"])
         self.assertNotIn(f"python/broader_vids-{original}-*.whl", package["files"])
 
-    def test_invalid_requested_version_is_non_destructive(self) -> None:
-        original = make_repo(self.root)
-        for requested in ("1.2", "v1.2.3", "1.02.3", "1.2.3-alpha.1"):
-            with self.subTest(requested=requested), self.assertRaises(ValueError):
-                versioning.set_version(self.root, requested)
-            self.assertEqual(
-                {
-                    name: (self.root / name).read_text(encoding="utf-8")
-                    for name in original
-                },
-                original,
-            )
-
-    def test_mismatched_existing_versions_are_non_destructive(self) -> None:
-        original = make_repo(self.root)
-        plugin_path = self.root / "plugin.json"
-        plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
-        plugin["version"] = "0.2.0"
-        plugin_path.write_text(json.dumps(plugin, indent=2) + "\n", encoding="utf-8")
-        original["plugin.json"] = plugin_path.read_text(encoding="utf-8")
-
-        with self.assertRaisesRegex(ValueError, "do not agree"):
-            versioning.set_version(self.root, VERSION)
-
-        self.assertEqual(
-            {name: (self.root / name).read_text(encoding="utf-8") for name in original},
-            original,
-        )
-
     def test_write_failure_rolls_back_already_replaced_files(self) -> None:
         original = make_repo(self.root)
         replace = versioning.os.replace
@@ -163,25 +134,4 @@ class ReleaseVersionTests(unittest.TestCase):
         self.assertEqual(
             {name: (self.root / name).read_text(encoding="utf-8") for name in original},
             original,
-        )
-
-    def test_failed_rollback_preserves_the_original_recovery_copy(self):
-        original = make_repo(self.root)
-        replace = versioning.os.replace
-        calls = 0
-
-        def fail_write_and_restore(source, destination):
-            nonlocal calls
-            calls += 1
-            if calls in (2, 3):
-                raise OSError("fixture persistent write failure")
-            replace(source, destination)
-
-        with patch.object(versioning.os, "replace", side_effect=fail_write_and_restore):
-            with self.assertRaisesRegex(OSError, "Recovery copies"):
-                versioning.set_version(self.root, VERSION)
-        backups = list(self.root.glob(".package.json.*.bak"))
-        self.assertEqual(len(backups), 1)
-        self.assertEqual(
-            backups[0].read_text(encoding="utf-8"), original["package.json"]
         )

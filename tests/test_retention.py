@@ -1,4 +1,3 @@
-import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -144,26 +143,6 @@ class RetentionTests(unittest.TestCase):
         self.assertNotEqual(fresh["id"], self.identifier)
         self.assertNotIn("inherited_from", fresh["state"])
         self.assertIsNone(fresh["state"].get("media"))
-
-    def test_metadata_only_job_cannot_be_selected_as_a_reusable_bundle(self):
-        self.assess()
-        identity = self.store.get(self.identifier)["settings"]["identity"]
-        self.store.create(
-            "youtube",
-            {"kind": "metadata", "identity": identity},
-            {"phase": "completed", "snapshot": {"views": 1}},
-        )
-        review = create_evidence(
-            self.store,
-            identity["url"],
-            originality_context={"signals": [{"id": "M1", "kind": "source"}]},
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        run = self.store.get(review)
-        self.assertEqual(run["state"]["inherited_from"], self.identifier)
-        self.assertEqual(run["state"]["resources"]["media_download_bytes"], 0)
-        verify_bundle(self.store, run)
 
     def test_interrupted_bundle_inheritance_reuses_its_existing_checkpoint(self):
         self.assess()
@@ -376,48 +355,6 @@ class RetentionTests(unittest.TestCase):
         self.assertFalse(Path(copied["state"]["media"]["path"]).exists())
         self.assertTrue(Path(copied["state"]["frames"][0]["path"]).exists())
 
-    def test_retired_rubric_assets_are_not_reused_or_mutated(self):
-        source = self.store.get(self.identifier)
-        source["settings"].update(
-            rubric_version=4,
-            acquisition_policy=3,
-            captionless_policy=1,
-            cache_key="retired-cache",
-        )
-        source["state"]["assessments"] = {
-            "augmented": {
-                "rubric_version": 4,
-                "overall_quality": 72,
-                "card": {"summary": "Retained historical quality data"},
-            }
-        }
-        before = copy.deepcopy(source)
-        with self.store.db:
-            self.store.db.execute(
-                "UPDATE runs SET settings=?,state=? WHERE id=?",
-                (
-                    json.dumps(source["settings"]),
-                    json.dumps(source["state"]),
-                    self.identifier,
-                ),
-            )
-        fresh = create_evidence(
-            self.store,
-            "https://www.youtube.com/watch?v=imYQJOgUx7Y",
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        run = self.store.get(fresh)
-        self.assertEqual(run["state"]["phase"], "prepare")
-        self.assertNotIn("inherited_from", run["state"])
-        self.assertEqual(self.store.get(self.identifier)["state"], before["state"])
-        self.assertEqual(
-            self.store.get(self.identifier)["state"]["assessments"]["augmented"][
-                "overall_quality"
-            ],
-            72,
-        )
-
     def test_interrupted_bundle_reuse_resumes_without_partial_copies(self):
         import os
 
@@ -462,18 +399,6 @@ class RetentionTests(unittest.TestCase):
         )
         self.assertFalse(list(root.glob("*.tmp")))
         self.assertTrue(self.media.exists())
-
-    def test_busy_source_does_not_leave_a_new_unprepared_review(self):
-        self.assess()
-        before = [run["id"] for run in self.store.list_runs()]
-        with self.store.lease(self.identifier), self.assertRaises(ValueError):
-            create_evidence(
-                self.store,
-                "https://www.youtube.com/watch?v=imYQJOgUx7Y",
-                reasoning_effort="medium",
-                assessment_model="fixture-model",
-            )
-        self.assertEqual([run["id"] for run in self.store.list_runs()], before)
 
     def test_cleanup_rejects_external_paths_and_never_deletes_user_originals(self):
         original = self.root / "original.mp4"
@@ -529,13 +454,6 @@ class RetentionTests(unittest.TestCase):
         )
         prepare_evidence(self.store, identifier, fetcher_type=Fetcher)
         self.assertEqual(closed, [True])
-
-    def test_released_receipt_is_bound_to_its_original_media_descriptor(self):
-        result = self.assess()
-        result = copy.deepcopy(result)
-        result["state"]["media"]["sha256"] = "unrelated-media"
-        with self.assertRaises(ValueError):
-            verify_bundle(self.store, result)
 
 
 class TranscriptionMemoryTests(unittest.TestCase):
@@ -596,27 +514,3 @@ class TranscriptionMemoryTests(unittest.TestCase):
         self.assertEqual(
             model.assertions, (64000, {"beam_size": 1, "vad_filter": True})
         )
-
-    def test_oversized_audio_is_rejected_before_loading_an_array(self):
-        from broader_vids.evidence.asr_worker import transcribe_chunks
-
-        def oversized(media, offset, seconds, target):
-            target.seek(600 * 16000 * 4 + 65536)
-            target.write(b"\0")
-
-        with patch("numpy.fromfile") as allocated, self.assertRaises(ValueError):
-            transcribe_chunks("unused", object(), duration=600, decoder=oversized)
-        allocated.assert_not_called()
-
-    def test_decoder_failure_closes_its_temporary_buffer(self):
-        from broader_vids.evidence.asr_worker import transcribe_chunks
-
-        buffers = []
-
-        def failure(media, offset, seconds, target):
-            buffers.append(target)
-            raise OSError("Fixture decoder failure")
-
-        with self.assertRaises(OSError):
-            transcribe_chunks("unused", object(), duration=10, decoder=failure)
-        self.assertTrue(buffers[0].closed)

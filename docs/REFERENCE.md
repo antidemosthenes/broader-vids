@@ -749,8 +749,13 @@ Completed assessments normally remove downloaded full videos automatically.
 
 ## Run automated checks
 
+Tests cover complete recommendation workflows, scoring, learning, saved data, essential dashboard actions, and package releases.
+Retain regression tests for distinct failures that change these results or lose user data.
+Use representative input cases. Avoid duplicate helper checks, retired compatibility matrices, and exhaustive visual combinations.
+Keep detailed visual inspection separate from the regression suite.
+
 ```powershell
-uv sync --locked --extra evidence --extra asr
+uv sync --locked --extra evidence
 npm ci --ignore-scripts
 uv run --no-sync ruff check src tests scripts
 uv run --no-sync ruff format --check src tests scripts
@@ -813,7 +818,7 @@ CI uses `scripts/test.py --jobs 3 --verbose` and limits that step to ten minutes
 The runner reports active files every fifteen seconds. Timeout reports include the last running test.
 CI uses the runner scratch directory for temporary profiles.
 Path tests compare resolved paths. Reset and Clean tests use the exact directory shown by each preview.
-Dashboard tests check drafts, failed writes, duplicate feedback, dialogs, platform navigation, and responsive themes.
+Dashboard tests check rating saves, drafts, duplicate feedback, dialogs, and platform navigation.
 Keep screenshots and other visual checks under the ignored `.cache/` directory.
 Browser tests reuse a browser process within each worker and create a fresh context for each test.
 

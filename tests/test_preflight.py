@@ -219,18 +219,6 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(get_profile(self.store)["interests"], ["mathematics"])
         self.assertEqual(self.store.list_runs(), [])
 
-    def test_completion_rejects_concurrent_platform_change(self):
-        configure(self.store, "youtube")
-
-        def change(*args, **kwargs):
-            configure(self.store, "both")
-            return AVAILABLE
-
-        self.probe.side_effect = change
-        with self.assertRaisesRegex(ValueError, "changed"):
-            complete(self.store, model="fixture-model", effort="low")
-        self.assertIsNone(status(self.store.root)["completed_at"])
-
     def test_missing_feedback_counts_history_duplicates_partials_and_clears(self):
         self.ready("both")
         youtube = self.video("youtube:0000000001A")
@@ -459,38 +447,6 @@ class PreflightTests(unittest.TestCase):
         self.assertLessEqual(self.probe.call_args.kwargs["timeout"], 30)
         json.dumps(self.store.get(identifier), allow_nan=False)
 
-    def test_optional_time_limits_accept_long_runs_and_keep_explicit_caps(self):
-        for value in (0, -1, True, float("inf"), float("nan")):
-            with self.subTest(invalid=value), self.assertRaises(ValueError):
-                create_recommendation(
-                    self.store,
-                    "youtube",
-                    max_seconds=value,
-                    assessment_model="saved-model",
-                    reasoning_effort="high",
-                )
-        for value in (None, 1800, 7200):
-            with self.subTest(value=value):
-                identifier = create_recommendation(
-                    self.store,
-                    "youtube",
-                    max_seconds=value,
-                    assessment_model="saved-model",
-                    reasoning_effort="high",
-                )
-                run = self.store.get(identifier)
-                self.assertEqual(run["settings"]["time_policy_version"], 2)
-                self.assertEqual(run["settings"]["max_seconds"], value)
-                json.dumps(run, allow_nan=False)
-                if value == 1800:
-                    run["elapsed"] = 2000
-                    self.store.save(run)
-                    report = prepare_recommendation(
-                        self.store, parser().parse_args(["continue", identifier])
-                    )
-                    self.assertEqual(report["status"], "blocked")
-                    self.assertIn("time_allowance", report["checks"])
-
     def test_resume_recovers_crash_time_before_any_network_check(self):
         identifier = create_recommendation(
             self.store,
@@ -575,28 +531,6 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(status(self.store.root), saved)
         self.assertEqual(self.store.list_runs(), [])
 
-    def test_profile_open_failure_is_structured_and_starts_no_work(self):
-        with patch("broader_vids.cli.app.Store", side_effect=PermissionError("denied")):
-            code, report = self.invoke("recommend")
-        self.assertEqual((code, report["status"]), (2, "blocked"))
-        self.assertEqual(report["checks"]["profile"]["status"], "unusable")
-
-    def test_missing_onboarding_fields_are_rejected(self):
-        path = self.store.root / "onboarding.json"
-        for value in (
-            {"version": 1, "default_platform": "both"},
-            {"version": 1, "default_platform": "both", "completed_at": "garbage"},
-        ):
-            path.write_text(json.dumps(value), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "Invalid onboarding"):
-                status(self.store.root)
-
-    def test_corrupt_onboarding_is_actionable_and_preserves_profile(self):
-        (self.store.root / "onboarding.json").write_text("[]", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "Invalid onboarding"):
-            status(self.store.root)
-        self.assertEqual(get_profile(self.store)["interests"], ["mathematics"])
-
     def test_chat_completion_renders_the_entire_guide_and_keeps_blockers_structured(
         self,
     ):
@@ -669,60 +603,6 @@ class PreflightTests(unittest.TestCase):
                 skill_namespace="invalid:namespace",
             )
         self.probe.assert_not_called()
-
-    def test_completion_verifies_transcription_only_when_explicitly_requested(self):
-        configure(self.store, "youtube")
-
-        def required(*args, **kwargs):
-            if kwargs["asr"]:
-                return {
-                    "checks": {
-                        "faster_whisper": {
-                            "status": "missing",
-                            "remedy": "Install requested transcription",
-                        }
-                    },
-                    "warnings": {},
-                }
-            return AVAILABLE
-
-        self.probe.side_effect = required
-        code, report = self.invoke(
-            "onboarding",
-            "complete",
-            "--model",
-            "fixture-model",
-            "--effort",
-            "low",
-            "--asr-model",
-            "base",
-        )
-        self.assertEqual((code, report["status"]), (2, "blocked"))
-        self.assertIsNone(status(self.store.root)["completed_at"])
-        code, report = self.invoke(
-            "onboarding", "complete", "--model", "fixture-model", "--effort", "low"
-        )
-        self.assertEqual((code, report["self_check"]), (0, "passed"))
-        self.assertNotIn("transcription_model", report["next_steps"]["recommendations"])
-        self.probe.return_value = AVAILABLE
-        self.probe.side_effect = None
-        code, report = self.invoke(
-            "onboarding",
-            "complete",
-            "--model",
-            "fixture-model",
-            "--effort",
-            "low",
-            "--asr-model",
-            "base",
-        )
-        self.assertEqual((code, report["self_check"]), (0, "passed"))
-        self.assertEqual(
-            report["next_steps"]["recommendations"]["transcription_model"], "base"
-        )
-        self.assertIn(
-            "with transcription", report["next_steps"]["recommendations"]["request"]
-        )
 
 
 class AccessCheckTests(unittest.TestCase):

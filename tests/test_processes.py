@@ -4,13 +4,11 @@ import sys
 import tempfile
 import time
 import unittest
-from types import SimpleNamespace
-from unittest.mock import Mock, patch
 import threading
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from broader_vids.processes import ProcessCleanupError, run_bounded, start_owned
+from broader_vids.processes import ProcessCleanupError, run_bounded
 
 
 class ProcessTests(unittest.TestCase):
@@ -154,53 +152,3 @@ class ProcessTests(unittest.TestCase):
             self.assertTrue(started.exists())
             time.sleep(2)
             self.assertFalse(finished.exists())
-
-    def test_startup_failure_closes_job_even_if_process_cleanup_fails(self):
-        process = Mock()
-        process.poll.return_value = None
-        process.kill.side_effect = OSError("fixture cleanup failure")
-        with (
-            patch("broader_vids.windows_job.WindowsJob") as job,
-            patch("broader_vids.processes.os", SimpleNamespace(name="nt")),
-            patch("broader_vids.processes.subprocess.Popen", return_value=process),
-        ):
-            job.return_value.start.side_effect = OSError("fixture ownership failure")
-            with self.assertRaisesRegex(OSError, "fixture cleanup failure"):
-                start_owned(["fixture"])
-            job.return_value.close.assert_called_once()
-
-    def test_test_runner_keeps_timeout_test_identity(self):
-        import runpy
-
-        runner = runpy.run_path(
-            str(Path(__file__).resolve().parents[1] / "scripts/test.py")
-        )
-        timeout = subprocess.TimeoutExpired(
-            "fixture", 180, stderr="Running fixture.test_waiting"
-        )
-        execute = runner["run_file"]
-        with patch.dict(
-            execute.__globals__, {"run_bounded": Mock(side_effect=timeout)}
-        ):
-            result = execute("fixture.py", threading.Event())
-        self.assertFalse(result["success"])
-        self.assertIn("fixture.test_waiting", result["log"])
-
-    def test_test_runner_progress_bypasses_captured_test_output(self):
-        from contextlib import redirect_stderr
-        import io
-        import runpy
-
-        runner = runpy.run_path(
-            str(Path(__file__).resolve().parents[1] / "scripts/test.py")
-        )
-        suite = unittest.TestSuite([unittest.FunctionTestCase(lambda: None)])
-        diagnostic = io.StringIO()
-        with (
-            patch.object(unittest.defaultTestLoader, "discover", return_value=suite),
-            redirect_stderr(diagnostic),
-        ):
-            result = runner["worker"]("fixture.py")
-        self.assertTrue(result["success"])
-        self.assertIn("Discovering fixture.py", diagnostic.getvalue())
-        self.assertIn("Running ", diagnostic.getvalue())

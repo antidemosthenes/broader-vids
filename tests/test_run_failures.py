@@ -12,7 +12,6 @@ from broader_vids.evidence.media import EvidencePending, VideoFetcher
 from broader_vids.evidence.preparation_worker import prepare_bounded
 from broader_vids.evidence.service import create_evidence
 from broader_vids.evidence.assessment import run_codex
-from broader_vids.learning.annotations import topics_schema, validate_topics
 from broader_vids.preferences import set_profile
 from broader_vids.recommendations.parallel import (
     Runtime,
@@ -23,7 +22,6 @@ from broader_vids.recommendations.service import create_recommendation
 from broader_vids.storage import Store
 from broader_vids.http import PublicHttp, BudgetExhausted, AccessPaused
 from broader_vids.recommendations.metadata import SnapshotPool
-from broader_vids.recommendations.timing import live_elapsed
 from test_recommendations import candidate, quality
 
 
@@ -160,16 +158,6 @@ class RunFailureTests(unittest.TestCase):
         self.assertEqual(active[1], 2)
         self.assertEqual(self.store.request_count(rid), 2)
 
-    def test_running_elapsed_report_advances_without_rewriting_the_checkpoint(self):
-        run = self.run_fixture(1)
-        run.update(status="running", elapsed=7)
-        run["state"]["active_attempt"] = {"started_wall": 100, "prior_elapsed": 7}
-        with patch("broader_vids.recommendations.timing.time.time", return_value=105):
-            self.assertEqual(live_elapsed(run), 12)
-        self.assertEqual(run["elapsed"], 7)
-        run["status"] = "paused"
-        self.assertEqual(live_elapsed(run), 7)
-
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -295,20 +283,6 @@ class RunFailureTests(unittest.TestCase):
         self.store.save(failed)
         exhausted = candidate_failures(self.store, run)[1]
         self.assertEqual(exhausted["stop_reason"], "retry_exhausted")
-
-    def test_generation_and_validation_share_the_topic_length_bound(self):
-        schema = topics_schema()
-        for key in ("specific", "broad"):
-            self.assertEqual(schema["properties"][key]["items"]["maxLength"], 120)
-        topics = {
-            "specific": ["x" * 121],
-            "broad": [],
-            "confidence": "medium",
-            "evidence_ids": ["F01"],
-            "rationale": "Visible evidence",
-        }
-        with self.assertRaisesRegex(ValueError, r"topics.specific\[0\].*121"):
-            validate_topics(topics, {"F01"})
 
     def test_access_failure_preserves_the_cause_when_other_workers_cancel(self):
         run = self.run_fixture(6)

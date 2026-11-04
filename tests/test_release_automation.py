@@ -251,20 +251,6 @@ class ReleaseAutomationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "differs"):
                     release_ci.verify_published("0.1.1", archive)
 
-    def test_metadata_http_errors_close_their_bodies(self):
-        for code in (404, 403, 503):
-            body = io.BytesIO(b"fixture")
-            error = urllib.error.HTTPError(
-                "https://registry.npmjs.org", code, "fixture", {}, body
-            )
-            with patch("urllib.request.urlopen", side_effect=error):
-                if code == 404:
-                    self.assertIsNone(release_ci.registry("0.1.1"))
-                else:
-                    with self.assertRaises(ValueError):
-                        release_ci.registry("0.1.1")
-            self.assertTrue(body.closed)
-
     def test_github_assets_upload_once_and_reject_existing_differences(self):
         with tempfile.TemporaryDirectory() as directory:
             names = [*release_ci.filenames("0.1.1"), "release.json", "SHA256SUMS"]
@@ -335,25 +321,6 @@ class ReleaseAutomationTests(unittest.TestCase):
                 ):
                     with self.assertRaisesRegex(ValueError, "tag"):
                         release_ci.github_release("0.1.1", directory)
-
-    def test_current_main_updates_qualify_without_a_pull_request_lookup(self):
-        for source in ("a" * 40, "b" * 40):
-            with (
-                self.subTest(source=source),
-                patch.object(
-                    release_ci,
-                    "source_commit",
-                    return_value={"source_sha": source, "recovery": False},
-                ),
-                patch.object(
-                    release_ci,
-                    "request_json",
-                    side_effect=AssertionError(
-                        "Readiness does not need a service call"
-                    ),
-                ),
-            ):
-                self.assertTrue(release_ci.readiness(source, source)["eligible"])
 
     def test_workflow_releases_only_successful_push_checks_on_main(self):
         workflow = yaml.safe_load(

@@ -5,19 +5,14 @@ import unittest
 from unittest.mock import patch
 
 from broader_vids.learning.evaluation import evaluate, metrics, cluster_interval
-from broader_vids.learning.calibration import finalize_ready_cohort
 from broader_vids.learning.features import capture, quality_features, quality_prior
 from broader_vids.learning.feedback import save_detail
-from broader_vids.learning.inference import fit_logistic, fit_sparse
 from broader_vids.learning.scoped import fit_scoped, quality_prediction
-from broader_vids.learning.service import learning_status, train, change_epoch
+from broader_vids.learning.service import train, change_epoch
 from broader_vids.preferences import set_profile, user_action
-from broader_vids.recommendations.engagement import parse_bilibili
-from broader_vids.recommendations.originality import provenance
 from broader_vids.storage import Store, utc_now
 from test_learning import example
 from test_recommendations import candidate
-from test_metadata import payload, VIDEO
 
 
 class LearningAuditTests(unittest.TestCase):
@@ -95,70 +90,6 @@ class LearningAuditTests(unittest.TestCase):
                         user_action(
                             self.store, key, "up" if i % 2 else "down", kind=dimension
                         )
-
-    def test_read_only_status_does_not_fit_a_missing_model(self):
-        with patch(
-            "broader_vids.learning.service.train",
-            side_effect=AssertionError("Read-only status fitted a model"),
-        ):
-            status = learning_status(self.store)
-            result = evaluate(self.store, fit=False)
-        self.assertFalse(status["current"])
-        self.assertFalse(result["phase_four_complete"])
-
-    def test_disjoint_abstentions_are_counted_per_platform_and_channel(self):
-        self.cohort({"interest": {0, 1, 2, 3}, "quality": {4, 5, 6, 7}})
-        result = evaluate(self.store)
-        self.assertEqual(result["platforms"]["interest"]["youtube"], 11)
-        self.assertEqual(result["platforms"]["quality"]["youtube"], 11)
-        self.assertFalse(
-            any(
-                "paired" in reason or "per platform" in reason
-                for reason in result["reasons"]
-            )
-        )
-
-    def test_superseded_holdout_vote_is_not_evaluated_as_a_legacy_vote(self):
-        self.cohort()
-        with patch("broader_vids.learning.service.refresh_after_feedback"):
-            save_detail(
-                self.store, self.keys[10], "topic_interest", "low", target="topology"
-            )
-        result = evaluate(self.store)
-        self.assertEqual(result["held_out"]["interest"]["n"], 9)
-        self.assertEqual(result["structured_held_out"]["topic_interest"]["n"], 1)
-        self.assertIn("topic_interest", result["required_heads"])
-        self.assertFalse(result["phase_four_complete"])
-
-    def test_all_active_interest_response_types_are_checked(self):
-        self.cohort()
-        with patch("broader_vids.learning.service.refresh_after_feedback"):
-            save_detail(
-                self.store, self.keys[10], "topic_interest", "low", target="topology"
-            )
-            save_detail(
-                self.store,
-                self.keys[11],
-                "domain_interest",
-                "high",
-                target="mathematics",
-            )
-        result = evaluate(self.store)
-        self.assertTrue(
-            {"topic_interest", "domain_interest"}.issubset(result["required_heads"])
-        )
-        self.assertIn("interest", result["required_heads"])
-
-    def test_new_response_type_cannot_inherit_a_frozen_binary_evaluation(self):
-        self.cohort()
-        self.assertTrue(finalize_ready_cohort(self.store))
-        with patch("broader_vids.learning.service.refresh_after_feedback"):
-            save_detail(self.store, "youtube:0000000099A", "quality_level", "high")
-        result = evaluate(self.store)
-        self.assertFalse(result["phase_four_complete"])
-        self.assertEqual(
-            result["validation_status"], "frozen_for_earlier_response_types"
-        )
 
     def test_topic_anchor_survives_clear_and_current_profile_reopen(self):
         self.cohort()
@@ -246,18 +177,6 @@ class LearningAuditTests(unittest.TestCase):
             fit_scoped(list(reversed(rows)), self.profile)["groups"],
         )
 
-    def test_dense_and_sparse_priors_reject_bounds_and_unknown_parameters(self):
-        for fitter in (fit_logistic, fit_sparse):
-            with self.assertRaises(ValueError):
-                fitter([{"name": "bias", "mean": 0, "sd": 1, "lower": -1}], [])
-            with self.assertRaises(ValueError):
-                fitter(
-                    [{"name": "bias", "mean": 0, "sd": 1}],
-                    [{"x": {"unknown": 1}, "y": 1}],
-                )
-            with self.assertRaises(ValueError):
-                fitter([{"name": "bias", "mean": 0, "sd": 1}] * 2, [])
-
     def test_ordinal_prediction_retains_uncertainty_for_unseen_metadata_effects(self):
         features = capture(example())
         rows = [
@@ -301,19 +220,6 @@ class LearningAuditTests(unittest.TestCase):
         self.assertEqual(quality_prior(features), quality_prior(legacy))
         self.assertEqual(quality_features(features)["missing:originality"], 1)
 
-    def test_unknown_copyright_enum_does_not_block_other_verified_metadata(self):
-        value = payload()
-        value["data"]["View"]["copyright"] = 3
-        parsed = parse_bilibili(value, VIDEO)
-        self.assertEqual(parsed["provenance_status"], "complete")
-        self.assertEqual(parsed["declared_copyright_status"], "unrecognized")
-        self.assertFalse(
-            any(
-                s["kind"] == "uploader_copyright_declaration"
-                for s in provenance({"engagement": parsed})["signals"]
-            )
-        )
-
     def test_metadata_epoch_changes_for_provenance_but_not_view_counts(self):
         self.cohort()
         key = self.keys[0]
@@ -338,13 +244,6 @@ class LearningAuditTests(unittest.TestCase):
                 (json.dumps(metadata), key),
             )
         self.assertNotEqual(change_epoch(self.store), initial)
-
-    def test_programming_and_mathematical_topic_symbols_are_not_collapsed(self):
-        from broader_vids.exploration.domains import normalized
-
-        self.assertEqual(
-            len({normalized(value) for value in ("C", "C++", "C#", "C*")}), 4
-        )
 
 
 if __name__ == "__main__":

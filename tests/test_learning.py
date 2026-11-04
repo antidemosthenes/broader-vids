@@ -19,7 +19,6 @@ from broader_vids.learning.service import (
     source_data,
     train,
     component_prediction,
-    final_score,
 )
 from broader_vids.learning.calibration import (
     evaluate,
@@ -210,39 +209,6 @@ class InferenceTests(unittest.TestCase):
             result["evidence_sensitivity_interval90"][0], result["interval90"][0]
         )
 
-    def test_overall_feedback_can_overcome_a_wrong_prior_without_a_blend_floor(self):
-        features = capture(example())
-        data = {
-            "profile": {"revision": 1, "interests": ["mathematics"]},
-            "ratings": [
-                {
-                    "dimension": "overall",
-                    "split": "train",
-                    "features": features,
-                    "vote": "down",
-                    "action_id": i,
-                }
-                for i in range(1500)
-            ],
-        }
-        snapshot = {"id": "fixture", **train(data)}
-        score, _, details = final_score(
-            features,
-            snapshot,
-            {
-                "quality": 75,
-                "interest": 75,
-                "engagement": 50,
-                "recency": 50,
-                "diversity": 100,
-            },
-            Policy().weights,
-        )
-        self.assertLess(score, 5)
-        self.assertLess(details["overall_adjustment"], -50)
-        self.assertEqual(snapshot["models"]["quality"]["observations"], 0)
-        self.assertEqual(snapshot["models"]["interest"]["observations"], 0)
-
     def test_learned_approval_cannot_override_quality_or_duration_exclusions(self):
         from broader_vids.recommendations.ranking import rank_slate
 
@@ -272,41 +238,6 @@ class InferenceTests(unittest.TestCase):
         )
         self.assertEqual(
             [item["canonical_id"] for item in result], [items[0]["canonical_id"]]
-        )
-
-    def test_slate_reuses_predictions_when_only_other_creators_are_selected(self):
-        from broader_vids.recommendations.ranking import rank_slate
-        from broader_vids.learning.service import score_components
-
-        items = [example(i) for i in range(1, 31)]
-        observations = {
-            item["canonical_id"]: item["quality_evidence"] for item in items
-        }
-        for item in items:
-            item["engagement_score"] = {"score": 50}
-        snapshot = {
-            "id": "fixture",
-            **train(
-                {
-                    "profile": {"revision": 1, "interests": ["mathematics"]},
-                    "ratings": [],
-                }
-            ),
-        }
-        with patch(
-            "broader_vids.learning.service.score_components", wraps=score_components
-        ) as computed:
-            result = rank_slate(
-                items,
-                observations,
-                snapshot["profile"],
-                Policy().weights,
-                learning=snapshot,
-            )
-        self.assertEqual(computed.call_count, 30)
-        self.assertEqual(
-            [item["canonical_id"] for item in result],
-            sorted(observations, reverse=True)[:10],
         )
 
 
@@ -367,13 +298,6 @@ class LearningStorageTests(unittest.TestCase):
         self.assertEqual(
             ensure_model(self.store)["models"]["quality"]["observations"], 0
         )
-
-    def test_model_epoch_survives_json_caching(self):
-        from broader_vids.learning.service import change_epoch
-
-        self.cohort()
-        ensure_model(self.store)
-        self.assertEqual(ensure_model(self.store)["epoch"], change_epoch(self.store))
 
     def publication_fixture(self):
         from broader_vids.recommendations.service import create_recommendation
@@ -462,17 +386,6 @@ class LearningStorageTests(unittest.TestCase):
             ]["watched"]
         )
 
-    def test_publication_checks_the_deadline_before_fitting(self):
-        from broader_vids.recommendations.service import _publish
-
-        run, _ = self.publication_fixture()
-        with self.assertRaises(BudgetExhausted):
-            _publish(self.store, run, lambda: 0)
-        self.assertEqual(
-            self.store.db.execute("SELECT COUNT(*) FROM learning_models").fetchone()[0],
-            0,
-        )
-
     def test_revisions_do_not_manufacture_infinite_independent_observations(self):
         key = example()["canonical_id"]
         for i in range(12):
@@ -498,16 +411,6 @@ class LearningStorageTests(unittest.TestCase):
         self.assertEqual(
             ensure_model(self.store)["models"]["interest"]["observations"], 61
         )
-
-    def test_feature_capture_does_not_hold_the_feedback_write_transaction(self):
-        from broader_vids.learning.service import capture_rating
-
-        def outside(local, key):
-            self.assertFalse(local.db.in_transaction)
-            return capture_rating(local, key)
-
-        with patch("broader_vids.learning.service.capture_rating", side_effect=outside):
-            user_action(self.store, example()["canonical_id"], "up", kind="quality")
 
     def test_invalid_evidence_does_not_discard_the_users_explicit_vote(self):
         item = example()

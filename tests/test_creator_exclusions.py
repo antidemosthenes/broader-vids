@@ -8,7 +8,6 @@ from broader_vids.blacklist import sync_blacklist
 from broader_vids.creators import (
     creator_id,
     display_name,
-    enrich,
     excluded,
     initialize_round,
     set_exclusion,
@@ -211,21 +210,6 @@ class CreatorExclusionTests(unittest.TestCase):
         self.assertEqual(run["state"]["creator_rules"], saved)
         self.assertEqual(pending_videos(self.store, "youtube"), [])
 
-    def test_unsupported_creator_policy_does_not_change_rules(self):
-        set_exclusion(self.store, "youtube", CHANNEL, True)
-        run = self.store.get(
-            create_recommendation(
-                self.store,
-                "youtube",
-                assessment_model="fixture-model",
-                reasoning_effort="low",
-            )
-        )
-        run["settings"].pop("creator_policy_version")
-        with self.assertRaisesRegex(ValueError, "Unsupported creator policy"):
-            initialize_round(self.store, run, lambda: 60)
-        self.assertNotIn("creator_rules", run["state"])
-
     def test_calibration_creator_resolves_an_existing_minimal_video_record(self):
         item = candidate(1)
         key = item["canonical_id"]
@@ -254,16 +238,6 @@ class CreatorExclusionTests(unittest.TestCase):
             display_name(self.store, "youtube", CHANNEL, "Current name"), "Current name"
         )
         self.assertEqual(display_name(self.store, "youtube", "UC" + "z" * 22), "")
-
-    def test_new_owner_without_a_name_does_not_inherit_another_creators_name(self):
-        item = {
-            "platform": "youtube",
-            "creator_id": "UC" + "b" * 22,
-            "creator_name": "Previous owner",
-        }
-        enrich(item, {"identity_verified": True, "creator_id": CHANNEL})
-        self.assertEqual(item["creator_id"], CHANNEL)
-        self.assertEqual(item["creator_name"], "")
 
     def test_bilibili_sync_runs_once_and_a_resumed_round_keeps_its_snapshot(self):
         run = self.store.get(

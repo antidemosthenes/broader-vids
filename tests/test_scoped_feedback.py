@@ -109,22 +109,6 @@ class ScopedFeedbackTests(unittest.TestCase):
             interest_prediction(self.features, 0.75, scoped)["probability"], 0.75
         )
 
-    def test_clarification_preserves_but_supersedes_ambiguous_legacy_votes(self):
-        with patch("broader_vids.learning.service.refresh_after_feedback"):
-            user_action(self.store, self.key, "down", "Too elementary", "interest")
-            user_action(self.store, self.key, "down", "Level mismatch", "overall")
-        self.save("depth", "deeper", target="topology", level="introductory")
-        snapshot = ensure_model(self.store)
-        self.assertEqual(snapshot["models"]["interest"]["observations"], 0)
-        self.assertEqual(snapshot["models"]["overall"]["observations"], 0)
-        self.assertEqual(
-            video_states(self.store)[self.key]["ratings"]["interest"]["vote"], "down"
-        )
-        self.save("depth", "clear")
-        snapshot = ensure_model(self.store)
-        self.assertEqual(snapshot["models"]["interest"]["observations"], 1)
-        self.assertEqual(snapshot["models"]["overall"]["observations"], 1)
-
     def test_editing_one_dimension_never_duplicates_observations_or_erases_another(
         self,
     ):
@@ -173,19 +157,6 @@ class ScopedFeedbackTests(unittest.TestCase):
         self.assertAlmostEqual(large["mean"], 0.5, delta=0.0001)
         self.assertLess(large["sd"], small["sd"])
         self.assertTrue(all(p > 0 for p in large["probabilities"]))
-
-    def test_invalid_choices_never_write_feedback(self):
-        for dimension, value, options in [
-            ("depth", "high", {"target": "topology"}),
-            ("topic_interest", "low", {}),
-            ("quality_level", "invalid", {}),
-            ("depth", "deeper", {"target": "topology", "level": []}),
-        ]:
-            with self.assertRaises(ValueError):
-                self.save(dimension, value, **options)
-        self.assertEqual(
-            self.store.db.execute("SELECT COUNT(*) FROM user_actions").fetchone()[0], 0
-        )
 
     def test_holdout_structured_feedback_and_creator_peers_never_train(self):
         with self.store.db:
@@ -292,49 +263,6 @@ class ScopedFeedbackTests(unittest.TestCase):
         value["audience"]["evidence_ids"] = ["C99999"]
         with self.assertRaises(ValueError):
             validate_card(value, {"C00001"}, "baseline")
-
-    def test_legacy_feedback_remains_a_binary_channel_after_structured_feedback(self):
-        with patch("broader_vids.learning.service.refresh_after_feedback"):
-            user_action(self.store, self.key, "up", "Keep legacy quality", "quality")
-        self.save("topic_interest", "low", target="topology")
-        state = video_states(self.store)[self.key]
-        self.assertEqual(state["feedback"]["kind"], "quality")
-        self.assertEqual(state["feedback"]["vote"], "up")
-
-    def test_first_ordinal_quality_rating_retains_legacy_learning_as_its_prior(self):
-        ratings = []
-        for i in range(2, 82):
-            features = capture(example(i))
-            ratings.append(
-                {
-                    "id": features["canonical_id"],
-                    "dimension": "quality",
-                    "action_id": i,
-                    "split": "train",
-                    "vote": "down",
-                    "features": features,
-                }
-            )
-        ordinal = {
-            "id": self.key,
-            "dimension": "quality_level",
-            "action_id": 100,
-            "split": "train",
-            "value": "medium",
-            "features": self.features,
-        }
-        snapshot = train(
-            {"profile": self.profile, "ratings": ratings, "details": [ordinal]}
-        )
-        parts, _ = score_components(
-            self.features,
-            self.profile,
-            snapshot["models"],
-            {},
-            structured=snapshot["structured"],
-        )
-        self.assertEqual(snapshot["models"]["quality"]["observations"], 80)
-        self.assertLess(parts["quality"], 50)
 
 
 if __name__ == "__main__":

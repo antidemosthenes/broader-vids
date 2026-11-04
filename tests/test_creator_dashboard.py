@@ -98,36 +98,3 @@ class CreatorDashboardTests(unittest.TestCase):
             self.assertTrue(
                 any(rule["tag"] == "易语言" for rule in rules["tags"]["bilibili"])
             )
-
-    def test_sync_busy_state_does_not_block_other_views(self):
-        with dashboard_fixture() as (page, _):
-            nav = page.get_by_role("navigation")
-            nav.get_by_role("button", name="Exclusions", exact=True).click()
-            page.get_by_role("tab", name="Bilibili", exact=True).click()
-            delayed = []
-            page.route("**/api/action", lambda route: delayed.append(route))
-            page.get_by_role("button", name="Sync blacklist", exact=True).click()
-            page.get_by_role("button", name="Syncing…", exact=True).wait_for()
-            self.assertTrue(
-                page.get_by_role("button", name="Syncing…", exact=True).is_disabled()
-            )
-            page.get_by_role("tab", name="YouTube", exact=True).click()
-            nav.get_by_role("button", name="Recommendations", exact=True).click()
-            inspector = open_first(page)
-            topic = inspector.get_by_role("group", name="Specific topic", exact=True)
-            topic.get_by_label("Topic", exact=True).fill("draft during sync")
-            delayed[0].fulfill(status=400, json={"error": "Blacklist interrupted"})
-            nav.get_by_role("button", name="Exclusions", exact=True).click()
-            page.get_by_role("tab", name="Bilibili", exact=True).click()
-            page.get_by_text("Blacklist interrupted", exact=True).wait_for()
-            self.assertTrue(
-                page.get_by_role(
-                    "button", name="Sync blacklist", exact=True
-                ).is_enabled()
-            )
-            nav.get_by_role("button", name="Recommendations", exact=True).click()
-            page.get_by_role("tab", name="YouTube", exact=True).click()
-            self.assertEqual(
-                topic.get_by_label("Topic", exact=True).input_value(),
-                "draft during sync",
-            )

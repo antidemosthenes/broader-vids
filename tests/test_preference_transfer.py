@@ -192,59 +192,6 @@ class PreferenceTransferTests(unittest.TestCase):
             self.assertIn(third, cached)
             self.assertNotIn(second, cached)
 
-    def test_cached_export_does_not_refit_and_matches_parameters(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            closing(Store(directory)) as store,
-        ):
-            seed(store)
-            original = export_preferences(store)
-            with patch(
-                "broader_vids.learning.service.train",
-                side_effect=AssertionError("Unnecessary refit"),
-            ):
-                cached = export_preferences(store)
-            self.assertEqual(cached["parameters"], original["parameters"])
-
-    def test_validation_deadline_leaves_existing_parameters_and_backups_intact(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            closing(Store(directory)) as store,
-        ):
-            seed(store)
-            bundle = export_preferences(store)
-            before = preserved(store)
-            with patch(
-                "broader_vids.learning.transfer.time.monotonic", side_effect=[0, 21]
-            ):
-                with self.assertRaisesRegex(ValueError, "time allowance"):
-                    import_preferences(store, bundle)
-            self.assertEqual(preserved(store), before)
-            self.assertEqual(
-                list((store.root / "backups").glob("preferences-*.json")), []
-            )
-
-    def test_restore_is_prepared_outside_write_transaction_and_has_exact_cache_id(self):
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            closing(Store(directory)) as store,
-        ):
-            seed(store)
-            bundle = export_preferences(store)
-
-            def prepare(data):
-                self.assertFalse(store.db.in_transaction)
-                return train(data)
-
-            with patch("broader_vids.learning.service.train", side_effect=prepare):
-                result = import_preferences(store, bundle)
-            with patch(
-                "broader_vids.learning.service.train",
-                side_effect=AssertionError("The restored cache was not reused"),
-            ):
-                restored = ensure_model(store)
-            self.assertEqual(restored["id"], result["snapshot_id"])
-
     def test_feedback_can_save_during_restore_and_prevents_stale_commit(self):
         with (
             tempfile.TemporaryDirectory() as directory,

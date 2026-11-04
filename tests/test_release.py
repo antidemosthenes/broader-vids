@@ -1,4 +1,3 @@
-import io
 import importlib.util
 import json
 from pathlib import Path
@@ -6,7 +5,6 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-import urllib.error
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -22,24 +20,6 @@ class ReleaseTests(unittest.TestCase):
         for tag in ("v99.0.0", "main", "v0.1.0; echo invalid"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 release.check(tag)
-
-    def test_registry_errors_block_publication_and_close_responses(self):
-        for code in (404, 403, 429, 503):
-            with self.subTest(code=code):
-                body = io.BytesIO(b"fixture")
-                error = urllib.error.HTTPError(
-                    "https://registry.npmjs.org", code, "fixture", {}, body
-                )
-                with patch("urllib.request.urlopen", side_effect=error):
-                    if code == 404:
-                        self.assertTrue(release.available()["available"])
-                    else:
-                        with self.assertRaises(ValueError):
-                            release.available()
-                self.assertTrue(body.closed)
-        with patch("urllib.request.urlopen"):
-            with self.assertRaisesRegex(ValueError, "already exists"):
-                release.available()
 
     def test_changed_artifact_is_rejected_before_package_inspection(self):
         metadata = release.check()

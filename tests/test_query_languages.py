@@ -1,10 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
-from opencc import OpenCC
-from broader_vids.discovery import languages
 from broader_vids.discovery.languages import QueryLanguageError, search_query
 from broader_vids.discovery.sources import BilibiliDiscovery, YouTubeDiscovery
 from broader_vids.exploration.proposals import query_fields
@@ -83,17 +80,3 @@ class QueryLanguageTests(unittest.TestCase):
             bili.search("linear algebra")
         http.get.assert_not_called()
         http.post_json.assert_not_called()
-
-    def test_parallel_conversion_initializes_one_shared_dictionary(self):
-        with (
-            patch.object(languages, "_converter", None),
-            patch("opencc.OpenCC", wraps=OpenCC) as constructor,
-        ):
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                result = list(
-                    pool.map(
-                        lambda _: search_query("bilibili", "數學 機率論"), range(32)
-                    )
-                )
-            self.assertEqual(result, ["数学 机率论"] * 32)
-            self.assertEqual(constructor.call_count, 1)

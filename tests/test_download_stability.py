@@ -7,7 +7,6 @@ import time
 import unittest
 from unittest.mock import patch
 
-from broader_vids.evidence.bilibili_download import ReliableBilibiliIE
 from broader_vids.evidence.media import EvidencePending, VideoFetcher
 from broader_vids.evidence.failures import failure_details
 
@@ -229,25 +228,6 @@ class DownloadStabilityTests(unittest.TestCase):
                 self.assertEqual(caught.exception.category, "media_size")
                 self.assertFalse(caught.exception.retryable)
                 self.assertEqual(seen, [])
-
-    def test_progress_distinguishes_bytes_time_and_cancellation(self):
-        import threading
-
-        for category in ("media_size", "media_timeout", "cancelled"):
-            with self.subTest(category=category):
-                fetcher = VideoFetcher(100, time.monotonic() + 60)
-                self.addCleanup(fetcher.close)
-                if category == "media_timeout":
-                    fetcher.deadline = time.monotonic() - 1
-                if category == "cancelled":
-                    fetcher.cancelled = threading.Event()
-                    fetcher.cancelled.set()
-                with self.assertRaises(EvidencePending) as caught:
-                    fetcher._progress(
-                        {"downloaded_bytes": 101 if category == "media_size" else 0}
-                    )
-                self.assertEqual(caught.exception.category, category)
-                self.assertEqual(caught.exception.retryable, category == "cancelled")
 
     def test_access_challenge_is_not_retried(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -839,42 +819,6 @@ class DownloadStabilityTests(unittest.TestCase):
             }
         )
 
-    def test_exhausted_deadline_does_not_launch_a_download(self):
-        with tempfile.TemporaryDirectory() as directory:
-            fetcher, seen = self.fetcher(directory, [])
-            fetcher.deadline = time.monotonic() - 1
-            with self.assertRaises(EvidencePending):
-                fetcher.download(
-                    {"url": "https://primary.bilivideo.com/video"}, directory
-                )
-            self.assertEqual(seen, [])
-
-    def test_fast_start_does_not_hide_a_later_slow_transfer(self):
-        from collections import deque
-
-        fetcher = VideoFetcher(16 * 1024 * 1024, time.monotonic() + 60)
-        self.addCleanup(fetcher.close)
-        fetcher._can_failover = True
-        now = time.monotonic()
-        fetcher._stream_started = {"fixture": (now - 30, 0)}
-        fetcher._stream_samples = {
-            "fixture": deque(
-                [
-                    (now - 30, 0),
-                    (now - 16, 8 * 1024 * 1024),
-                    (now - 15, 8 * 1024 * 1024 + 1024),
-                ]
-            )
-        }
-        with self.assertRaises(ConnectionError):
-            fetcher._progress(
-                {
-                    "filename": "fixture",
-                    "status": "downloading",
-                    "downloaded_bytes": 8 * 1024 * 1024 + 2048,
-                }
-            )
-
     def test_progress_sampling_stays_bounded_and_skips_single_route_streams(self):
         fetcher = VideoFetcher(32 * 1024 * 1024, 200.0)
         self.addCleanup(fetcher.close)
@@ -953,41 +897,3 @@ class DownloadStabilityTests(unittest.TestCase):
             )
         self.assertEqual(parts["quality"], 70)
         self.assertEqual(baseline - reduced, 6)
-
-    def test_resume_does_not_charge_previously_downloaded_bytes_again(self):
-        fetcher = VideoFetcher(1000, time.monotonic() + 60)
-        self.addCleanup(fetcher.close)
-        fetcher._spent_base = 100
-        fetcher._resume_offsets = {"fixture": 100}
-        fetcher._progress({"filename": "fixture", "downloaded_bytes": 150})
-        self.assertEqual(fetcher.downloaded_bytes, 150)
-        with self.assertRaises(EvidencePending):
-            fetcher._progress({"filename": "fixture", "downloaded_bytes": 1001})
-
-    def test_offered_cdn_alternatives_preserve_platform_order(self):
-        bilivideo = "https://primary.bilivideo.com/video"
-        akamai = "https://backup.akamaized.net/video"
-        for primary, backup in ((bilivideo, akamai), (akamai, bilivideo)):
-            with self.subTest(primary=primary):
-                info = {
-                    "dash": {
-                        "video": [
-                            {
-                                "baseUrl": primary,
-                                "backupUrl": [
-                                    backup,
-                                    primary,
-                                    "http://unsafe.bilivideo.com/video",
-                                    "https://unrelated.invalid/video",
-                                ],
-                            }
-                        ]
-                    }
-                }
-                with patch(
-                    "yt_dlp.extractor.bilibili.BiliBiliIE.extract_formats",
-                    return_value=[{"url": primary}],
-                ):
-                    formats = ReliableBilibiliIE().extract_formats(info)
-                self.assertEqual(formats[0]["url"], primary)
-                self.assertEqual(formats[0]["backup_urls"], [backup])

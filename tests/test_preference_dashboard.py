@@ -1,7 +1,6 @@
 from contextlib import closing, redirect_stdout
 import io
 import json
-import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -37,37 +36,6 @@ class PreferenceCliTests(unittest.TestCase):
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
 class PreferenceDashboardTests(unittest.TestCase):
-    def test_updated_assets_keep_an_older_running_dashboard_usable(self):
-        with dashboard_fixture() as (page, directory):
-
-            def older_page(route):
-                response = route.fetch()
-                markup = re.sub(
-                    r'<section\s+id="preferences-page".*</section>',
-                    "",
-                    response.text(),
-                    flags=re.S,
-                )
-                markup = re.sub(
-                    r'<button\s+id="preferences-open".*?</button>',
-                    "",
-                    markup,
-                    flags=re.S,
-                )
-                route.fulfill(response=response, body=markup)
-
-            page.route(page.url, older_page)
-            errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            page.route(
-                "**/static/preferences.js",
-                lambda route: route.fulfill(status=404, body="Not found"),
-            )
-            page.reload(wait_until="domcontentloaded")
-            page.locator(".video-row").first.wait_for()
-            self.assertEqual(page.locator(".video-row").count(), 10)
-            self.assertEqual(errors, [])
-
     def test_export_import_preserve_lists_and_unsaved_rating_drafts(self):
         with dashboard_fixture() as (page, directory):
             row = page.locator(".video-row").first

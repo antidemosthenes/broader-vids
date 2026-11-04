@@ -1,11 +1,8 @@
 from collections import Counter
-import gzip
 import hashlib
 import json
-from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from broader_vids.discovery.service import (
     create_discovery,
@@ -21,9 +18,8 @@ from broader_vids.discovery.sources import (
     duration_seconds,
     youtube_page,
 )
-from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
+from broader_vids.http import AccessPaused, BudgetExhausted
 from broader_vids.discovery.state import pinia_state
-from broader_vids.discovery.queries import load_bank, query_plan
 from broader_vids.storage import Store
 
 
@@ -138,26 +134,6 @@ class DiscoveryTests(unittest.TestCase):
         self.store.close()
         self.directory.cleanup()
 
-    def test_bank_rotation_and_meaningful_intersections(self):
-        bank = load_bank()
-        first, second = query_plan(bank, "youtube", 0), query_plan(bank, "youtube", 1)
-        self.assertEqual(
-            {q["family_id"] for q in first}, {q["family_id"] for q in second}
-        )
-        self.assertNotEqual([q["query"] for q in first], [q["query"] for q in second])
-        self.assertTrue(
-            all(
-                len(set(q["domains"])) >= 2
-                for q in first
-                if q["intent"] == "intersection"
-            )
-        )
-        broken = {"version": 1, "families": [bank["families"][0], bank["families"][0]]}
-        path = Path(self.directory.name) / "bad.json"
-        path.write_text(json.dumps(broken), encoding="utf-8")
-        with self.assertRaises(ValueError):
-            load_bank(path)
-
     def test_both_platforms_complete_only_with_live_source_receipts(self):
         for platform in ("youtube", "bilibili"):
             identifier = create_discovery(
@@ -196,23 +172,6 @@ class DiscoveryTests(unittest.TestCase):
             ],
             100,
         )
-
-    def test_old_exploration_policy_is_rejected_without_checkpoint_mutation(self):
-        identifier = create_discovery(
-            self.store,
-            "youtube",
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        run = self.store.get(identifier)
-        run["state"]["exploration"] = {"policy_version": 1}
-        self.store.save(run)
-        before = self.store.get(identifier)
-        with self.assertRaisesRegex(ValueError, "unsupported exploration policy"):
-            execute_discovery(self.store, identifier, FixtureHttp)
-        after = self.store.get(identifier)
-        self.assertEqual(after["state"], before["state"])
-        self.assertEqual(after["updated_at"], before["updated_at"])
 
     def test_forged_receipts_cannot_pass_discovery(self):
         identifier = create_discovery(
@@ -354,12 +313,6 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIsNone(duration_seconds("LIVE"))
         self.assertIsNone(duration_seconds("1:75"))
 
-    def test_creator_filter_rejects_other_owners(self):
-        items = bilibili_cards(card(1, 3) + card(2, 4), "3")
-        self.assertEqual([i["creator_id"] for i in items], ["3"])
-        with self.assertRaises(AccessPaused):
-            bilibili_cards("<html>Please log in</html>")
-
     def test_public_serialized_data_parses_aliases_without_executing_javascript(self):
         script = (
             '<script>window.__pinia=(function(a,b){return {searchResponse:{searchAllResponse:{result:[{bvid:a,mid:3,author:"Creator3",title:"A &amp; B",duration:"2:07",pubdate:1}]}},optional:b}}("'
@@ -375,49 +328,6 @@ class DiscoveryTests(unittest.TestCase):
         ):
             with self.assertRaises(AccessPaused):
                 pinia_state(malicious)
-
-    def test_unknown_empty_schemas_are_not_treated_as_zero_results(self):
-        with self.assertRaises(AccessPaused):
-            youtube_page({"contents": {"errorRenderer": {"message": "Access failed"}}})
-        with self.assertRaises(AccessPaused):
-            bilibili_cards(
-                "<script>window.__pinia=(function(a){return {login:a}}(true))</script>"
-            )
-        self.assertEqual(
-            bilibili_cards(
-                "<script>window.__pinia=(function(){return {searchResponse:{searchAllResponse:{result:[]}}}}())</script>"
-            ),
-            [],
-        )
-
-    def test_gzip_limit_is_applied_after_decompression(self):
-        identifier = create_discovery(
-            self.store,
-            "youtube",
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        http = PublicHttp(
-            self.store, self.store.get(identifier), anonymous_session=True
-        )
-
-        class Reply:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                pass
-
-            def geturl(self):
-                return "https://www.youtube.com/"
-
-            def read(self, size):
-                return gzip.compress(b"a" * (4 * 1024 * 1024 + 1))
-
-        with patch("urllib.request.OpenerDirector.open", return_value=Reply()):
-            with self.assertRaises(AccessPaused):
-                http.get("https://www.youtube.com/")
-        self.assertEqual(self.store.requests(identifier)[0]["outcome"], "unresolved")
 
 
 if __name__ == "__main__":

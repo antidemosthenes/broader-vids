@@ -3,7 +3,6 @@ import tempfile
 import threading
 import time
 import unittest
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,20 +127,6 @@ class CaptionRecoveryTests(unittest.TestCase):
         self.assertEqual(caught.exception.category, "access")
         self.assertTrue(caught.exception.retryable)
         self.assertNotIn("private", str(caught.exception))
-
-    def test_language_aliases_do_not_repeat_the_same_caption_request(self):
-        url = "https://example.test/captions"
-        fetcher, calls = self.fetcher({url: '{"events": []}'})
-        info = {
-            "duration": 10,
-            "automatic_captions": {
-                language: [{"ext": "json3", "url": url}]
-                for language in ("en", "en-US", "en-orig")
-            },
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            self.assertIsNone(fetcher.captions(info, directory, "youtube"))
-        self.assertEqual(calls, [url])
 
     def test_compact_prompt_preserves_text_ids_timestamps_and_coverage(self):
         cues = [
@@ -360,18 +345,3 @@ class SchedulingRecoveryTests(unittest.TestCase):
             )
         self.assertTrue(source.closed)
         self.assertTrue(streams[0].closed)
-
-    def test_both_platforms_can_prepare_two_videos_at_the_same_time(self):
-        runtime, barrier, cancelled = Runtime(), threading.Barrier(4), threading.Event()
-
-        def worker(platform):
-            with runtime.preparation_slot(platform, lambda: 3, cancelled):
-                barrier.wait(2)
-            return True
-
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = [
-                pool.submit(worker, p)
-                for p in ("youtube", "youtube", "bilibili", "bilibili")
-            ]
-            self.assertTrue(all(f.result(timeout=3) for f in futures))

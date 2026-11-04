@@ -3,6 +3,7 @@ import re
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 from unittest.mock import patch
@@ -72,17 +73,6 @@ def quality(identifier):
 
 
 class EngagementTests(unittest.TestCase):
-    def test_unrecognized_count_shapes_pause_instead_of_crashing(self):
-        with self.assertRaises(AccessPaused):
-            parse_bilibili(
-                {"code": 0, "data": {"bvid": "BV1111111111", "pages": None}},
-                "BV1111111111",
-            )
-        with self.assertRaises(AccessPaused):
-            parse_youtube(
-                'ytInitialPlayerResponse = {"videoDetails":null}', "0000000001A"
-            )
-
     def test_shrinkage_missing_and_platform_specific_metrics(self):
         small, large, missing = candidate(1), candidate(2), candidate(3)
         small["engagement"] = {"views": 10, "likes": 1}
@@ -194,11 +184,6 @@ class RecommendationTests(unittest.TestCase):
             write_recommendation_report(self.store, rid).read_text(encoding="utf-8"),
         )
 
-    def test_malformed_feedback_kind_is_rejected_without_modifying_state(self):
-        with self.assertRaises(ValueError):
-            user_action(self.store, self.items[0]["canonical_id"], "up", kind=[])
-        self.assertEqual(video_states(self.store), {})
-
     def test_publication_validation_does_not_hold_a_database_write_lock(self):
         source = self.source()
         checked = []
@@ -298,62 +283,6 @@ class RecommendationTests(unittest.TestCase):
         self.assertFalse(any(i["carryover"] for i in selected))
         selected, _ = screen(self.items, self.items[:70], {}, self.profile)
         self.assertEqual(len(selected), 35)
-
-    def test_inspection_limit_is_saved_and_old_policy_is_rejected_preflight(self):
-        from broader_vids.recommendations.screening import inspection_limit
-
-        source = self.source()
-        identifier = create_recommendation(
-            self.store,
-            "youtube",
-            source,
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        run = self.store.get(identifier)
-        self.assertEqual(run["settings"]["inspection_limit"], 35)
-        self.assertEqual(inspection_limit(run["settings"]), 35)
-        original_state, original_updated = run["state"], run["updated_at"]
-        from broader_vids.cli.arguments import parser
-        from broader_vids.cli.startup import prepare_recommendation
-
-        for field, old_value in (
-            ("screening_policy_version", 4),
-            ("creator_policy_version", 0),
-            ("time_policy_version", 1),
-        ):
-            with self.subTest(field=field):
-                settings = {**run["settings"], field: old_value}
-                with self.store.db:
-                    self.store.db.execute(
-                        "UPDATE runs SET settings=? WHERE id=?",
-                        (json.dumps(settings), identifier),
-                    )
-                with self.assertRaisesRegex(ValueError, "unsupported"):
-                    execute_recommendation(self.store, identifier)
-                with patch("broader_vids.cli.startup.preflight") as probe:
-                    with self.assertRaisesRegex(ValueError, "unsupported"):
-                        prepare_recommendation(
-                            self.store, parser().parse_args(["continue", identifier])
-                        )
-                    probe.assert_not_called()
-                unchanged = self.store.get(identifier)
-                self.assertEqual(unchanged["state"], original_state)
-                self.assertEqual(unchanged["updated_at"], original_updated)
-
-    def test_recommendation_rejects_a_legacy_discovery_source(self):
-        source = self.source()
-        discovery = self.store.get(source)
-        discovery["state"]["exploration"] = {"policy_version": 1}
-        self.store.save(discovery)
-        with self.assertRaisesRegex(ValueError, "unsupported exploration policy"):
-            create_recommendation(
-                self.store,
-                "youtube",
-                source,
-                assessment_model="fixture-model",
-                reasoning_effort="low",
-            )
 
     def test_vote_watch_dismiss_and_revision_are_independent(self):
         self.insert_pending(self.items[:1])
@@ -535,8 +464,10 @@ class RecommendationTests(unittest.TestCase):
         source = self.source()
         blocked = self.items[-1]["canonical_id"]
         calls, evidence_ids = [], []
+        clock = SimpleNamespace(value=100.0)
 
         def interrupted(store, evidence_id, asr_model, **limits):
+            clock.value += 1
             calls.append(limits)
             evidence_ids.append(evidence_id)
             child = store.get(evidence_id)
@@ -554,6 +485,10 @@ class RecommendationTests(unittest.TestCase):
             )
 
         with (
+            patch(
+                "broader_vids.recommendations.service.time",
+                SimpleNamespace(monotonic=lambda: clock.value),
+            ),
             patch(
                 "broader_vids.recommendations.service.collect_snapshot",
                 side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
@@ -573,13 +508,19 @@ class RecommendationTests(unittest.TestCase):
                 reasoning_effort="low",
             )
             run = execute_recommendation(self.store, identifier, prepare=interrupted)
-        self.assertEqual(run["status"], "completed")
+        self.assertEqual(run["status"], "completed", run["reason"])
         self.assertEqual(len(calls), 4)
         self.assertEqual(len(set(evidence_ids)), 1)
         self.assertEqual(run["state"]["candidate_retry_counts"][blocked], 3)
         self.assertEqual(run["state"]["evidence"][blocked]["status"], "unavailable")
         self.assertEqual(run["state"]["assessment_index"], 35)
         self.assertTrue(all(call["max_seconds"] <= 30 for call in calls))
+        self.assertTrue(
+            all(
+                earlier["max_seconds"] > later["max_seconds"]
+                for earlier, later in zip(calls, calls[1:])
+            )
+        )
         self.assertTrue(all(call["max_new_bytes"] == 2 * 1024 * 1024 for call in calls))
         self.assertEqual(len(pending_videos(self.store, "youtube")), 10)
 

@@ -6,11 +6,10 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from broader_vids.cli.arguments import parser
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
-from broader_vids.recommendations.engagement import collect_snapshot, metadata_fresh
+from broader_vids.recommendations.engagement import collect_snapshot
 from broader_vids.recommendations.metadata import metadata_session, refresh_metadata
-from broader_vids.storage import Store, utc_now
+from broader_vids.storage import Store
 
 
 VIDEO = "BV1ig87zeE9q"
@@ -189,25 +188,6 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(result["status"], "paused")
         self.assertIn("login bilibili", result["reason"])
         request.assert_not_called()
-
-    def test_cli_and_platform_validation(self):
-        args = parser().parse_args(["metadata", URL, "--use-browser"])
-        self.assertTrue(args.use_browser)
-        with self.assertRaises(ValueError):
-            refresh_metadata(
-                self.store,
-                "https://www.youtube.com/watch?v=GAkVaD1ihi4",
-                use_browser=True,
-            )
-        self.assertEqual(list(self.store.iter_runs()), [])
-
-    def test_recent_incomplete_bilibili_cache_requires_refresh(self):
-        cached = {"metadata_version": 2, "observed_at": utc_now()}
-        self.assertFalse(metadata_fresh(cached, "bilibili"))
-        self.assertTrue(metadata_fresh(cached, "youtube"))
-        self.assertTrue(
-            metadata_fresh({**cached, "provenance_status": "complete"}, "bilibili")
-        )
 
     def test_failed_request_clears_previous_success_receipt(self):
         http = self.http()

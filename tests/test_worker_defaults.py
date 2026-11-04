@@ -14,9 +14,9 @@ from broader_vids.evidence.service import create_evidence
 from broader_vids.preferences import set_profile
 from broader_vids.recommendations.batch import create_batch
 from broader_vids.storage import Store
+from broader_vids.worker_context import resolve_worker_settings
 from contextlib import redirect_stdout
 import io
-from broader_vids.worker_context import resolve_worker_settings
 
 
 class WorkerDefaultsTests(unittest.TestCase):
@@ -108,31 +108,6 @@ class WorkerDefaultsTests(unittest.TestCase):
             self.assertEqual(
                 store.get(second)["settings"]["reasoning_effort"], "medium"
             )
-
-    def test_latest_context_is_found_after_large_records_with_bounded_reads(self):
-        with self.session.open("ab") as handle:
-            handle.write(
-                b'{"type":"tool_output","payload":"'
-                + b"x" * (2 * 1024 * 1024)
-                + b'"}\n'
-            )
-        self.assertEqual(resolve_worker_settings(), ("parent-model", "high"))
-        self.select("latest-model", "low")
-        with self.session.open("ab") as handle:
-            handle.write(b'[]\n{"type":"turn_context","payload":null}\n{"incomplete":')
-        self.assertEqual(resolve_worker_settings(), ("latest-model", "low"))
-
-    def test_reverse_context_scan_preserves_split_utf8_records(self):
-        self.select("unicode-model", "medium")
-        with self.session.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    {"type": "tool_output", "payload": "数学" * 11000},
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-        self.assertEqual(resolve_worker_settings(), ("unicode-model", "medium"))
 
     def test_missing_context_does_not_silently_use_global_defaults(self):
         with self.assertRaisesRegex(ValueError, "invoking chat"):

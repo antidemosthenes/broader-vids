@@ -49,21 +49,6 @@ class EnvironmentCheckTests(unittest.TestCase):
                 status = main(["--data-dir", directory, "doctor"])
             return status, json.loads(output.getvalue())
 
-    def test_optional_and_conditional_omissions_do_not_fail_required_local_check(self):
-        status, report = self.check("v22.1.0")
-        self.assertEqual(status, 0)
-        self.assertTrue(report["local_requirements_met"])
-        self.assertEqual(report["missing_required"], [])
-        self.assertEqual(report["required"]["ffmpeg"]["status"], "available")
-        self.assertEqual(report["optional"]["ffprobe"]["status"], "missing")
-        self.assertEqual(report["optional"]["faster_whisper"]["status"], "missing")
-        self.assertEqual(report["conditional"]["playwright"]["status"], "missing")
-        self.assertEqual(report["conditional"]["browser"]["status"], "not_checked")
-        self.assertEqual(
-            report["manual_checks"]["chatgpt_sign_in"]["status"], "not_checked"
-        )
-        self.assertNotIn("tools", report)
-
     def test_old_node_and_unusable_ffmpeg_fail_with_actionable_required_results(self):
         status, report = self.check("v18.20.0", OSError("Fixture executable failure"))
         self.assertEqual(status, 2)

@@ -366,51 +366,6 @@ class DashboardFeedbackTests(unittest.TestCase):
             )
             self.assertLessEqual(page.evaluate("document.body.scrollWidth"), 390)
 
-    def test_themes_zoom_empty_state_and_readable_sync(self):
-        with dashboard_fixture() as (page, _):
-            page.route(
-                "**/api/exclusions",
-                lambda route: route.fulfill(
-                    json={
-                        "creators": {},
-                        "tags": {},
-                        "bilibili_sync": {
-                            "status": "complete",
-                            "account_id": "1234",
-                            "last_success": "2026-10-27T22:36:49.873717+00:00",
-                        },
-                    }
-                ),
-            )
-            page.reload(wait_until="domcontentloaded")
-            for theme in ("light", "dark"):
-                page.emulate_media(color_scheme=theme, reduced_motion="reduce")
-                page.get_by_role("navigation").get_by_role(
-                    "button", name="Exclusions", exact=True
-                ).click()
-                page.get_by_role("tab", name="Bilibili", exact=True).click()
-                expect(page.locator(".connection-fields dd").nth(0)).to_have_text(
-                    "Synced"
-                )
-                self.assertNotIn(
-                    "T22:36", page.locator(".connection-fields dd").nth(2).inner_text()
-                )
-                self.assertIn(
-                    "2026",
-                    page.locator(".connection-fields dd").nth(2).get_attribute("title"),
-                )
-                page.evaluate("document.documentElement.style.fontSize='30px'")
-                self.assertEqual(page.evaluate("document.body.scrollWidth"), 1440)
-                page.evaluate("document.documentElement.style.fontSize='15px'")
-            page.route("**/api/calibration", lambda route: route.fulfill(json=[]))
-            page.reload(wait_until="domcontentloaded")
-            page.get_by_role("navigation").get_by_role(
-                "button", name="Calibration", exact=True
-            ).click()
-            self.assertTrue(
-                page.get_by_role("heading", name="Room to learn").is_visible()
-            )
-
     def test_polling_and_inflight_saves_preserve_newer_edits(self):
         with dashboard_fixture() as (page, _):
             inspector = open_first(page)

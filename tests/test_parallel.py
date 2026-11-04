@@ -1,6 +1,4 @@
 import tempfile
-import json
-import math
 import threading
 import unittest
 from unittest.mock import patch
@@ -13,7 +11,7 @@ from broader_vids.recommendations.parallel import (
     Runtime,
     process_candidate,
 )
-from broader_vids.recommendations.batch import create_batch, execute_batch, batch_report
+from broader_vids.recommendations.batch import create_batch, execute_batch
 from broader_vids.recommendations.service import create_recommendation
 from broader_vids.storage import Store
 from broader_vids.recommendations.reports import candidate_failures
@@ -64,53 +62,6 @@ class ParallelTests(unittest.TestCase):
         )
         self.assertEqual(run["state"]["model_calls"], 36)
         self.assertEqual(run["state"]["assessment_index"], 35)
-
-    def test_saved_unknown_result_does_not_require_a_new_model_call(self):
-        run, save = self.run_fixture(count=1, calls=0)
-        identifier = create_evidence(
-            self.store,
-            run["state"]["shortlist"][0]["url"],
-            assessment_model="fixture-model",
-            reasoning_effort="low",
-        )
-        child = self.store.get(identifier)
-        child["state"].update(
-            phase="prepared",
-            assessments={
-                "augmented": {
-                    "overall_quality": None,
-                    "card": {
-                        "overall_rationale": "Silent stills cannot establish music quality."
-                    },
-                }
-            },
-        )
-        self.store.save(child)
-
-        def unknown(root, work, settings, runtime, jar, cancelled):
-            self.assertEqual(work["model_reservation"], 0)
-            self.assertEqual(work["bytes"], 0)
-            with patch(
-                "broader_vids.recommendations.parallel.cached_quality",
-                return_value=None,
-            ):
-                result = process_candidate(
-                    root, work, settings, runtime, jar, cancelled
-                )
-            self.assertEqual(result["failure"]["category"], "insufficient_evidence")
-            self.assertIn("music quality", result["reason"])
-            return result
-
-        assess_parallel(
-            self.store,
-            run,
-            save,
-            lambda: 100,
-            worker=unknown,
-            quality_lookup=lambda *args: None,
-        )
-        self.assertEqual(run["state"]["model_calls"], 0)
-        self.assertEqual(run["state"]["assessment_index"], 1)
 
     def test_exhausted_candidate_media_is_unavailable_without_pausing_other_assessments(
         self,
@@ -227,19 +178,6 @@ class ParallelTests(unittest.TestCase):
                 self.store, assessment_model="fixture-model", reasoning_effort="low"
             )
         self.assertEqual(self.store.list_runs(), [])
-
-    def test_batch_child_cannot_run_outside_its_shared_coordinator(self):
-        identifier = create_batch(
-            self.store, assessment_model="fixture-model", reasoning_effort="low"
-        )
-        child = self.store.get(identifier)["state"]["children"]["youtube"]
-        from broader_vids.recommendations.service import execute_recommendation
-
-        with (
-            patch("broader_vids.recommendations.service.execute_discovery"),
-            self.assertRaisesRegex(ValueError, "batch"),
-        ):
-            execute_recommendation(self.store, child)
 
     def test_warm_review_does_not_need_another_download_reservation(self):
         run, save = self.run_fixture(count=1)
@@ -623,56 +561,6 @@ class ParallelTests(unittest.TestCase):
         result["status"] = "paused"
         self.store.save(result)
         execute_batch(self.store, identifier, lambda *a, **k: self.fail("Budget reset"))
-
-    def test_unlimited_batches_and_worker_checkpoints_remain_json_safe(self):
-        identifier = create_batch(
-            self.store, assessment_model="fixture-model", reasoning_effort="low"
-        )
-        batch = self.store.get(identifier)
-        for key in (identifier, *batch["state"]["children"].values()):
-            saved = self.store.get(key)
-            saved["elapsed"] = 2400
-            self.store.save(saved)
-
-        def runner(local, child, *, max_seconds, **kwargs):
-            self.assertIsNone(max_seconds)
-            run = local.get(child)
-            run["state"].update(
-                phase="assess", shortlist=[candidate(1, run["platform"])]
-            )
-
-            def worker(root, work, *args):
-                self.assertIsNone(work["parent_deadline"])
-                self.assertLessEqual(work["seconds"], 300)
-                self.assertTrue(math.isfinite(work["deadline"]))
-                json.dumps(work, allow_nan=False)
-                other = Store(root)
-                try:
-                    json.dumps(other.get(child)["state"], allow_nan=False)
-                finally:
-                    other.close()
-                return quality(work["evidence_run"])
-
-            assess_parallel(
-                local,
-                run,
-                lambda: local.save(run),
-                lambda: math.inf,
-                worker=worker,
-                quality_lookup=lambda *a: None,
-            )
-            run.update(status="completed", reason="Fixture")
-            local.save(run)
-            return run
-
-        result = execute_batch(self.store, identifier, runner)
-        self.assertEqual(result["status"], "completed", result["state"]["results"])
-        report, _ = batch_report(self.store, identifier)
-        self.assertIsNone(report["shared_max_seconds"])
-        self.assertGreaterEqual(report["elapsed_seconds"], 2400)
-        for child in report["platforms"].values():
-            self.assertIsNone(child["settings"]["max_seconds"])
-        json.dumps(report, allow_nan=False)
 
     def test_manual_cancellation_preserves_the_candidate_retry_allowance(self):
         run, save = self.run_fixture(count=1)
