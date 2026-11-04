@@ -1,0 +1,19 @@
+{
+  "name": "broader-vids",
+  "description": "Broader Vids plugin for Claude Code",
+  "owner": {
+    "name": "Broader Vids contributors"
+  },
+  "plugins": [
+    {
+      "name": "broader-vids",
+      "source": {
+        "source": "npm",
+        "package": "broader-vids",
+        "version": "latest",
+        "registry": "https://registry.npmjs.org"
+      },
+      "description": "Curated YouTube and Bilibili recommendations with local evidence and feedback."
+    }
+  ]
+}

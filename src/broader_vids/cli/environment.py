@@ -43,8 +43,17 @@ def dependency(name, purpose, remedy):
     }
 
 
-def environment_report(root):
+def environment_report(root, *, host="codex"):
+    from broader_vids.worker_context import validate_host
+
+    host = validate_host(host)
     evidence_remedy = "Use setup --evidence in the Node launcher, or uv sync --locked --extra evidence in the source folder."
+    host_cli = "codex" if host == "codex" else "claude"
+    host_purpose = (
+        "Run AI planning and video assessment through your ChatGPT subscription."
+        if host == "codex"
+        else "Run AI planning and video assessment through your authenticated Claude Code CLI."
+    )
     required = {
         "python": {
             "status": "available" if sys.version_info >= (3, 12) else "unsupported",
@@ -58,10 +67,10 @@ def environment_report(root):
             "Run the launcher and YouTube JavaScript support with Node.js 20 or later.",
             "Install Node.js 20 or later.",
         ),
-        "codex": tool(
-            "codex",
-            "Run AI planning and video assessment through your ChatGPT subscription.",
-            "Install Codex CLI.",
+        host_cli: tool(
+            host_cli,
+            host_purpose,
+            f"Install {host_cli.capitalize()} CLI.",
         ),
         "yt_dlp": dependency(
             "yt_dlp", "Retrieve video metadata, captions, and media.", evidence_remedy
@@ -119,6 +128,27 @@ def environment_report(root):
             required["ffmpeg"]["status"] = "unusable"
     channel = browser_channel()
     missing = [name for name, item in required.items() if item["status"] != "available"]
+    manual_checks = {
+        "chatgpt_sign_in": {
+            "status": "not_checked",
+            "required_for": "AI planning and assessment",
+            "verification": "Run codex login status and verify ChatGPT sign-in.",
+        },
+        "internet_access": {
+            "status": "not_checked",
+            "required_for": "Remote video access and AI assessment",
+            "verification": "Allow the host's network requests when needed.",
+        },
+    }
+    if host == "claude":
+        manual_checks = {
+            "claude_sign_in": {
+                "status": "not_checked",
+                "required_for": "AI planning and assessment",
+                "verification": "Complete Claude CLI sign-in, then retry readiness checks.",
+            },
+            "internet_access": manual_checks["internet_access"],
+        }
     return {
         "version": __version__,
         "scope": "Local setup requirements for video recommendations",
@@ -160,18 +190,7 @@ def environment_report(root):
                 "No installation is required for the current Broader Vids checks.",
             ),
         },
-        "manual_checks": {
-            "chatgpt_sign_in": {
-                "status": "not_checked",
-                "required_for": "AI planning and assessment",
-                "verification": "Run codex login status and verify ChatGPT sign-in.",
-            },
-            "internet_access": {
-                "status": "not_checked",
-                "required_for": "Remote video access and AI assessment",
-                "verification": "Allow the host's network requests when needed.",
-            },
-        },
+        "manual_checks": manual_checks,
         "notes": [
             "Missing optional tools do not fail this check.",
             "Conditional requirements affect only their named workflows.",

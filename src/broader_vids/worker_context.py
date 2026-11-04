@@ -1,4 +1,4 @@
-from functools import lru_cache
+from functools import lru_cache, partial
 import json
 import os
 from pathlib import Path
@@ -61,7 +61,39 @@ def _turn_settings(path, modified, size):
     return None
 
 
-def resolve_worker_settings(model=None, effort=None, *, environ=None):
+def validate_host(host):
+    if host not in ("codex", "claude"):
+        raise ValueError("Use --host codex or --host claude.")
+    return host
+
+
+def host_options(host):
+    return {"host": host} if validate_host(host) == "claude" else {}
+
+
+def host_snapshot(host):
+    return {"worker_host": host} if validate_host(host) == "claude" else {}
+
+
+def worker_runner(settings, *, cancelled=None):
+    host = validate_host(settings.get("worker_host", "codex"))
+    if host == "claude":
+        from broader_vids.claude_worker import run_claude as runner
+    else:
+        from broader_vids.evidence.assessment import run_codex as runner
+    return partial(
+        runner,
+        model=settings.get("assessment_model"),
+        effort=settings.get("reasoning_effort"),
+        cancelled=cancelled,
+    )
+
+
+def resolve_worker_settings(model=None, effort=None, *, environ=None, host="codex"):
+    if validate_host(host) == "claude":
+        from broader_vids.claude_worker import resolve_settings
+
+        return resolve_settings(model, effort, environ=environ)
     env = os.environ if environ is None else environ
     if model is None or effort is None:
         thread = env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID")

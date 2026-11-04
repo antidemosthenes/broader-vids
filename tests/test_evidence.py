@@ -303,6 +303,41 @@ class CaptionTests(unittest.TestCase):
     "Optional evidence dependencies are required",
 )
 class EvidencePipelineTests(unittest.TestCase):
+    def test_assessment_usage_source_matches_saved_host(self):
+        usage = {
+            "input_tokens": 30,
+            "cached_input_tokens": 5,
+            "output_tokens": 8,
+        }
+
+        for host, expected_source in (
+            ("codex", "codex_turn_completed"),
+            ("claude", "claude_cli"),
+        ):
+            with self.subTest(host=host):
+                identifier = create_evidence(
+                    self.store,
+                    "https://www.youtube.com/watch?v=imYQJOgUx7Y",
+                    self.media,
+                    self.captions,
+                    assessment_model="claude-fixture",
+                    reasoning_effort="low",
+                    host=host,
+                )
+                prepare_evidence(self.store, identifier)
+                result = assess_evidence(
+                    self.store,
+                    identifier,
+                    "baseline",
+                    model_runner=lambda *args: (card(), usage),
+                )
+                self.assertEqual(
+                    result["state"]["assessments"]["baseline"]["usage"][
+                        "token_usage_source"
+                    ],
+                    expected_source,
+                )
+
     def test_invalid_scorecard_retry_keeps_attempts_and_receives_a_repair_hint(self):
         identifier = self.prepare()
         prompts = []

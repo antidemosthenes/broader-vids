@@ -78,6 +78,10 @@ def prepare_plan(
         raise BudgetExhausted("Exploration time budget exhausted.")
     from broader_vids.exploration.rotation import prepare_rotation
 
+    if model_runner is run_codex:
+        from broader_vids.worker_context import worker_runner
+
+        model_runner = worker_runner(run["settings"])
     prepare_rotation(store, run, save, remaining, model_runner, usage_owner)
     root = store.root / "discovery" / run["id"] / "planning"
     root.mkdir(parents=True, exist_ok=True)

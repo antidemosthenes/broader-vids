@@ -125,7 +125,39 @@ def main(archive_path):
             "installation": "AVAILABLE",
             "authentication": "ON_USE",
         }
-        assert not any(".claude-plugin/" in name for name in names)
+        claude_plugin = json.loads(
+            (root / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
+        )
+        assert claude_plugin["name"] == "broader-vids"
+        assert claude_plugin["version"] == manifest["version"]
+        assert ".claude-plugin/" in manifest["files"]
+        assert "package/.claude-plugin/plugin.json" in names
+        claude_catalog = json.loads(
+            (root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8")
+        )
+        assert claude_catalog["name"] == "broader-vids"
+        assert claude_catalog["plugins"][0]["name"] == claude_plugin["name"]
+        assert claude_catalog["plugins"][0]["source"] == {
+            "source": "npm",
+            "package": "broader-vids",
+            "version": "latest",
+            "registry": "https://registry.npmjs.org",
+        }
+        assert "package/.claude-plugin/marketplace.json" in names
+        assert "package/skills/claude-host.md" in names
+        routing = "Read [the Claude host guide](../claude-host.md) and follow it instead of the Codex-specific instructions below."
+        for skill in (
+            "broader-vids",
+            "broader-vids-setup",
+            "broader-vids-dashboard",
+            "broader-vids-reset",
+            "broader-vids-clean",
+        ):
+            skill_text = (root / "skills" / skill / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            assert routing in skill_text, f"Missing Claude host routing: {skill}"
+        assert (root / "skills/claude-host.md").is_file()
     print(
         f"Verified {Path(archive_path).name}: current source, assets, documentation links, versions and private-state exclusions."
     )

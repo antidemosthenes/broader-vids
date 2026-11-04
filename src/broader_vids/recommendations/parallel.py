@@ -22,7 +22,11 @@ from broader_vids.evidence.preparation_worker import (
 )
 from broader_vids.http import BudgetExhausted
 from broader_vids.recommendations.originality import provenance, assessment_context
-from broader_vids.recommendations.quality import cached_quality, unscored_quality
+from broader_vids.recommendations.quality import (
+    cached_quality,
+    unscored_quality,
+    compatible_quality,
+)
 from broader_vids.recommendations.retries import (
     retry_candidate,
     begin_candidate_attempt,
@@ -31,6 +35,7 @@ from broader_vids.recommendations.retries import (
 from broader_vids.storage import Store
 from broader_vids.time_budget import effective_limit, report_limit
 from broader_vids.creators import excluded as excluded_creator
+from broader_vids.worker_context import host_options
 
 
 class Runtime:
@@ -372,7 +377,9 @@ def assess_parallel(
         platform=run["platform"],
         identities=[item["canonical_id"] for item in state["shortlist"]],
     ):
-        if not child["settings"].get("local_media"):
+        if not child["settings"].get("local_media") and compatible_quality(
+            settings, child["settings"]
+        ):
             cache.setdefault(child["settings"]["identity"]["canonical_id"], []).append(
                 child["id"]
             )
@@ -507,6 +514,7 @@ def assess_parallel(
                             originality_context=context,
                             reasoning_effort=settings.get("reasoning_effort"),
                             assessment_model=settings.get("assessment_model"),
+                            **host_options(settings.get("worker_host", "codex")),
                         )
                         jobs[key] = identifier
                     child = store.get(identifier)

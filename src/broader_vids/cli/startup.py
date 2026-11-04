@@ -5,6 +5,7 @@ from broader_vids.time_budget import (
 )
 
 from broader_vids.onboarding import status as onboarding_status
+from broader_vids.worker_context import host_options, validate_host
 from broader_vids.preferences import platform_lock
 from broader_vids.preflight import preflight, charge_elapsed
 
@@ -49,6 +50,11 @@ def prepare_recommendation(store, args):
         else args.platform or onboarding_status(store.root)["default_platform"]
     )
     settings = run["settings"] if resume else {}
+    host = validate_host(
+        settings.get("worker_host", "codex")
+        if resume
+        else getattr(args, "host", "codex")
+    )
     if resume and settings["kind"] == "recommendation_batch":
         children = run["state"].get("children", {})
         if set(children) != {"youtube", "bilibili"}:
@@ -67,12 +73,15 @@ def prepare_recommendation(store, args):
             (
                 child["settings"].get("assessment_model"),
                 child["settings"].get("reasoning_effort"),
+                child["settings"].get("worker_host", "codex"),
             )
             for child in saved_children.values()
         }
         if len(pairs) != 1:
             raise ValueError("The batch has inconsistent saved model settings.")
-        model, effort = pairs.pop()
+        model, effort, child_host = pairs.pop()
+        if child_host != host:
+            raise ValueError("The batch has inconsistent saved AI hosts.")
         asr = any(
             child["settings"].get("asr_model") for child in saved_children.values()
         )
@@ -133,6 +142,7 @@ def prepare_recommendation(store, args):
         check_feedback=not resume,
         allow_missing_feedback=getattr(args, "allow_missing_feedback", False),
         max_seconds=report_limit({"max_seconds": limit}),
+        **host_options(host),
     )
     if resume:
         charge_elapsed(store, run["id"], report["elapsed_seconds"])

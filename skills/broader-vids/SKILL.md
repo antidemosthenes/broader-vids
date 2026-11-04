@@ -3,6 +3,8 @@ name: broader-vids
 description: Recommend YouTube and Bilibili videos with local evidence and feedback. Use for video discovery, recommendation rounds, video ratings, run recovery, and recommendation token reports.
 ---
 
+> **Claude Code:** Read [the Claude host guide](../claude-host.md) and follow it instead of the Codex-specific instructions below.
+
 # Broader Vids
 
 Keep launcher commands internal.

@@ -36,8 +36,12 @@ def check(tag=None):
     python = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     npm_lock = read_json(ROOT / "package-lock.json")
+    claude_plugin = read_json(ROOT / ".claude-plugin/plugin.json")
+    if claude_plugin["name"] != "broader-vids":
+        raise ValueError("The Claude plugin manifest must use the broader-vids name.")
     versions = [
         read_json(ROOT / "plugin.json")["version"],
+        claude_plugin["version"],
         python["project"]["version"],
         npm_lock["version"],
         npm_lock["packages"][""]["version"],
@@ -46,7 +50,9 @@ def check(tag=None):
     source = (ROOT / "src/broader_vids/__init__.py").read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"([^"]+)"', source)
     if not match or match[1] != version or any(v != version for v in versions):
-        raise ValueError("Node, Python, plugin, and lock-file versions must agree.")
+        raise ValueError(
+            "Node, Python, Codex, Claude, and lock-file versions must agree."
+        )
     if package.get("repository", {}).get("url") != REPOSITORY:
         raise ValueError("The release repository must match the npm trusted publisher.")
     if package.get("publishConfig") != {
@@ -66,6 +72,13 @@ def check(tag=None):
     }
     if catalog["name"] != "broader-vids" or catalog["plugins"][0]["source"] != expected:
         raise ValueError("The public catalog must track the latest public npm release.")
+    claude_catalog = read_json(ROOT / ".claude-plugin/marketplace.json")
+    if (
+        claude_catalog["name"] != "broader-vids"
+        or claude_catalog["plugins"][0]["name"] != "broader-vids"
+        or claude_catalog["plugins"][0]["source"] != expected
+    ):
+        raise ValueError("The Claude catalog must track the latest public npm release.")
     return {
         "package": "broader-vids",
         "version": version,

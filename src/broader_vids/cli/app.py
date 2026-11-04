@@ -7,6 +7,11 @@ import sqlite3
 import sys
 
 from broader_vids.cli.arguments import parser
+from broader_vids.worker_context import (
+    host_options,
+    resolve_worker_settings,
+    worker_runner,
+)
 from broader_vids.discovery.service import (
     create_discovery,
     discovery_report,
@@ -133,7 +138,9 @@ def main(argv=None):
         if args.command == "doctor":
             from broader_vids.cli.environment import environment_report
 
-            report = environment_report(data_root(args.data_dir))
+            report = environment_report(
+                data_root(args.data_dir), **host_options(args.host)
+            )
             emit(report)
             return 0 if report["local_requirements_met"] else 2
         if args.command == "queries":
@@ -198,6 +205,7 @@ def main(argv=None):
                         effort=args.effort,
                         asr_model=args.asr_model,
                         skill_namespace=args.skill_namespace,
+                        **host_options(args.host),
                     )
                     if args.format == "chat" and report.get("self_check") == "passed":
                         print(report["next_steps_message"])
@@ -214,6 +222,7 @@ def main(argv=None):
                     model=args.model,
                     effort=args.effort,
                     asr=bool(args.asr_model),
+                    **host_options(args.host),
                 )
                 emit(report)
                 return 0 if report["status"] == "ready" else 2
@@ -320,9 +329,24 @@ def main(argv=None):
                             "SELECT canonical_id FROM video_state WHERE recommended=1 UNION SELECT canonical_id FROM calibration_items UNION SELECT canonical_id FROM feedback_ratings"
                         )
                     ]
+                    options = {}
+                    if args.host == "claude":
+                        model, effort = resolve_worker_settings(
+                            args.model, args.effort, host=args.host
+                        )
+                        options["model_runner"] = worker_runner(
+                            {
+                                "worker_host": args.host,
+                                "assessment_model": model,
+                                "reasoning_effort": effort,
+                            }
+                        )
                     emit(
                         annotate_videos(
-                            store, keys[: args.max_videos], max_seconds=args.max_seconds
+                            store,
+                            keys[: args.max_videos],
+                            max_seconds=args.max_seconds,
+                            **options,
                         )
                     )
                     ensure_model(store)
@@ -332,7 +356,18 @@ def main(argv=None):
                     from broader_vids.learning.evidence import repair_pending
 
                     result = repair_pending(
-                        store, max_seconds=args.max_seconds, max_videos=args.max_videos
+                        store,
+                        max_seconds=args.max_seconds,
+                        max_videos=args.max_videos,
+                        **(
+                            {
+                                "host": args.host,
+                                "assessment_model": args.model,
+                                "reasoning_effort": args.effort,
+                            }
+                            if args.host == "claude"
+                            else {}
+                        ),
                     )
                     emit(result)
                     return 0 if not result["remaining"] else 2
@@ -394,6 +429,7 @@ def main(argv=None):
                         workers=args.workers,
                         reasoning_effort=args.effort,
                         assessment_model=args.model,
+                        **host_options(args.host),
                     )
                 else:
                     run_id = args.run_id
@@ -508,6 +544,7 @@ def main(argv=None):
                         args.workers,
                         args.effort,
                         assessment_model=args.model,
+                        **host_options(args.host),
                     )
                 else:
                     run_id = args.run_id
@@ -564,6 +601,7 @@ def main(argv=None):
                         args.max_mib,
                         args.max_seconds,
                         assessment_model=args.model,
+                        **host_options(args.host),
                         reasoning_effort=args.effort,
                     )
                     prepare_evidence(store, run_id, args.asr_model)
@@ -624,6 +662,7 @@ def main(argv=None):
                         seed=args.seed,
                         max_planning_calls=args.max_planning_calls,
                         assessment_model=args.model,
+                        **host_options(args.host),
                         reasoning_effort=args.effort,
                     )
                     if args.command == "discover"

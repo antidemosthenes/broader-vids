@@ -5,7 +5,7 @@ Broader Vids provides an alternative recommendation algorithm for YouTube and Bi
 **Your dashboard ratings calibrate the plugin’s internal scoring models to your preferences.**
 You can exclude creators and tags from future rounds. Each complete round recommends ten videos per selected platform.
 
-The plugin runs locally through Codex CLI or Codex in the ChatGPT desktop app. Recommendations appear in chat. A local dashboard manages ratings, exclusions, and preferences.
+The plugin runs locally through Codex CLI or Codex in the ChatGPT desktop app. Recommendations appear in chat. A local dashboard manages ratings, exclusions, and preferences. Claude Code packaging is experimental. Static package checks and launcher fixtures cover it. No Claude host acceptance test has been performed.
 
 ## Requirements
 
@@ -47,6 +47,11 @@ npx --yes broader-vids@latest plugin install
 This command registers an npm backed marketplace and installs the plugin skills and dashboard. Start a new conversation after installation.
 
 The desktop app accepts repository URLs in **Add marketplace**. Use the npm command for npm installation. See the [plugin packaging guide](https://developers.openai.com/plugins/build/plugins) for supported sources.
+
+
+### Experimental Claude Code path
+
+Claude Code support is experimental. Static package checks and launcher fixtures cover it. No host acceptance test has been performed. These installation steps require a future npm release that contains the Claude files. See the [Claude Code installation notes](docs/REFERENCE.md#experimental-claude-code-installation).
 
 ## Update the plugin
 

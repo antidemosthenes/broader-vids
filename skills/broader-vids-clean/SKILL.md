@@ -3,6 +3,8 @@ name: broader-vids-clean
 description: Remove the complete Broader Vids data directory while retaining the installed plugin. Use only for full local-data removal, not routine media cleanup.
 ---
 
+> **Claude Code:** Read [the Claude host guide](../claude-host.md) and follow it instead of the Codex-specific instructions below.
+
 # Clean Broader Vids data
 
 Keep launcher commands internal.

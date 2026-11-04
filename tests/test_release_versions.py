@@ -42,6 +42,10 @@ def make_repo(root: Path, version: str = "0.1.0") -> dict[str, str]:
             {"name": "broader-vids", "version": version, "custom": [1, 2]}, indent=2
         )
         + "\n",
+        ".claude-plugin/plugin.json": json.dumps(
+            {"name": "broader-vids", "version": version}, indent=2
+        )
+        + "\n",
         "pyproject.toml": f'[project]\nname = "broader-vids"\nversion = "{version}"\ndescription = "kept"\n\n[tool.other]\nversion = "7.8.9"\n',
         "uv.lock": f'version = 1\n\n[[package]]\nname = "broader-vids"\nversion = "{version}"\nsource = {{ editable = "." }}\n\n[[package]]\nname = "some-dependency"\nversion = "9.8.7"\n',
         "src/broader_vids/__init__.py": f'__version__ = "{version}"\nVALUE = "preserved"\n',
@@ -71,6 +75,12 @@ class ReleaseVersionTests(unittest.TestCase):
         self.assertEqual(result, {"version": VERSION, "files": list(versioning._FILES)})
         package = json.loads((self.root / "package.json").read_text(encoding="utf-8"))
         self.assertEqual(package["version"], VERSION)
+        self.assertEqual(
+            json.loads(
+                (self.root / ".claude-plugin/plugin.json").read_text(encoding="utf-8")
+            )["version"],
+            VERSION,
+        )
         self.assertIn(f"python/broader_vids-{VERSION}-*.whl", package["files"])
         self.assertEqual(package["extra"], {"kept": True})
         lock = json.loads((self.root / "package-lock.json").read_text(encoding="utf-8"))
