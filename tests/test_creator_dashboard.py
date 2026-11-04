@@ -12,6 +12,55 @@ from test_dashboard_feedback import (
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
 class CreatorDashboardTests(unittest.TestCase):
+    def test_creator_changes_do_not_overlap_across_navigation_and_keep_drafts(self):
+        with dashboard_fixture() as (page, _):
+            inspector = open_first(page)
+            topic = inspector.get_by_role("group", name="Specific topic", exact=True)
+            topic.get_by_label("Topic", exact=True).fill("Draft across creator update")
+            checkbox = inspector.get_by_role(
+                "checkbox", name="Exclude this creator from future rounds"
+            )
+            checkbox.check()
+            page.wait_for_function(
+                "() => { const input = document.querySelector('.creator-rule input'); return input.checked && !input.disabled; }"
+            )
+
+            pending = []
+
+            def hold_creator_update(route):
+                if route.request.post_data_json["action"] == "creator_rule":
+                    pending.append(route)
+                else:
+                    route.continue_()
+
+            page.route("**/api/action", hold_creator_update)
+            try:
+                with page.expect_request("**/api/action"):
+                    checkbox.uncheck()
+                self.assertTrue(checkbox.is_disabled())
+                page.get_by_role("navigation").get_by_role(
+                    "button", name="Exclusions", exact=True
+                ).click()
+                remove = page.get_by_role("button", name="Remove", exact=True)
+                self.assertTrue(remove.is_disabled())
+                self.assertEqual(len(pending), 1)
+                pending.pop().continue_()
+                page.get_by_text(
+                    "No creator exclusions on YouTube.", exact=True
+                ).wait_for()
+            finally:
+                for route in pending:
+                    route.abort()
+                page.unroute("**/api/action", hold_creator_update)
+
+            page.get_by_role("navigation").get_by_role(
+                "button", name="Recommendations", exact=True
+            ).click()
+            self.assertEqual(
+                topic.get_by_label("Topic", exact=True).input_value(),
+                "Draft across creator update",
+            )
+
     def test_exclusions_share_state_preserve_drafts_and_restore_failed_updates(self):
         with dashboard_fixture() as (page, directory):
             inspector = open_first(page)

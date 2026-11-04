@@ -81,7 +81,10 @@ def record_review(store, identifier, evidence_run):
             "Metadata changed during evidence review; no calibration features were replaced."
         )
     features = capture({**identity, "engagement": metadata}, observation)
-    quality = {key: features[key] for key in QUALITY_FIELDS}
+    quality = {
+        **{key: features[key] for key in QUALITY_FIELDS},
+        "missing_captions_penalty": features.get("missing_captions_penalty", 0),
+    }
     previous = latest_revisions(store, [identity["canonical_id"]]).get(
         identity["canonical_id"]
     )

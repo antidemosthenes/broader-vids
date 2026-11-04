@@ -325,7 +325,7 @@ export function createExclusions(actions) {
         const key =
           kind === "tags"
             ? `tag:${platform}:${entry.tag}`
-            : `removecreator:${platform}:${entry.creator_id}`;
+            : `creator:${platform}:${entry.creator_id}`;
         const remove = button(
           kind === "creators" && entry.imported
             ? "Remove manual rule"

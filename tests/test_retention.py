@@ -178,7 +178,11 @@ class RetentionTests(unittest.TestCase):
         verify_bundle(self.store, self.store.get(repaired))
 
     def test_calibration_revision_preserves_votes_and_original_scorecards(self):
-        from broader_vids.learning.evidence import record_review, latest_revisions
+        from broader_vids.learning.evidence import (
+            record_review,
+            latest_revisions,
+            effective_features,
+        )
         from broader_vids.learning.service import capture_rating, source_data
         from broader_vids.preferences import user_action, set_profile
         from broader_vids.recommendations.originality import assessment_context
@@ -248,7 +252,14 @@ class RetentionTests(unittest.TestCase):
         self.assertFalse(
             source_data(self.store)["ratings"][0]["quality_review_pending"]
         )
-        self.assertEqual(len(latest_revisions(self.store)), 1)
+        revisions = latest_revisions(self.store)
+        self.assertEqual(len(revisions), 1)
+        self.assertEqual(
+            effective_features(
+                {"missing_captions_penalty": 10}, revisions[identity["canonical_id"]]
+            )["missing_captions_penalty"],
+            0,
+        )
 
     def test_automatic_cleanup_retains_verified_quality_and_prevents_new_calls(self):
         result = self.assess()

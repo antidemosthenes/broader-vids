@@ -7,7 +7,11 @@ import time
 import unittest
 from unittest.mock import patch
 
-from broader_vids.evidence.media import EvidencePending, VideoFetcher
+from broader_vids.evidence.media import (
+    EvidencePending,
+    VideoFetcher,
+    estimated_media_bytes,
+)
 from broader_vids.evidence.failures import failure_details
 
 
@@ -214,20 +218,160 @@ class DownloadStabilityTests(unittest.TestCase):
         self.assertLess(info["filesize_approx"], fetcher.byte_limit)
 
     def test_oversized_streams_stop_before_transfer_with_exact_or_estimated_size(self):
-        for field in ("filesize", "filesize_approx"):
-            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+        cases = (
+            {"filesize": 2 * 1024 * 1024},
+            {"filesize_approx": 2 * 1024 * 1024},
+            {"duration": 3862, "tbr": 853.257},
+            {
+                "duration": 60,
+                "requested_formats": [
+                    {"url": "https://example.invalid/video", "tbr": 80},
+                    {"url": "https://example.invalid/audio", "tbr": 80},
+                ],
+            },
+        )
+        for details in cases:
+            with (
+                self.subTest(details=details),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 fetcher, seen = self.fetcher(directory, [])
                 with self.assertRaises(EvidencePending) as caught:
                     fetcher.download(
                         {
                             "url": "https://example.invalid/video",
-                            field: 2 * 1024 * 1024,
+                            **details,
                         },
                         directory,
                     )
                 self.assertEqual(caught.exception.category, "media_size")
                 self.assertFalse(caught.exception.retryable)
                 self.assertEqual(seen, [])
+
+    def test_budget_fallback_survives_reselection_and_preserves_partial_formats(self):
+        for audio in (False, True):
+            with self.subTest(audio=audio), tempfile.TemporaryDirectory() as directory:
+                fetcher = VideoFetcher(1024 * 1024, time.monotonic() + 30)
+                self.addCleanup(fetcher.close)
+                fetcher.configure_audio(audio)
+                fetcher.ydl.params["check_formats"] = False
+                formats = [
+                    {
+                        "format_id": name,
+                        "url": f"https://example.invalid/{name}.mp4",
+                        "height": height,
+                        "width": 640,
+                        "ext": "mp4",
+                        "vcodec": "h264",
+                        "acodec": "none",
+                        "tbr": bitrate,
+                        **(
+                            {
+                                "fragments": [{"url": "https://example.invalid/old"}],
+                                "backup_urls": ["https://example.invalid/old-backup"],
+                            }
+                            if name == "large"
+                            else {}
+                        ),
+                    }
+                    for name, height, bitrate in (
+                        ("large", 240, 200),
+                        ("smaller", 360, 60),
+                    )
+                ]
+                if audio:
+                    formats.append(
+                        {
+                            "format_id": "audio",
+                            "url": "https://example.invalid/audio.m4a",
+                            "ext": "m4a",
+                            "vcodec": "none",
+                            "acodec": "aac",
+                            "tbr": 16,
+                        }
+                    )
+
+                def metadata(available_formats):
+                    return fetcher.ydl.process_ie_result(
+                        {
+                            "id": "fixture",
+                            "title": "Fixture",
+                            "duration": 60,
+                            "extractor": "Youtube",
+                            "extractor_key": "Youtube",
+                            "formats": [dict(stream) for stream in available_formats],
+                        },
+                        download=False,
+                    )
+
+                info = metadata(formats)
+                self.assertGreater(estimated_media_bytes(info), fetcher.byte_limit)
+                selected = fetcher.fit_format_to_budget(info, directory)
+                streams = selected.get("requested_formats") or [selected]
+                self.assertEqual(
+                    [s["format_id"] for s in streams],
+                    ["smaller", "audio"] if audio else ["smaller"],
+                )
+                self.assertLessEqual(
+                    estimated_media_bytes(selected), fetcher.byte_limit
+                )
+                self.assertEqual(
+                    estimated_media_bytes(selected), 570000 if audio else 450000
+                )
+                self.assertTrue(
+                    all(
+                        "fragments" not in s and "backup_urls" not in s for s in streams
+                    )
+                )
+                previous_selection = [
+                    {
+                        key: stream.get(key)
+                        for key in (
+                            "format_id",
+                            "width",
+                            "height",
+                            "vcodec",
+                            "acodec",
+                            "tbr",
+                        )
+                    }
+                    for stream in streams
+                ]
+                partial = Path(directory) / "media.mp4.part"
+                partial.write_bytes(b"partial")
+                fresh_info = metadata(formats)
+                resumed = fetcher.fit_format_to_budget(
+                    fresh_info, directory, previous_selection=previous_selection
+                )
+                resumed_streams = resumed.get("requested_formats") or [resumed]
+                self.assertEqual(
+                    [stream["format_id"] for stream in resumed_streams],
+                    [stream["format_id"] for stream in streams],
+                )
+                self.assertEqual(partial.read_bytes(), b"partial")
+                unavailable = [
+                    stream for stream in formats if stream["format_id"] != "smaller"
+                ]
+                with self.assertRaises(EvidencePending) as caught:
+                    fetcher.fit_format_to_budget(
+                        metadata(unavailable),
+                        directory,
+                        previous_selection=previous_selection,
+                    )
+                self.assertEqual(caught.exception.category, "media_transfer")
+                partial.unlink()
+                seen = []
+
+                def transfer(result):
+                    seen.extend(
+                        s["format_id"]
+                        for s in result.get("requested_formats") or [result]
+                    )
+                    (Path(directory) / "media.mp4").write_bytes(b"fixture")
+
+                with patch.object(fetcher.ydl, "process_info", side_effect=transfer):
+                    fetcher.download(selected, directory)
+                self.assertEqual(seen, ["smaller", "audio"] if audio else ["smaller"])
 
     def test_access_challenge_is_not_retried(self):
         with tempfile.TemporaryDirectory() as directory:

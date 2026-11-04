@@ -41,6 +41,27 @@ VIDEO_FORMAT = (
 )
 
 
+def estimated_media_bytes(info, duration=None):
+    if duration is None:
+        duration = info.get("duration")
+    streams = info.get("requested_formats")
+    if streams:
+        sizes = [estimated_media_bytes(stream, duration) for stream in streams]
+        return sum(sizes) if all(size is not None for size in sizes) else None
+    for field in ("filesize", "filesize_approx"):
+        size = info.get(field)
+        if type(size) in {int, float} and math.isfinite(size) and size > 0:
+            return math.ceil(size)
+    rate = info.get("tbr")
+    if all(
+        type(value) in {int, float} and math.isfinite(value) and value > 0
+        for value in (duration, rate)
+    ):
+        size = duration * rate * 125
+        return math.ceil(size) if math.isfinite(size) else None
+    return None
+
+
 def public_error(error):
     message = re.sub(r"\x1b\[[0-9;]*m", "", str(error))
     message = re.sub(r"https?://\S+", "<url>", message)
@@ -588,6 +609,90 @@ class VideoFetcher:
                 )
         return info
 
+    def fit_format_to_budget(self, info, directory, previous_selection=None):
+        size = estimated_media_bytes(info)
+        if any(path.is_file() for path in Path(directory).glob("media.*")):
+            return self._restore_partial_selection(info, previous_selection)
+        if size is None or size <= self.byte_limit:
+            return info
+        duration = info.get("duration")
+        sized_formats = []
+        for stream in info.get("formats") or []:
+            size = estimated_media_bytes(stream, duration)
+            if size is None or size <= self.byte_limit:
+                sized_formats.append(
+                    (size if size is not None else float("inf"), stream)
+                )
+        formats = [
+            stream for _, stream in sorted(sized_formats, key=lambda item: item[0])
+        ]
+        for selected in self.ydl._select_formats(formats, self.ydl.format_selector):
+            required = estimated_media_bytes(selected, duration)
+            if required is not None and required > self.byte_limit:
+                continue
+            return self._with_selected_format(info, selected)
+        return info
+
+    def _restore_partial_selection(self, info, previous_selection):
+        if not isinstance(previous_selection, list) or not previous_selection:
+            raise EvidencePending(
+                "The saved media selection is unavailable; the partial download cannot be resumed safely.",
+                category="media_transfer",
+            )
+        formats = info.get("formats") or []
+        matched = []
+        for previous in previous_selection:
+            if not isinstance(previous, dict) or not isinstance(
+                previous.get("format_id"), str
+            ):
+                raise EvidencePending(
+                    "The saved media selection is invalid; the partial download cannot be resumed safely.",
+                    category="media_transfer",
+                )
+            selected = next(
+                (
+                    stream
+                    for stream in formats
+                    if stream.get("format_id") == previous["format_id"]
+                    and all(
+                        previous.get(key) is None or stream.get(key) == previous[key]
+                        for key in ("width", "height", "vcodec", "acodec")
+                    )
+                ),
+                None,
+            )
+            if selected is None:
+                raise EvidencePending(
+                    "A previously selected media format is no longer offered; its partial download cannot be resumed safely.",
+                    category="media_transfer",
+                )
+            matched.append(selected)
+        expected_ids = sorted(previous["format_id"] for previous in previous_selection)
+        for selected in self.ydl._select_formats(matched, self.ydl.format_selector):
+            streams = selected.get("requested_formats") or [selected]
+            if sorted(stream.get("format_id") for stream in streams) != expected_ids:
+                continue
+            if self.audio_required and not any(
+                stream.get("acodec") not in {None, "none"} for stream in streams
+            ):
+                continue
+            return self._with_selected_format(info, selected)
+        raise EvidencePending(
+            "The saved media formats cannot be reconstructed; the partial download cannot be resumed safely.",
+            category="media_transfer",
+        )
+
+    def _with_selected_format(self, info, selected):
+        stale = self.ydl._format_fields | {
+            "requested_formats",
+            "requested_downloads",
+            "backup_urls",
+        }
+        result = {key: value for key, value in info.items() if key not in stale}
+        result.update(selected)
+        result["formats"] = selected.get("requested_formats") or [selected]
+        return result
+
     def captions(self, info, directory, platform):
         from broader_vids.evidence.captions import caption_tracks
 
@@ -663,18 +768,12 @@ class VideoFetcher:
             }
         )
         templates = info.get("requested_formats") or [info]
-        sizes = [
-            stream.get("filesize") or stream.get("filesize_approx")
-            for stream in templates
-        ]
+        size = estimated_media_bytes(info)
         present = sum(
             p.stat().st_size for p in Path(directory).glob("media.*") if p.is_file()
         )
-        if all(
-            type(size) in {int, float} and math.isfinite(size) and size > 0
-            for size in sizes
-        ):
-            required = max(0, sum(sizes) - present)
+        if size is not None:
+            required = max(0, size - present)
             if required > self.byte_limit:
                 raise EvidencePending(
                     f"Selected streams need approximately {required} new bytes but only {self.byte_limit} bytes remain.",

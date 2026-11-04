@@ -131,7 +131,12 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     fs.writeFileSync(path.join(python, 'asr-requirements.txt'), '');
     const { main } = loadMain([]);
 
-    main(['--data-dir', profile, 'setup', '--evidence']);
+    const invalidProfile = path.join(directory, 'invalid setup profile');
+    assert.throws(() => main(['setup', '--data-dir', invalidProfile, '--evidnce']), /optional --evidence, --asr/);
+    assert.deepEqual(calls, []);
+    assert.equal(fs.existsSync(invalidProfile), false);
+
+    main(['setup', '--evidence', '--data-dir', profile]);
     const firstReceipt = JSON.parse(fs.readFileSync(receipt, 'utf8'));
     const firstDigest = require('../bin/broader-vids.cjs').wheelDigest(wheel);
     assert.equal(firstReceipt.version, 2);

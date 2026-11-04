@@ -101,6 +101,21 @@ function commandIndex(args) {
   return -1;
 }
 
+function validateSetupArguments(args, index) {
+  for (let item = index + 1; item < args.length; item += 1) {
+    const value = args[item];
+    if (value === "--asr" || value === "--evidence") continue;
+    if (value === "--data-dir") {
+      item += 1;
+      continue;
+    }
+    if (value.startsWith("--data-dir=")) continue;
+    throw new Error(
+      "Use setup with optional --evidence, --asr, and --data-dir PATH.",
+    );
+  }
+}
+
 function invoke(command, args) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
@@ -306,7 +321,8 @@ function main(args = process.argv.slice(2)) {
     if (result.status === "partial") process.exitCode = 2;
     return;
   }
-  if (args[commandIndex(args)] === "setup") {
+  if (args[index] === "setup") {
+    validateSetupArguments(args, index);
     const sourceWheel = bundledWheel(packageRoot, manifest.version);
     const wheelRoot = path.dirname(sourceWheel);
     return withSetup(root, () => {

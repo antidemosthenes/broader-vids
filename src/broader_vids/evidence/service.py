@@ -17,6 +17,7 @@ from broader_vids.evidence.media import (
     VideoFetcher,
     compact_captions,
     extract_frame,
+    estimated_media_bytes,
     file_hash,
     image_fingerprint,
     parse_captions,
@@ -410,13 +411,16 @@ def prepare_evidence(
                     if hasattr(fetcher, "configure_audio"):
                         fetcher.configure_audio(bool(asr_model))
                     stage("metadata")
+                    previous_selection = (state.get("metadata") or {}).get(
+                        "selected_streams"
+                    )
                     info = fetcher.metadata(settings["identity"])
+                    if hasattr(fetcher, "fit_format_to_budget"):
+                        info = fetcher.fit_format_to_budget(
+                            info, root, previous_selection=previous_selection
+                        )
                     streams = info.get("requested_formats") or [info]
                     sizes = [s.get("filesize") for s in streams]
-                    estimates = [
-                        stream.get("filesize") or stream.get("filesize_approx")
-                        for stream in streams
-                    ]
                     state["metadata"] = {
                         "title": info.get("title", ""),
                         "duration_seconds": info["duration"],
@@ -439,14 +443,7 @@ def prepare_evidence(
                             }
                             for stream in streams
                         ],
-                        "selected_stream_bytes_estimate": sum(estimates)
-                        if all(
-                            type(size) in {int, float}
-                            and math.isfinite(size)
-                            and size > 0
-                            for size in estimates
-                        )
-                        else None,
+                        "selected_stream_bytes_estimate": estimated_media_bytes(info),
                         "selected_stream_bytes": sum(sizes)
                         if all(type(n) is int and n > 0 for n in sizes)
                         else None,

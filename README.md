@@ -1,33 +1,31 @@
 # Broader Vids
 
-Broader Vids provides an alternative recommendation algorithm for YouTube and Bilibili.
-It combines your interests, exploration of unfamiliar topics, video quality, and feedback.
+Broader Vids provides an alternative recommendation algorithm for YouTube and Bilibili. It combines your interests, exploration of unfamiliar topics, and video quality.
 
-**The plugin learns from your dashboard ratings and calibrates its internal scoring model weights to your preferences.**
-You can manually exclude creators and tags from future rounds.
-Each complete round recommends ten videos per selected platform.
+**Your dashboard ratings calibrate the plugin’s internal scoring models to your preferences.**
+You can exclude creators and tags from future rounds. Each complete round recommends ten videos per selected platform.
 
-The plugin runs locally through Codex CLI or Codex in the ChatGPT desktop app.
-Recommendations appear in chat. A local dashboard provides ratings, exclusions, and preferences.
+The plugin runs locally through Codex CLI or Codex in the ChatGPT desktop app. Recommendations appear in chat. A local dashboard manages ratings, exclusions, and preferences.
+
+## Requirements
+
+Use Windows, PowerShell, Node.js 20 or later with npm, UV, and Codex CLI signed in with ChatGPT. Installation and recommendations require internet access.
 
 ## Install the plugin
 
-Requirements: Windows, PowerShell, Node.js 20 or later with npm, UV, and Codex CLI authenticated with ChatGPT.
-Installation and recommendations require internet access.
-Choose one installation method. Neither method requires a checkout, build, or local folder selection.
+Choose one of these three remote installation routes. You do not need a repository checkout or a local build.
 
-### From GitHub in the ChatGPT desktop app
+### ChatGPT desktop app
 
 1. Open the plugin marketplace controls in Codex.
-2. Select **Add marketplace** and its repository or Git URL option.
+2. Select **Add marketplace** and choose its repository or Git URL option.
 3. Enter `https://github.com/antidemosthenes/broader-vids`.
-4. Add or sync the marketplace.
-5. Select **Broader Vids** and install it.
-6. Start a new conversation.
+4. Add or sync the marketplace. Then install **Broader Vids**.
+5. Start a new conversation.
 
-The GitHub repository supplies the catalog. Its plugin entry downloads the complete package from npm.
+The GitHub repository provides the catalog. The catalog downloads the plugin package from npm.
 
-### From GitHub in Codex CLI
+### Codex CLI from GitHub
 
 Run these commands in PowerShell:
 
@@ -38,7 +36,7 @@ codex plugin add broader-vids@broader-vids
 
 Start a new conversation after installation.
 
-### From npm
+### npm
 
 Run this command in PowerShell:
 
@@ -46,88 +44,42 @@ Run this command in PowerShell:
 npx --yes broader-vids@latest plugin install
 ```
 
-This command registers an npm-backed marketplace and installs the plugin through Codex.
-It installs the skills and dashboard, not only the terminal launcher.
-It does not require the GitHub catalog.
-Restart the desktop app or start a new Codex CLI conversation after installation.
+This command registers an npm backed marketplace and installs the plugin skills and dashboard. Start a new conversation after installation.
 
-The app's Add marketplace field accepts repository URLs, not npm package names.
-Use the npm command above for that installation route.
-See the [official packaging guide](https://developers.openai.com/plugins/build/plugins) for supported plugin sources.
+The desktop app accepts repository URLs in **Add marketplace**. Use the npm command for npm installation. See the [plugin packaging guide](https://developers.openai.com/plugins/build/plugins) for supported sources.
 
 ## Update the plugin
 
-For a GitHub installation, refresh its marketplace and install the current release:
+Follow [Update an installed plugin](docs/REFERENCE.md#update-an-installed-plugin) for update steps.
 
-```powershell
-codex plugin marketplace upgrade broader-vids
-codex plugin add broader-vids@broader-vids
-```
+## Set up and use Broader Vids
 
-For an npm installation, repeat the installation command:
+Start a new conversation and invoke the setup skill. Choose YouTube, Bilibili, or both. Then choose starter preferences, enter interests, or import a preference file. Setup checks dependencies and access. It gives repair steps when a required check fails.
 
-```powershell
-npx --yes broader-vids@latest plugin install
-```
-
-In the desktop app, refresh the marketplace and select the current Broader Vids release.
-If the app provides no update action, use the terminal commands for your installation method.
-Start a new conversation and run setup after an update.
-Setup installs the matching engine and preserves your saved profile.
-Finish active recommendations and close the dashboard before updating.
-
-## Set up and request recommendations
-
-Use this procedure for either platform or both:
-
-1. Start a new conversation. Invoke the setup skill from the table below.
-2. Choose YouTube, Bilibili, or both.
-3. Choose calibrated starter preferences, enter your interests, or import a preference file.
-4. Complete the dependency and access checks. Setup gives repair steps for required failures.
-5. Invoke the recommendation skill. Review the links and summaries in chat.
-6. Open the dashboard to mark watched videos and rate their topic, subject, depth, and quality.
-7. Request another round when you want more recommendations.
-
-Existing profiles can keep their saved preferences during setup.
-Saving ratings updates the local preference and quality models.
-Their learned weights affect screening and final ranking in later rounds.
-Creator and tag exclusions apply to the next new round.
-The dashboard **Preferences** page lets you edit interests and import or export preferences and learned weights.
-Before a new round, incomplete feedback prompts you to open the dashboard or continue.
-
-Both platforms support manual creator and tag exclusions.
-YouTube tag rules match available creator-supplied keyword tags, which differ from visible hashtags.
-Bilibili rules match its video tags.
-Search queries use English for YouTube and Simplified Chinese for Bilibili.
+Invoke the recommendation skill to request a round. Review recommendations in chat. Open the dashboard to mark videos as watched and rate topic, subject, depth, and quality. Ratings update local preference and quality models. Their learned weights affect later rounds. Creator and tag exclusions apply to the next new round.
 
 | Action | Skill command | Purpose |
 | --- | --- | --- |
-| Setup | `$broader-vids-setup` | Choose platforms and preferences, install required tools, and check access. |
-| Recommendations | `$broader-vids` | Request a round for your saved platforms. |
-| Dashboard | `$broader-vids-dashboard` | Rate videos, manage exclusions, and edit preferences. |
-| Reset | `$broader-vids-reset` | Preview removal of preferences, weights, ratings, and histories while keeping tools and sign-in. |
-| Clean | `$broader-vids-clean` | Preview removal of all managed local data, including tools and sign-in. |
+| Setup | `$broader-vids-setup` | Choose platforms and preferences. Install tools and check access. |
+| Recommendations | `$broader-vids` | Request videos for your saved platforms. |
+| Dashboard | `$broader-vids-dashboard` | Rate videos. Manage exclusions and preferences. |
+| Reset | `$broader-vids-reset` | Preview removal of preferences, weights, ratings, and histories. Keep tools and sign-in. |
+| Clean | `$broader-vids-clean` | Preview removal of all managed data, including tools and sign-in. |
 
-Use the command names shown by your host's skill menu.
-Some hosts add the plugin namespace, such as `$broader-vids:broader-vids-dashboard`.
-You can also ask: “Use Broader Vids to recommend videos” or “Use Broader Vids to open my dashboard.”
+Use the skill commands shown in your host's skill menu. Some hosts add the plugin namespace, such as `$broader-vids:broader-vids-dashboard`. You can also ask Broader Vids to recommend videos or open the dashboard.
+
 Reset and Clean require confirmation. Neither action uninstalls the plugin.
 
 ## Bilibili access and exclusions
 
-Bilibili requires manual sign-in for full-video evidence.
-Setup opens a separate browser window.
-Keep that window open after sign-in and return to chat to report completion.
-The plugin verifies the session and closes the window.
-You can switch accounts later from the dashboard.
+Bilibili needs manual sign-in for full video evidence. Setup opens a separate browser. Keep it open after sign-in, then report completion in chat. Broader Vids checks the session and closes the browser. You can switch accounts from the dashboard.
 
-Bilibili imports your account blacklist after verified sign-in and before new rounds.
-Imported creator exclusions combine with your manual exclusions.
-A failed sync preserves the last complete copy.
-Use **Sync blacklist** in the dashboard to retry.
+Broader Vids imports your account blacklist after sign-in checks and before new rounds. Imported creator exclusions combine with your manual exclusions. A failed sync keeps the last complete copy. Use **Sync blacklist** in the dashboard to retry.
 
-See the [workflow](docs/WORKFLOW.md) for recommendation steps and the [scoring guide](docs/SCORING.md) for ranking and learning.
-The [reference](docs/REFERENCE.md) covers terminal commands, troubleshooting, local builds, and maintenance.
-The [architecture](docs/ARCHITECTURE.md) describes the launcher, engine, and local storage.
+## Architecture and guides
+
+The Node launcher manages a versioned local Python engine, which stores profile data locally and serves the dashboard.
+
+Read the [workflow](docs/WORKFLOW.md) for recommendation steps. Read the [scoring guide](docs/SCORING.md) for ranking and learning. The [reference](docs/REFERENCE.md) covers commands, troubleshooting, updates, and maintenance. The [architecture guide](docs/ARCHITECTURE.md) describes the launcher, engine, and local storage.
 
 License: [MIT](LICENSE).

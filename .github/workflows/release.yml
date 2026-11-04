@@ -70,8 +70,18 @@ jobs:
           node-version: "24"
       - run: uv sync --locked --extra evidence
       - run: npm ci --ignore-scripts
-      - name: Install Chromium headless shell and dependencies
+      - name: Install Chromium headless shell and dependencies on Linux
+        if: runner.os == 'Linux'
         run: uv run --no-sync playwright install --with-deps --only-shell chromium
+      - name: Install Chromium headless shell on Windows
+        if: runner.os == 'Windows'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          uv run --no-sync playwright install --only-shell chromium
+          if ($LASTEXITCODE -ne 0) {
+            uv run --no-sync playwright install --with-deps --only-shell chromium
+          }
+          exit $LASTEXITCODE
       - name: Check runtime dependency files are tracked
         run: git ls-files --error-unmatch python/core-requirements.txt python/evidence-requirements.txt python/asr-requirements.txt
       - run: uv run --no-sync ruff check src tests scripts

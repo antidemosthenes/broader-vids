@@ -68,6 +68,7 @@ broader-vids/
     asr-requirements.txt        Locked transcription dependencies
     *.whl                      Generated engine package, excluded from Git
   scripts/
+    release.py                 Build, verify, and synchronize release artifacts
     release_ci.py              Patch planning, publication checks, and GitHub assets
     versioning.py              Validated release metadata synchronization
     test.py                    Isolated parallel regression runner
@@ -174,6 +175,7 @@ Refresh requests carry a read version and a mutation generation.
 Only one refresh group runs at a time.
 A refresh requested during an active read waits until that read finishes.
 Old video records stay in browser memory only while the server returns them, an earlier list uses them, or they have an unsaved rating draft.
+The interface removes saved-status notes and inspector positions when their videos leave all retained lists and drafts.
 The interface rejects responses from before a newer mutation.
 It pauses background refresh while the tab is hidden or a write is active.
 Refresh preserves active controls and pane positions.
@@ -261,7 +263,8 @@ Preference transfer accepts format 4 with learning model version 8 and feature v
 Manual creator rules transfer separately from learning parameters and replace the manual lists transactionally on import.
 The export omits account-specific blacklist copies and sign-in data.
 It includes a bounded exploration summary with at most 1,024 nodes and aggregate counts and round ages.
-It excludes individual video history.
+It includes watched video IDs without titles, ratings, or recommendation records.
+Import adds their watched state without clearing local video states.
 It does not change SQLite schema 12.
 A completed `preference_import` job stores the imported parameter baseline and local feedback cutoff.
 Fitting combines that baseline with active ratings saved after the cutoff.
@@ -275,11 +278,11 @@ Input validation runs once per terminal or HTTP request.
 Failed imports remove unused recovery files.
 Import also removes obsolete model caches while preserving models referenced by recommendations or frozen evaluations.
 An uncertain commit retains its recovery file.
-Parameter-only recovery files reside in `backups/`.
+Preference recovery files reside in `backups/` and include prior watched IDs and manual creator rules.
 The dashboard uses authenticated local POST operations for export, preview, and import.
 The transfer dialog preserves rating drafts and blocks stale polling responses during an operation.
 
-Evidence corrections add derived records.
+Evidence corrections add derived records, including the current missing-caption deduction.
 They do not overwrite original scorecards or user ratings.
 
 The Preferences page uses `preferences.js` to coordinate `/api/interests` and the preference-transfer endpoints.
