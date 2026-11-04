@@ -1,6 +1,6 @@
 {
   "name": "broader-vids",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
   "license": "MIT",
   "engines": {
@@ -11,7 +11,7 @@
   },
   "files": [
     "bin/",
-    "python/broader_vids-0.1.2-*.whl",
+    "python/broader_vids-0.1.3-*.whl",
     "python/core-requirements.txt",
     "python/evidence-requirements.txt",
     "python/asr-requirements.txt",
@@ -46,6 +46,6 @@
     "tag": "latest"
   },
   "broaderVidsRelease": {
-    "sourceCommit": "004e0c26e30c495b1888c0c92fd1d77fac464c61"
+    "sourceCommit": "e46084f800475c5a9aa1a90160ec8e088ed26eee"
   }
 }
