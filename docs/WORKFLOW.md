@@ -6,7 +6,7 @@ See the [terminal reference](REFERENCE.md) for commands.
 
 ## 1. Complete setup and check readiness
 
-Use the [README](../README.md#update-the-plugin) to update an installed plugin.
+Use the [update procedure](REFERENCE.md#update-an-installed-plugin) to update an installed plugin.
 Finish active work before updating. Start a new conversation and run setup to prepare the matching engine.
 Setup preserves the existing profile unless you explicitly request Reset or Clean.
 
@@ -131,7 +131,7 @@ The two-platform command runs these paths with shared workers and an optional to
 ```mermaid
 flowchart TD
   S["Recommendation request"] --> T{"Onboarding complete?"}
-  T -- No --> U["Introduce features; choose platforms; import preferences or enter interests"]
+  T -- No --> U["Introduce features; choose platforms; choose a starter, import preferences, or enter interests"]
   U --> V["Install required tools and check selected platform access"]
   V -- "Failure: repair and retry" --> V
   V --> W["Record setup completion"]

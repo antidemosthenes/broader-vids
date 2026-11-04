@@ -514,11 +514,22 @@ class DashboardFeedbackTests(unittest.TestCase):
                 state.data.videos['unused-video'] = {...example};
                 state.data.videos['draft-video'] = {...example};
                 state.drafts.set('draft-video|topic_interest', {value:'low', target:'Saved draft context'});
+                for (const id of ['unused-video', 'draft-video']) {
+                    state.inspectorScrolls.set(id, 123);
+                    for (const key of [`${id}|topic_interest`, `video:${id}`, `creator:${id}`])
+                        state.notes.set(key, {text:'Saved'});
+                }
             }""")
             page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
             page.wait_for_function("""async () => {
                 const {state} = await import('/static/state.js');
-                return !state.data.videos['unused-video'] && !!state.data.videos['draft-video'];
+                return !state.data.videos['unused-video'] && !!state.data.videos['draft-video']
+                    && !state.inspectorScrolls.has('unused-video')
+                    && !state.notes.has('unused-video|topic_interest')
+                    && !state.notes.has('video:unused-video')
+                    && !state.notes.has('creator:unused-video')
+                    && state.inspectorScrolls.get('draft-video') === 123
+                    && state.notes.has('draft-video|topic_interest');
             }""")
             self.assertEqual(
                 topic.get_by_label("Topic", exact=True).input_value(), "Keep my draft"

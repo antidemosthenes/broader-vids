@@ -118,6 +118,26 @@ async function refresh() {
     for (const items of earlierItems.values())
       for (const item of items) retain(item.canonical_id);
     data.videos = { ...retained, ...data.videos };
+    const activeIds = new Set([
+      ...Object.keys(data.videos),
+      ...calibration.map((entry) => entry.item.canonical_id),
+    ]);
+    for (const id of new Set([
+      ...Object.keys(state.data.videos),
+      ...state.calibration.map((entry) => entry.item.canonical_id),
+    ])) {
+      if (activeIds.has(id)) continue;
+      state.inspectorScrolls.delete(id);
+      state.notes.delete(`video:${id}`);
+      state.notes.delete(`creator:${id}`);
+      for (const dimension of [
+        "topic_interest",
+        "domain_interest",
+        "depth",
+        "quality_level",
+      ])
+        state.notes.delete(`${id}|${dimension}`);
+    }
     state.data = data;
     state.calibration = calibration;
     applyExclusions(exclusions);
@@ -213,7 +233,7 @@ const actions = {
     const key =
       kind === "tags"
         ? `tag:${platform}:${entry.tag}`
-        : `removecreator:${platform}:${entry.creator_id}`;
+        : `creator:${platform}:${entry.creator_id}`;
     mutate(
       kind === "tags" ? `tags:${platform}` : key,
       {

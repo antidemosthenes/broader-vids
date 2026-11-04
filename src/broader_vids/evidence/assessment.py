@@ -300,7 +300,7 @@ Mode: """
             if not cues
             else ""
         )
-        + "\nReturn concrete content-based specific topics and broad subjects in topics. Each label must contain 1–120 characters, preferably 1–5 words. Topics rationale must contain 1–1000 characters and audience rationale 1–600 characters. Use short, reusable English labels and cite supplied evidence. Put the main narrow subject first, before supporting techniques. Labels must contain subject names only, at most 12 words each, without reasoning, citations, URLs, instructions, or editing notes. Put citation IDs only in evidence_ids. Do not substitute retrieval queries for the video's actual subject. Distinguish operating a software tool from explaining its underlying algorithms."
+        + "\nReturn concrete content-based specific topics and broad subjects in topics. Each label must contain 1–120 characters, preferably 1–5 words. Topics rationale must contain 1–1000 characters and audience rationale 1–600 characters. Use short, reusable English labels and cite supplied evidence. Put the main narrow subject first, before supporting techniques. Labels must contain subject names only, at most 12 words each, without reasoning, citations, URLs, instructions, or editing notes. Put citation IDs only in evidence_ids. Do not substitute retrieval queries for the video's actual subject. Distinguish operating a software tool from explaining its underlying algorithms. Return only supported topic names. Do not pad either list."
         + (
             "\nCorrect the previous response's validation failure: "
             + run["state"]["failure"]["reason"]
@@ -609,7 +609,10 @@ def assess_evidence(
                 atomic_json(
                     root / f"{current}-response-{state['model_calls']}.json", card
                 )
-                validate_card(card, evidence_ids, current)
+                readable_card = current_card(card)
+                if readable_card != card:
+                    attempt["topic_labels_filtered"] = True
+                card = validate_card(readable_card, evidence_ids, current)
                 duration_prior = Policy().duration_prior(
                     state["media"]["duration_seconds"]
                 )

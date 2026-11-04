@@ -162,10 +162,10 @@ Search-domain labels describe retrieval context.
 They do not prove the video's semantic topic.
 
 New AI topic labels must be short subject names, with at most 120 characters and 12 words.
-The validator rejects obvious citations, instructions, control characters, and editing notes in labels.
-Invalid new output uses the existing bounded assessment fix workflow.
-Read operations omit unusable labels from older scorecards and annotations.
-They preserve raw evidence, numeric quality scores, saved ratings, and explicit user targets.
+Fresh assessments and reads of saved scorecards omit unusable topic labels before validation.
+The filter removes obvious citations, instructions, control characters, and editing notes from the label lists.
+The engine retains the raw model response and preserves numeric quality scores, saved ratings, and explicit user targets.
+Remaining schema or evidence errors use the existing bounded assessment fix workflow.
 This check detects common formatting errors. It does not prove that a topic correctly describes the video.
 
 Source links, repost declarations, `中配`, and YouDub disclosures inform originality assessment.
@@ -388,6 +388,7 @@ A new response type requires new holdout coverage.
 Training on released labels does not replace the earlier test result.
 
 Evidence maintenance adds derived feature records after source checks.
+Corrections include the current missing-caption deduction, which replaces any earlier deduction.
 They preserve original ratings, scorecards, and captured features.
 Incomplete source metadata can pause quality fitting.
 Maintenance uses retained frames and captions without downloading replacement media.

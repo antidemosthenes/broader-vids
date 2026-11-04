@@ -807,6 +807,10 @@ Dashboard browser tests require Playwright and a supported local browser.
 Local Windows browser tests use installed Edge by default.
 CI installs the Playwright Chromium headless shell on both operating systems.
 Set `BROADER_VIDS_TEST_BROWSER=chromium` to use that browser locally.
+Windows CI first installs the headless browser without changing system components.
+If installation fails, it retries with the required system dependencies.
+Linux CI installs those dependencies before tests.
+Both paths retain browser validation and the full test suite.
 Linux tests use Playwright Chromium. Install its browser and system dependencies before running tests:
 
 ```bash
@@ -1080,6 +1084,7 @@ Its `installed` status does not mean onboarding is complete.
 Use the guided setup skill to configure interests, choose platforms, and check access.
 `setup --evidence` also installs browser and media tools.
 `setup --asr` includes those tools and transcription dependencies.
+Setup rejects unsupported options before it changes the profile or runtime.
 The receipt records `core`, `evidence`, and `asr` only when setup installed those groups, with each group's requirements-file digest.
 Setup requires Node.js 20 or later and UV.
 It does not use an npm postinstall script.
@@ -1218,7 +1223,14 @@ Continue only after you restore access.
 Browser sign-in is not imported automatically. Increasing the request cap does not repair an access challenge.
 They share one request counter and retain the existing access checks.
 Video downloads omit audio unless transcription requires it.
-Exact or estimated selected-stream sizes support a check before transfer.
+The engine checks selected-stream sizes before transfer.
+It uses reported exact sizes, reported estimates, or duration multiplied by bitrate, in that order.
+Transcription downloads include both video and audio in this check.
+If the estimate exceeds the remaining allowance, the engine tries a smaller offered format within the existing resolution and audio rules.
+When partial media exists, continuation resolves saved format IDs against fresh metadata and checks their codecs and resolution.
+If the original selection is unavailable, the engine skips the candidate and removes its owned partial files.
+Cumulative download charges remain unchanged.
+Unknown sizes still use the transfer byte limit.
 Transfer checkpoints record observed bytes and bound unreported bytes after interruption.
 Reports identify conservative byte charges as upper bounds.
 
