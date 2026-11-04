@@ -102,12 +102,18 @@ class ReleaseVersionTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, target)
 
-        result = versioning.set_version(self.root, "0.1.1")
+        original = json.loads((self.root / "package.json").read_text(encoding="utf-8"))[
+            "version"
+        ]
+        major, minor, patch = map(int, original.split("."))
+        target_version = f"{major}.{minor}.{patch + 1}"
+        result = versioning.set_version(self.root, target_version)
 
-        self.assertEqual(result["version"], "0.1.1")
+        self.assertEqual(result["version"], target_version)
+        self.assertEqual(result["files"], list(versioning._FILES))
         package = json.loads((self.root / "package.json").read_text(encoding="utf-8"))
-        self.assertIn("python/broader_vids-0.1.1-*.whl", package["files"])
-        self.assertNotIn("python/broader_vids-0.1.0-*.whl", package["files"])
+        self.assertIn(f"python/broader_vids-{target_version}-*.whl", package["files"])
+        self.assertNotIn(f"python/broader_vids-{original}-*.whl", package["files"])
 
     def test_invalid_requested_version_is_non_destructive(self) -> None:
         original = make_repo(self.root)

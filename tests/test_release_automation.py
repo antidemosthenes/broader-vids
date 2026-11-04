@@ -3,8 +3,13 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
+import shutil
+from string import Template
+import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -116,6 +121,78 @@ class ReleaseAutomationTests(unittest.TestCase):
                         ),
                         expected,
                     )
+
+    def test_workflow_publishes_a_local_tarball_in_an_offline_npm_dry_run(self):
+        workflow = yaml.safe_load(
+            (release_ci.ROOT / ".github/workflows/release.yml").read_text()
+        )
+        script = next(
+            step["run"]
+            for step in workflow["jobs"]["publish"]["steps"]
+            if step.get("name") == "Verify and publish the exact archive"
+        )
+        assignment = next(
+            line.strip()
+            for line in script.splitlines()
+            if line.strip().startswith("archive=")
+        )
+        archive = Template(shlex.split(assignment)[0].partition("=")[2]).substitute(
+            RELEASE_VERSION="0.0.0"
+        )
+        command = next(
+            line.strip()
+            for line in script.splitlines()
+            if line.strip().startswith("npm publish ")
+        )
+        arguments = shlex.split(Template(command).substitute(archive=archive))
+        npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+        self.assertIsNotNone(npm, "Release validation requires npm.")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / archive
+            target.parent.mkdir()
+            package = json.dumps(
+                {
+                    "name": "broader-vids-release-fixture",
+                    "version": "0.0.0",
+                    "license": "MIT",
+                }
+            ).encode()
+            with tarfile.open(target, "w:gz") as packed:
+                member = tarfile.TarInfo("package/package.json")
+                member.size = len(package)
+                packed.addfile(member, io.BytesIO(package))
+            user_config, global_config = root / "user.npmrc", root / "global.npmrc"
+            user_config.touch()
+            global_config.touch()
+            result = subprocess.run(
+                [
+                    npm,
+                    *arguments[1:],
+                    "--dry-run",
+                    "--json",
+                    "--registry=http://127.0.0.1:1",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "NPM_CONFIG_USERCONFIG": str(user_config),
+                    "NPM_CONFIG_GLOBALCONFIG": str(global_config),
+                    "NPM_CONFIG_CACHE": str(root / "cache"),
+                    "NPM_CONFIG_OFFLINE": "true",
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "protocol.allow",
+                    "GIT_CONFIG_VALUE_0": "never",
+                },
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = json.loads(result.stdout)
+            published = report.get("broader-vids-release-fixture", report)
+            self.assertEqual(published["name"], "broader-vids-release-fixture")
+            self.assertEqual(published["version"], "0.0.0")
 
     def test_published_versions_are_reused_only_when_archive_matches_and_never_downgrade_latest(
         self,
