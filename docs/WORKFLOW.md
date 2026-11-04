@@ -4,6 +4,9 @@ Broader Vids finds videos, checks their content, and learns from explicit feedba
 This document explains the user workflow.
 See the [terminal reference](REFERENCE.md) for commands.
 
+Codex remains the default host. Claude Code uses the same workflow and evidence rules.
+Pass `--host claude` before an engine command and supply Claude's active model and effort explicitly.
+Provider and model changes can change generated plans and assessments. They do not change collection or feedback gates.
 ## 1. Complete setup and check readiness
 
 Use the [update procedure](REFERENCE.md#update-an-installed-plugin) to update an installed plugin.

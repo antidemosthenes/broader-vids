@@ -3,6 +3,8 @@ name: broader-vids-setup
 description: Set up an installed Broader Vids plugin, its external Python runtime, local video interests, and platform access. Use for Broader Vids onboarding or installation repair, not general environment setup.
 ---
 
+> **Claude Code:** Read [the Claude host guide](../claude-host.md) and follow it instead of the Codex-specific instructions below.
+
 # Set up Broader Vids
 
 ## Completion output

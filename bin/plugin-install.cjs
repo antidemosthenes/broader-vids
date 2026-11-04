@@ -28,20 +28,36 @@ function resolveCodex(env = process.env, platform = process.platform) {
   );
 }
 
-function installPlugin(version, run, env = process.env) {
-  const [command, prefix] = resolveCodex(env);
-  const home = path.resolve(
-    env.CODEX_HOME || path.join(os.homedir(), ".codex"),
-  );
-  const root = path.join(home, "broader-vids-npm");
-  const directory = path.join(root, ".agents", "plugins");
-  for (const folder of [root, path.join(root, ".agents"), directory]) {
-    fs.mkdirSync(folder, { recursive: true });
-    if (fs.lstatSync(folder).isSymbolicLink())
-      throw new Error(
-        "The managed marketplace must not contain symbolic links.",
-      );
+function resolveClaude(env = process.env, platform = process.platform) {
+  if (platform !== "win32") return ["claude", []];
+  const directories = (env.PATH || env.Path || "").split(path.delimiter);
+  for (const directory of directories) {
+    const folder = directory.replace(/^"(.*)"$/, "$1");
+    if (!folder) continue;
+    const executable = path.join(folder, "claude.exe");
+    if (fs.existsSync(executable)) return [executable, []];
+    const script = path.join(
+      folder,
+      "node_modules",
+      "@anthropic-ai",
+      "claude-code",
+      "cli.js",
+    );
+    if (fs.existsSync(script)) return [process.execPath, [script]];
   }
+  throw new Error(
+    "Install Claude Code CLI and add claude.exe to PATH before installing the plugin.",
+  );
+}
+
+function guardedDirectories(paths, message) {
+  for (const folder of paths) {
+    fs.mkdirSync(folder, { recursive: true });
+    if (fs.lstatSync(folder).isSymbolicLink()) throw new Error(message);
+  }
+}
+
+function withMarketplaceLock(root, runInstall) {
   const lock = path.join(root, "install.lock");
   let handle;
   try {
@@ -53,11 +69,30 @@ function installPlugin(version, run, env = process.env) {
       );
     throw error;
   }
-  const catalog = path.join(directory, "marketplace.json");
-  const temporary = path.join(directory, `.${randomUUID()}.tmp`);
   try {
+    return runInstall();
+  } finally {
+    fs.closeSync(handle);
+    fs.unlinkSync(lock);
+  }
+}
+
+function installCodexPlugin(version, run, env) {
+  const [command, prefix] = resolveCodex(env);
+  const home = path.resolve(
+    env.CODEX_HOME || path.join(os.homedir(), ".codex"),
+  );
+  const root = path.join(home, "broader-vids-npm");
+  const directory = path.join(root, ".agents", "plugins");
+  guardedDirectories(
+    [root, path.join(root, ".agents"), directory],
+    "The managed marketplace must not contain symbolic links.",
+  );
+  return withMarketplaceLock(root, () => {
+    const catalog = path.join(directory, "marketplace.json");
     if (fs.existsSync(catalog) && fs.lstatSync(catalog).isSymbolicLink())
       throw new Error("The managed catalog must not be a symbolic link.");
+    const temporary = path.join(directory, `.${randomUUID()}.tmp`);
     const marketplace = {
       name: "broader-vids-npm",
       interface: { displayName: "Broader Vids (npm)" },
@@ -75,25 +110,86 @@ function installPlugin(version, run, env = process.env) {
         },
       ],
     };
-    fs.writeFileSync(temporary, JSON.stringify(marketplace, null, 2) + "\n", {
-      flag: "wx",
-      mode: 0o600,
-    });
-    fs.renameSync(temporary, catalog);
-    run(command, [...prefix, "plugin", "marketplace", "add", root]);
-    run(command, [...prefix, "plugin", "add", "broader-vids@broader-vids-npm"]);
-    return { status: "installed", marketplace: marketplace.name, version };
-  } finally {
     try {
-      fs.rmSync(temporary, { force: true });
+      fs.writeFileSync(temporary, JSON.stringify(marketplace, null, 2) + "\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+      fs.renameSync(temporary, catalog);
+      run(command, [...prefix, "plugin", "marketplace", "add", root]);
+      run(command, [
+        ...prefix,
+        "plugin",
+        "add",
+        "broader-vids@broader-vids-npm",
+      ]);
+      return { status: "installed", marketplace: marketplace.name, version };
     } finally {
-      try {
-        fs.closeSync(handle);
-      } finally {
-        fs.unlinkSync(lock);
-      }
+      fs.rmSync(temporary, { force: true });
     }
-  }
+  });
 }
 
-module.exports = { installPlugin, resolveCodex };
+function installClaudePlugin(version, run, env) {
+  const [command, prefix] = resolveClaude(env);
+  const home = path.resolve(
+    env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"),
+  );
+  const root = path.join(home, "marketplaces", "broader-vids-npm");
+  const directory = path.join(root, ".claude-plugin");
+  guardedDirectories(
+    [home, path.join(home, "marketplaces"), root, directory],
+    "The managed Claude marketplace must not contain symbolic links.",
+  );
+  return withMarketplaceLock(root, () => {
+    const catalog = path.join(directory, "marketplace.json");
+    if (fs.existsSync(catalog) && fs.lstatSync(catalog).isSymbolicLink())
+      throw new Error(
+        "The managed Claude catalog must not be a symbolic link.",
+      );
+    const temporary = path.join(directory, `.${randomUUID()}.tmp`);
+    const marketplace = {
+      name: "broader-vids-npm",
+      description: "Broader Vids npm plugin catalog for Claude Code",
+      owner: { name: "Broader Vids contributors" },
+      plugins: [
+        {
+          name: "broader-vids",
+          source: {
+            source: "npm",
+            package: "broader-vids",
+            version,
+            registry: "https://registry.npmjs.org",
+          },
+          description:
+            "Curated YouTube and Bilibili recommendations with local evidence and feedback.",
+        },
+      ],
+    };
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(marketplace, null, 2) + "\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+      fs.renameSync(temporary, catalog);
+      run(command, [...prefix, "plugin", "marketplace", "add", root]);
+      run(command, [
+        ...prefix,
+        "plugin",
+        "install",
+        "broader-vids@broader-vids-npm",
+      ]);
+      return { status: "installed", marketplace: marketplace.name, version };
+    } finally {
+      fs.rmSync(temporary, { force: true });
+    }
+  });
+}
+
+function installPlugin(version, run, env = process.env, host = "codex") {
+  if (host === "codex") return installCodexPlugin(version, run, env);
+  if (host === "claude") return installClaudePlugin(version, run, env);
+  throw new Error("Host must be codex or claude.");
+}
+
+module.exports = { installPlugin, resolveCodex, resolveClaude };

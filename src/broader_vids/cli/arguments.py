@@ -26,6 +26,12 @@ def parser():
     )
     result.add_argument("--version", action="version", version=__version__)
     result.add_argument(
+        "--host",
+        choices=("codex", "claude"),
+        default="codex",
+        help="AI host for new work; existing rounds retain their saved host",
+    )
+    result.add_argument(
         "--data-dir",
         help="External state directory; defaults to LOCALAPPDATA/broader-vids on Windows",
     )
@@ -125,6 +131,7 @@ def parser():
     )
     learning.add_argument("--max-seconds", type=float, default=180)
     learning.add_argument("--max-videos", type=int, default=1)
+    worker_arguments(learning)
     calibration = commands.add_parser(
         "calibrate",
         help="Create or inspect the 30-video interest/quality calibration cohort",

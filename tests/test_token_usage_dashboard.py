@@ -63,6 +63,9 @@ class TokenUsageDashboardTests(unittest.TestCase):
             button.click()
             dialog = page.get_by_role("dialog", name="Token usage", exact=True)
             dialog.get_by_text("Reported tokens", exact=True).wait_for()
+            dialog.get_by_text(
+                "No Codex tokens used by this step.", exact=True
+            ).first.wait_for()
             self.assertIn("2 of 3", dialog.locator(".usage-coverage").inner_text())
             self.assertIn("partial", dialog.locator(".usage-coverage").inner_text())
             self.assertIn(
@@ -120,3 +123,20 @@ class TokenUsageDashboardTests(unittest.TestCase):
                 "No recommendation rounds yet. Usage will appear here when a round starts.",
                 exact=True,
             ).wait_for()
+
+    def test_claude_zero_use_stages_name_claude(self):
+        with dashboard_fixture() as (page, directory):
+            with closing(Store(directory)) as store:
+                create_recommendation(
+                    store,
+                    "youtube",
+                    assessment_model="claude-fixture",
+                    reasoning_effort="medium",
+                    host="claude",
+                )
+            open_first(page)
+            page.get_by_role("button", name="Token usage", exact=True).click()
+            dialog = page.get_by_role("dialog", name="Token usage", exact=True)
+            dialog.get_by_text(
+                "No Claude tokens used by this step.", exact=True
+            ).first.wait_for()

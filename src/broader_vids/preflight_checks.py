@@ -108,8 +108,11 @@ def bilibili_check(root, token):
         )
 
 
-def inspect(root, platform, token, asr):
-    environment = environment_report(root)
+def inspect(root, platform, token, asr, host="codex"):
+    from broader_vids.worker_context import validate_host
+
+    host = validate_host(host)
+    environment = environment_report(root, host=host)
     checks = {
         name: {
             **item,
@@ -127,7 +130,12 @@ def inspect(root, platform, token, asr):
                     search_query("bilibili", "繁體中文")
             except Exception:
                 checks[name] = {**checks[name], "status": "unusable"}
-    checks["chatgpt_sign_in"] = chatgpt_check()
+    if host == "codex":
+        checks["chatgpt_sign_in"] = chatgpt_check()
+    else:
+        from broader_vids.claude_worker import auth_check
+
+        checks["claude_sign_in"] = auth_check()
     if platform in {"bilibili", "both"}:
         checks["playwright"] = environment["conditional"]["playwright"]
         if checks["playwright"]["status"] == "available":
@@ -151,8 +159,16 @@ def inspect(root, platform, token, asr):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 6:
+        raise SystemExit("Expected at most one optional host argument.")
     print(
         json.dumps(
-            inspect(Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4] == "asr")
+            inspect(
+                Path(sys.argv[1]),
+                sys.argv[2],
+                sys.argv[3],
+                sys.argv[4] == "asr",
+                sys.argv[5] if len(sys.argv) > 5 else "codex",
+            )
         )
     )

@@ -4,6 +4,9 @@ Broader Vids learns conditional preferences from explicit feedback.
 It does not estimate an objective quality score for every video.
 Its conclusions apply to the retrieved videos and feature contexts that receive feedback.
 
+Claude Code uses the same scoring formulas and thresholds as Codex.
+The selected provider and model can change generated assessments.
+No host selection changes the saved scoring formulas.
 ## Terms
 
 | Term | Meaning |

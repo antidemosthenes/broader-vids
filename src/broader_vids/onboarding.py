@@ -128,12 +128,25 @@ def configure(store, platform):
     return value
 
 
-def complete(store, *, model=None, effort=None, asr_model=None, skill_namespace=None):
+def complete(
+    store,
+    *,
+    model=None,
+    effort=None,
+    asr_model=None,
+    skill_namespace=None,
+    host="codex",
+):
     from broader_vids.preflight import preflight
+    from broader_vids.worker_context import validate_host
+
+    host = validate_host(host)
 
     if asr_model not in (None, "tiny", "base", "small"):
         raise ValueError("Choose tiny, base, or small for requested transcription.")
-    actions = next_steps(asr_model=asr_model, skill_namespace=skill_namespace)
+    actions = next_steps(
+        asr_model=asr_model, skill_namespace=skill_namespace, host=host
+    )
     previous = status(store.root)
     report = preflight(
         store,
@@ -143,6 +156,7 @@ def complete(store, *, model=None, effort=None, asr_model=None, skill_namespace=
         asr=bool(asr_model),
         require_setup=False,
         check_feedback=False,
+        host=host,
     )
     if report["status"] != "ready":
         return report
@@ -192,7 +206,10 @@ def completion_message(report, actions):
     return "\n\n".join(sections)
 
 
-def next_steps(*, asr_model=None, skill_namespace=None):
+def next_steps(*, asr_model=None, skill_namespace=None, host="codex"):
+    from broader_vids.worker_context import validate_host
+
+    host = validate_host(host)
     if skill_namespace is not None and (
         not isinstance(skill_namespace, str)
         or re.fullmatch(r"[a-z][a-z0-9-]{0,63}", skill_namespace) is None
@@ -228,9 +245,9 @@ def next_steps(*, asr_model=None, skill_namespace=None):
             transcription_model=asr_model,
         )
     for action in actions.values():
+        namespace = skill_namespace or ("broader-vids" if host == "claude" else None)
+        prefix = "/" if host == "claude" else "$"
         action["skill_invocation"] = (
-            "$"
-            + (skill_namespace + ":" if skill_namespace else "")
-            + action["skill_name"]
+            prefix + (namespace + ":" if namespace else "") + action["skill_name"]
         )
     return actions

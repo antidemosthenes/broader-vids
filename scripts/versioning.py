@@ -16,6 +16,7 @@ _FILES = (
     "package.json",
     "package-lock.json",
     "plugin.json",
+    ".claude-plugin/plugin.json",
     "pyproject.toml",
     "uv.lock",
     "src/broader_vids/__init__.py",
@@ -48,7 +49,8 @@ def _version(value: object, label: str) -> str:
 def set_version(root: str | Path, version: str) -> dict[str, object]:
     version = _version(version, "requested version")
     root = Path(root).resolve()
-    paths = {name: root / name for name in _FILES}
+    release_files = _FILES
+    paths = {name: root / name for name in release_files}
     originals: dict[str, bytes] = {}
     texts: dict[str, str] = {}
     for name, path in paths.items():
@@ -68,6 +70,9 @@ def set_version(root: str | Path, version: str) -> dict[str, object]:
     package = _json(paths["package.json"], texts["package.json"])
     package_lock = _json(paths["package-lock.json"], texts["package-lock.json"])
     plugin = _json(paths["plugin.json"], texts["plugin.json"])
+    claude_plugin = _json(
+        paths[".claude-plugin/plugin.json"], texts[".claude-plugin/plugin.json"]
+    )
     if package.get("name") != "broader-vids" or plugin.get("name") != "broader-vids":
         raise ValueError("unexpected package name")
     lock_packages = package_lock.get("packages")
@@ -112,7 +117,10 @@ def set_version(root: str | Path, version: str) -> dict[str, object]:
         _version(project.get("version"), "pyproject.toml"),
         _version(uv_packages[0].get("version"), "uv.lock"),
         _version(init_match.group(2), "__init__.py"),
+        _version(claude_plugin.get("version"), ".claude-plugin/plugin.json"),
     ]
+    if claude_plugin.get("name") != "broader-vids":
+        raise ValueError("unexpected Claude plugin name")
     if len(set(old_versions)) != 1:
         raise ValueError("release version fields do not agree")
     old = old_versions[0]
@@ -144,11 +152,15 @@ def set_version(root: str | Path, version: str) -> dict[str, object]:
     package_lock["version"] = version
     lock_packages[""]["version"] = version
     plugin["version"] = version
+    claude_plugin["version"] = version
     edits["package.json"] = json.dumps(package, indent=2, ensure_ascii=False) + "\n"
     edits["package-lock.json"] = (
         json.dumps(package_lock, indent=2, ensure_ascii=False) + "\n"
     )
     edits["plugin.json"] = json.dumps(plugin, indent=2, ensure_ascii=False) + "\n"
+    edits[".claude-plugin/plugin.json"] = (
+        json.dumps(claude_plugin, indent=2, ensure_ascii=False) + "\n"
+    )
 
     project_match = _one(
         r"(?ms)^\[project\]\s*\n(.*?)(?=^\[|\Z)", pyproject_text, "project section"
@@ -179,7 +191,7 @@ def set_version(root: str | Path, version: str) -> dict[str, object]:
     edits["src/broader_vids/__init__.py"] = (
         init_text[: init_match.start(2)] + version + init_text[init_match.end(2) :]
     )
-    changed = [name for name in _FILES if edits[name] != texts[name]]
+    changed = [name for name in release_files if edits[name] != texts[name]]
 
     staged: dict[str, Path] = {}
     backups: dict[str, Path] = {}

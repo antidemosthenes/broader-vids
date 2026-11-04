@@ -1,4 +1,10 @@
-from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.worker_context import (
+    resolve_worker_settings,
+    host_options,
+    host_snapshot,
+    validate_host,
+    worker_runner,
+)
 from broader_vids.time_budget import (
     effective_limit,
     validate_optional_limit,
@@ -35,7 +41,11 @@ from broader_vids.recommendations.budgets import (
     collection_budget_message,
 )
 from broader_vids.recommendations.ranking import fair_buffer, screen, rank_slate
-from broader_vids.recommendations.quality import cached_quality, unscored_quality
+from broader_vids.recommendations.quality import (
+    cached_quality,
+    unscored_quality,
+    compatible_quality,
+)
 from broader_vids.recommendations.learning_snapshot import (
     freeze_learning,
     round_learning,
@@ -71,6 +81,7 @@ def create_recommendation(
     commit=True,
     batch_id=None,
     assessment_model=None,
+    host="codex",
 ):
     profile = get_profile(store)
     if not profile or not profile.get("interests"):
@@ -88,7 +99,7 @@ def create_recommendation(
             "Recommendation limits are 1–1,000 metadata requests, 0–52 total model calls and 1–8,192 MiB."
         )
     assessment_model, reasoning_effort = resolve_worker_settings(
-        assessment_model, reasoning_effort
+        assessment_model, reasoning_effort, **host_options(host)
     )
     if type(workers) is not int or not 1 <= workers <= 4:
         raise ValueError("Use one to four workers.")
@@ -106,8 +117,13 @@ def create_recommendation(
         ):
             raise ValueError("Use a discovery run from the same platform.")
         _validate_discovery_policy(source)
+        if source["settings"].get("worker_host", "codex") != host:
+            raise ValueError(
+                "The discovery round uses another AI host. Start a new discovery round."
+            )
     settings = {
         "kind": "recommendation",
+        **host_snapshot(host),
         "token_usage_version": 1,
         "creator_policy_version": 1,
         "schema": 1,
@@ -471,6 +487,7 @@ def execute_recommendation(
                         assessment_model=settings["assessment_model"],
                         reasoning_effort=settings["reasoning_effort"],
                         planning_policy=2,
+                        **host_options(settings.get("worker_host", "codex")),
                     )
                     save()
                 source = store.get(state["discovery_run"])
@@ -486,21 +503,18 @@ def execute_recommendation(
                         )
                     model_options = {}
                     if runtime is not None:
-                        from broader_vids.evidence.assessment import run_codex
+                        runner = worker_runner(settings, cancelled=runtime.cancelled)
 
                         def planning_runner(prompt, schema, output, images, timeout):
                             with runtime.slot(
                                 runtime.models, remaining, runtime.cancelled
                             ):
-                                return run_codex(
+                                return runner(
                                     prompt,
                                     schema,
                                     output,
                                     images,
                                     min(timeout, remaining()),
-                                    cancelled=runtime.cancelled,
-                                    model=settings["assessment_model"],
-                                    effort=settings["reasoning_effort"],
                                 )
 
                         model_options["model_runner"] = planning_runner
@@ -579,6 +593,7 @@ def execute_recommendation(
                         previous["settings"].get("kind") == "evidence"
                         and previous["platform"] == run["platform"]
                         and not previous["settings"].get("local_media")
+                        and compatible_quality(settings, previous["settings"])
                     ):
                         cache.setdefault(
                             previous["settings"]["identity"]["canonical_id"], []
@@ -642,6 +657,7 @@ def execute_recommendation(
                             originality_context=context,
                             reasoning_effort=settings.get("reasoning_effort"),
                             assessment_model=settings.get("assessment_model"),
+                            **host_options(settings.get("worker_host", "codex")),
                         )
                         if not begin_candidate_attempt(state, key):
                             state["assessment_index"] += 1
@@ -824,6 +840,7 @@ def execute_recommendation(
 
 def _validate_current_round(run):
     settings = run["settings"]
+    validate_host(settings.get("worker_host", "codex"))
     if (
         settings.get("time_policy_version") != 2
         or settings.get("creator_policy_version") != 1

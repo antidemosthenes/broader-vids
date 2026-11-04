@@ -15,6 +15,12 @@ from broader_vids.exploration.planning import (
 )
 from broader_vids.preferences import get_profile
 from broader_vids.creators import policy_summary
+from broader_vids.worker_context import (
+    host_options,
+    host_snapshot,
+    worker_runner,
+    validate_host,
+)
 
 
 def create_discovery(
@@ -34,6 +40,7 @@ def create_discovery(
     assessment_model=None,
     reasoning_effort=None,
     planning_policy=2,
+    host="codex",
 ):
     if platform not in {"youtube", "bilibili"}:
         raise ValueError("Unsupported discovery platform.")
@@ -52,7 +59,7 @@ def create_discovery(
         from broader_vids.worker_context import resolve_worker_settings
 
         assessment_model, reasoning_effort = resolve_worker_settings(
-            assessment_model, reasoning_effort
+            assessment_model, reasoning_effort, **host_options(host)
         )
     bank = load_bank(bank_path)
     bank_hash = POLICY_ID if hierarchical else bank["sha256"]
@@ -70,6 +77,7 @@ def create_discovery(
     plan = [] if hierarchical else query_plan(bank, platform, round_number)
     settings = {
         "kind": "discovery",
+        **host_snapshot(host),
         "assessment_model": assessment_model,
         "reasoning_effort": reasoning_effort,
         "discovery_schema": 2 if hierarchical else 1,
@@ -341,14 +349,7 @@ def execute_discovery(
                 )
             if state["phase"] == "planning":
                 if model_runner is None:
-                    from functools import partial
-                    from broader_vids.evidence.assessment import run_codex
-
-                    model_runner = partial(
-                        run_codex,
-                        model=run["settings"].get("assessment_model"),
-                        effort=run["settings"].get("reasoning_effort"),
-                    )
+                    model_runner = worker_runner(run["settings"])
                 prepare_plan(
                     store,
                     run,
@@ -521,6 +522,7 @@ def discovery_checks(store, run):
 
 
 def _validate_discovery_policy(run):
+    validate_host(run["settings"].get("worker_host", "codex"))
     exploration = run["state"].get("exploration")
     if exploration is not None and exploration.get("policy_version") != 2:
         raise ValueError(

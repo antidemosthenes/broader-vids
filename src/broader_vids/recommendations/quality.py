@@ -9,6 +9,20 @@ from broader_vids.evidence.scoring import RUBRIC_VERSION, adjusted_quality
 from broader_vids.recommendations.originality import context_identity
 
 
+def compatible_quality(settings, source):
+    host = settings.get("worker_host", "codex")
+    if source.get("worker_host", "codex") != host:
+        return False
+    return (
+        host == "codex"
+        or host == "claude"
+        and all(
+            source.get(key) == settings.get(key)
+            for key in ("assessment_model", "reasoning_effort")
+        )
+    )
+
+
 def cached_quality(store, evidence_run):
     run = store.get(evidence_run)
     if run["settings"].get("local_media") or run["settings"].get("kind") not in {

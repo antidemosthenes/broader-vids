@@ -826,6 +826,27 @@ Dashboard tests check rating saves, drafts, duplicate feedback, dialogs, and pla
 Keep screenshots and other visual checks under the ignored `.cache/` directory.
 Browser tests reuse a browser process within each worker and create a fresh context for each test.
 
+## Experimental Claude Code installation
+
+Claude Code support is experimental. Static package checks and launcher fixtures cover this path. No Claude CLI installation, skill loading, recommendation, or host acceptance test has been performed. This change does not publish an npm release. Use these commands after an npm release includes the Claude files.
+
+Install from npm with the launcher:
+
+```powershell
+npx --yes broader-vids@latest plugin install --host claude
+```
+
+The launcher creates an isolated marketplace under `~/.claude/marketplaces/broader-vids-npm`, then calls Claude's native marketplace commands. It records the running npm package version in its catalog.
+
+You can also install from the repository marketplace:
+
+```powershell
+claude plugin marketplace add antidemosthenes/broader-vids
+claude plugin install broader-vids@broader-vids
+```
+
+The root Claude catalog tracks the npm `latest` release. See the [Claude Code plugin guide](https://code.claude.com/docs/en/plugins/create) for the host format. The installed skills route Claude to the host-specific instructions in [Claude host guide](../skills/claude-host.md).
+
 ## Remote plugin installation
 
 The [README](../README.md#install-the-plugin) gives GitHub and npm installation procedures.

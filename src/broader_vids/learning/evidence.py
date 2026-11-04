@@ -190,7 +190,16 @@ def refresh_rated_metadata(store, *, max_seconds=120):
     }
 
 
-def repair_pending(store, *, max_seconds=180, max_videos=1, model_runner=None):
+def repair_pending(
+    store,
+    *,
+    max_seconds=180,
+    max_videos=1,
+    model_runner=None,
+    host="codex",
+    assessment_model=None,
+    reasoning_effort=None,
+):
     from broader_vids.evidence.assessment import assess_evidence
     from broader_vids.evidence.service import create_evidence
     from broader_vids.evidence.media import EvidencePending, public_error
@@ -200,6 +209,9 @@ def repair_pending(store, *, max_seconds=180, max_videos=1, model_runner=None):
         raise ValueError(
             "Evidence repair allows one to three videos and at most 600 seconds."
         )
+    from broader_vids.worker_context import validate_host
+
+    validate_host(host)
     deadline = time.monotonic() + max_seconds
     metadata = refresh_rated_metadata(store, max_seconds=min(120, max_seconds))
     data = source_data(store)
@@ -244,6 +256,15 @@ def repair_pending(store, *, max_seconds=180, max_videos=1, model_runner=None):
                     max_seconds=max(1, deadline - time.monotonic()),
                     max_mib=1,
                     originality_context=context,
+                    **(
+                        {
+                            "host": host,
+                            "assessment_model": assessment_model,
+                            "reasoning_effort": reasoning_effort,
+                        }
+                        if host == "claude"
+                        else {}
+                    ),
                 )
                 child = store.get(child_id)
                 if child["state"]["phase"] not in {"prepared", "completed"}:

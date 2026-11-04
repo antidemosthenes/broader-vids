@@ -91,11 +91,39 @@ function selectRoot(directory, env = process.env) {
   }
 }
 
+function parseHost(args) {
+  let host = "codex";
+  let explicit = false;
+  const values = [];
+  for (let index = 0; index < args.length; index += 1) {
+    let selected;
+    if (args[index] === "--host") {
+      selected = args[++index];
+      if (!selected || selected.startsWith("--"))
+        throw new Error("--host requires codex or claude.");
+    } else if (args[index].startsWith("--host=")) {
+      selected = args[index].slice("--host=".length);
+    } else {
+      values.push(args[index]);
+      continue;
+    }
+    if (!["codex", "claude"].includes(selected))
+      throw new Error("--host must be codex or claude.");
+    if (explicit && host !== selected)
+      throw new Error("Use one host value per command.");
+    host = selected;
+    explicit = true;
+  }
+  return { args: values, host, explicit };
+}
+
 function commandIndex(args) {
   let index = 0;
   while (index < args.length) {
     if (args[index] === "--data-dir") index += 2;
     else if (args[index].startsWith("--data-dir=")) index += 1;
+    else if (args[index] === "--host") index += 2;
+    else if (args[index].startsWith("--host=")) index += 1;
     else return index;
   }
   return -1;
@@ -240,6 +268,9 @@ function recordRuntimeBuild(runtime, digest, packageRoot, groups) {
 }
 
 function main(args = process.argv.slice(2)) {
+  const selectedHost = parseHost(args);
+  args = selectedHost.args;
+  const host = selectedHost.host;
   const packageRoot = path.resolve(__dirname, "..");
   const manifest = JSON.parse(
     fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
@@ -251,7 +282,7 @@ function main(args = process.argv.slice(2)) {
       args.length === 2 &&
       ["--help", "-h"].includes(args[1])
     ) {
-      console.log("Usage: broader-vids plugin install");
+      console.log("Usage: broader-vids plugin install [--host codex|claude]");
       return;
     }
     if (index !== 0 || args.length !== 2 || args[1] !== "install")
@@ -261,10 +292,14 @@ function main(args = process.argv.slice(2)) {
     const result = require("./plugin-install.cjs").installPlugin(
       manifest.version,
       invoke,
+      process.env,
+      host,
     );
     console.log(JSON.stringify(result, null, 2));
     console.log(
-      "Start a new Codex conversation and invoke the Broader Vids setup skill.",
+      host === "claude"
+        ? "Start a new Claude Code session and invoke the Broader Vids setup skill."
+        : "Start a new Codex conversation and invoke the Broader Vids setup skill.",
     );
     return;
   }
@@ -440,12 +475,17 @@ function main(args = process.argv.slice(2)) {
       error.data_directory = root;
       throw error;
     }
+    const engineArgs = [
+      ...args.slice(0, index),
+      ...(selectedHost.explicit ? ["--host", host] : []),
+      ...args.slice(index),
+    ];
     return invoke(executable, [
       "-m",
       "broader_vids",
       "--data-dir",
       root,
-      ...args,
+      ...engineArgs,
     ]);
   });
 }
@@ -454,6 +494,7 @@ module.exports = {
   defaultRoot,
   dataRoot,
   commandIndex,
+  parseHost,
   cacheWheel,
   selectedRoot,
   selectRoot,

@@ -14,7 +14,7 @@ from broader_vids.recommendations.engagement import (
     parse_youtube,
     rate_scores,
 )
-from broader_vids.http import AccessPaused
+from broader_vids.http import AccessPaused, BudgetExhausted
 from broader_vids.preferences import (
     pending_videos,
     platform_lock,
@@ -321,6 +321,54 @@ class RecommendationTests(unittest.TestCase):
         self.assertNotIn(
             shortlist[0]["canonical_id"], {i["canonical_id"] for i in selected}
         )
+
+    def test_score_cache_does_not_cross_hosts_in_sequential_or_parallel_work(self):
+        for workers in (1, 4):
+            with self.subTest(workers=workers):
+                source = self.source()
+                with self.store.db:
+                    self.store.db.execute(
+                        "UPDATE runs SET settings=json_set(settings, '$.worker_host', 'claude') WHERE id=?",
+                        (source,),
+                    )
+                with (
+                    patch(
+                        "broader_vids.recommendations.service.collect_snapshot",
+                        side_effect=lambda h, i: {
+                            **i["engagement"],
+                            "observed_at": utc_now(),
+                        },
+                    ),
+                    patch(
+                        "broader_vids.recommendations.service.cached_quality",
+                        side_effect=lambda s, i: quality(i),
+                    ) as lookup,
+                    patch(
+                        "broader_vids.recommendations.parallel.create_evidence",
+                        side_effect=BudgetExhausted(
+                            "Offline fixture stops new evidence work."
+                        ),
+                    ),
+                ):
+                    identifier = create_recommendation(
+                        self.store,
+                        "youtube",
+                        source,
+                        workers=workers,
+                        host="claude",
+                        assessment_model="claude-fixture",
+                        reasoning_effort="medium",
+                        max_assessments=0,
+                    )
+                    options = (
+                        {"prepare": lambda *args: self.fail("Unexpected media work")}
+                        if workers == 1
+                        else {}
+                    )
+                    run = execute_recommendation(self.store, identifier, **options)
+                lookup.assert_not_called()
+                self.assertFalse(run["state"]["selected"])
+                self.assertEqual(run["state"]["model_calls"], 0)
 
     def test_cached_full_workflow_and_next_round_carryover(self):
         source = self.source()

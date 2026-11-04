@@ -30,7 +30,11 @@ from broader_vids.identity import identify
 from broader_vids.evidence.retention import released_media, inherit_bundle
 
 
-from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.worker_context import (
+    resolve_worker_settings,
+    host_options,
+    host_snapshot,
+)
 
 
 EVIDENCE_VERSION = 1
@@ -78,10 +82,11 @@ def create_evidence(
     originality_context=None,
     reasoning_effort=None,
     assessment_model=None,
+    host="codex",
 ):
     identity = identify(url)
     assessment_model, reasoning_effort = resolve_worker_settings(
-        assessment_model, reasoning_effort
+        assessment_model, reasoning_effort, **host_options(host)
     )
     if (
         type(max_mib) is not int
@@ -95,6 +100,7 @@ def create_evidence(
         raise ValueError("Local captions require the corresponding local video file.")
     settings = {
         "kind": "evidence",
+        **host_snapshot(host),
         "schema": EVIDENCE_VERSION,
         "identity": identity,
         "max_seconds": max_seconds,
@@ -133,6 +139,7 @@ def create_evidence(
                 "files": fingerprints,
                 "version": EVIDENCE_VERSION,
                 "assessment_model": assessment_model,
+                **host_snapshot(host),
                 "captionless_policy": settings["captionless_policy"],
                 "rubric_version": settings["rubric_version"],
                 "acquisition_policy": settings["acquisition_policy"],

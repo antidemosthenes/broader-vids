@@ -5,7 +5,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
-from functools import partial
 
 from broader_vids.evidence.service import (
     _require_current_rubric,
@@ -16,7 +15,7 @@ from broader_vids.evidence.service import (
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.evidence.failures import failure_details, save_failure
 from broader_vids.policy import Policy
-from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.worker_context import resolve_worker_settings, worker_runner
 from broader_vids.evidence.scoring import (
     RUBRIC_VERSION,
     caption_penalty,
@@ -572,12 +571,7 @@ def assess_evidence(
             started = time.monotonic()
             try:
                 runner = (
-                    partial(
-                        run_codex,
-                        model=run["settings"].get("assessment_model"),
-                        effort=run["settings"].get("reasoning_effort"),
-                        cancelled=cancel_event,
-                    )
+                    worker_runner(run["settings"], cancelled=cancel_event)
                     if model_runner is run_codex
                     else model_runner
                 )
@@ -637,7 +631,11 @@ def assess_evidence(
                         "submitted_images": len(frames),
                         "input_characters": len(prompt),
                         "token_usage": token_usage,
-                        "token_usage_source": "codex_turn_completed"
+                        "token_usage_source": (
+                            "claude_cli"
+                            if run["settings"].get("worker_host") == "claude"
+                            else "codex_turn_completed"
+                        )
                         if token_usage
                         else "not_reported",
                         "seconds": round(time.monotonic() - started, 3),

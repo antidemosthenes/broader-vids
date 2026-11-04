@@ -1,7 +1,7 @@
 {
   "name": "broader-vids",
   "version": "0.1.5",
-  "description": "Codex skill and local YouTube/Bilibili recommendations with quality evidence and feedback",
+  "description": "Codex and experimental Claude Code skills for local YouTube/Bilibili recommendations",
   "license": "MIT",
   "engines": {
     "node": ">=20"
@@ -22,7 +22,8 @@
     "docs/WORKFLOW.md",
     "docs/ARCHITECTURE.md",
     "docs/SCORING.md",
-    "docs/REFERENCE.md"
+    "docs/REFERENCE.md",
+    ".claude-plugin/"
   ],
   "scripts": {
     "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs",

@@ -1,7 +1,7 @@
 # Architecture
 
 Broader Vids has one Python engine.
-The terminal, Codex skill, and local dashboard use that engine.
+The terminal, Codex skill, Claude Code skills, and local dashboard use that engine.
 The Node launcher installs and starts the engine.
 Per-profile locks coordinate launcher commands and setup.
 Ordinary commands can share the runtime. Setup requires exclusive access.
@@ -11,9 +11,15 @@ A stale or unreadable lock blocks later work until the operator checks for survi
 The launcher has no stale-lock repair command and does not implement recommendation logic.
 
 The GitHub marketplace and explicit npm installer both install the prepared npm plugin.
-The npm installer registers a small host catalog without GitHub access or profile access.
+The npm installers register isolated host catalogs without GitHub access or profile access.
 Setup installs the bundled engine into external profile storage after plugin installation.
 
+Host selection changes the model provider and worker interface. It does not change the engine.
+Claude commands pass `--host claude` and explicit model and effort values.
+Codex remains the default host.
+Claude score reuse requires the same saved model and effort.
+Codex retains its existing score-cache policy.
+Both hosts can use the same profile through the same explicit `--data-dir` path.
 ## Project files
 
 ```text
@@ -112,7 +118,9 @@ flowchart LR
 The web layer displays saved results and submits explicit user actions.
 It does not contain a separate scoring algorithm.
 The skill directs the host to call the engine.
-`worker_context.py` resolves the invoking thread's model and reasoning effort from local turn metadata.
+`worker_context.py` resolves Codex model settings from local turn metadata.
+Claude uses explicit model and effort settings. Its adapter lives in `claude_worker.py`.
+Each round retains its saved host. Cancellation and deadlines stop owned worker processes.
 New runs save that pair and pass it to planning and assessment CLI workers.
 `recommendations/collection.py` continues candidate collection until 100 pass `screening.py` duration and raw engagement floors, or a saved limit stops collection.
 Screening policy 5 combines metadata screening with learned interest and balances query coverage across thirty-five content-assessment slots.

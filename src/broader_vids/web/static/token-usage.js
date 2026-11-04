@@ -98,7 +98,7 @@ export function createTokenUsage() {
           ? `Usage is missing for ${stage.calls} model ${stage.calls === 1 ? "attempt" : "attempts"}.`
           : stage.calls
             ? `${format(stage.input_tokens)} input · ${format(stage.output_tokens)} output${stage.unreported_calls ? ` · ${stage.unreported_calls} ${stage.unreported_calls === 1 ? "attempt" : "attempts"} unreported` : ""}`
-            : "No Codex tokens used by this step.";
+            : `No ${report.worker_host === "claude" ? "Claude" : "Codex"} tokens used by this step.`;
       row.append(header, bar, el("p", "muted compact", detail));
       content.append(row);
     }

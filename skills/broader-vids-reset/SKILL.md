@@ -3,6 +3,8 @@ name: broader-vids-reset
 description: Reset Broader Vids preferences, learned weights, ratings, exclusions, and histories for a fresh start while retaining tools and Bilibili sign-in.
 ---
 
+> **Claude Code:** Read [the Claude host guide](../claude-host.md) and follow it instead of the Codex-specific instructions below.
+
 # Reset Broader Vids
 
 Keep launcher commands internal.

@@ -1,0 +1,9 @@
+{
+  "name": "broader-vids",
+  "version": "0.1.5",
+  "description": "Curated YouTube and Bilibili recommendations for Claude Code",
+  "author": {
+    "name": "Broader Vids contributors"
+  },
+  "license": "MIT"
+}

@@ -1,4 +1,9 @@
-from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.worker_context import (
+    resolve_worker_settings,
+    host_options,
+    host_snapshot,
+    validate_host,
+)
 from broader_vids.time_budget import (
     effective_limit,
     validate_optional_limit,
@@ -38,9 +43,10 @@ def create_batch(
     reasoning_effort=None,
     discovery_runs=None,
     assessment_model=None,
+    host="codex",
 ):
     assessment_model, reasoning_effort = resolve_worker_settings(
-        assessment_model, reasoning_effort
+        assessment_model, reasoning_effort, **host_options(host)
     )
     validate_optional_limit(max_seconds)
     if type(workers) is not int or not 1 <= workers <= 4:
@@ -51,6 +57,7 @@ def create_batch(
             "both",
             {
                 "kind": "recommendation_batch",
+                **host_snapshot(host),
                 "max_seconds": max_seconds,
                 "time_policy_version": 2,
                 "workers": workers,
@@ -77,6 +84,7 @@ def create_batch(
                 commit=False,
                 batch_id=identifier,
                 assessment_model=assessment_model,
+                **host_options(host),
             )
         store.db.execute(
             "UPDATE runs SET state=? WHERE id=?",
@@ -278,9 +286,13 @@ def batch_report(store, identifier):
 
 
 def _validate_current_batch(store, run):
+    host = validate_host(run["settings"].get("worker_host", "codex"))
     if run["settings"].get("time_policy_version") != 2:
         raise ValueError(
             "This batch uses an unsupported time policy; start a new round."
         )
     for child in run["state"].get("children", {}).values():
-        _validate_current_round(store.get(child))
+        saved = store.get(child)
+        _validate_current_round(saved)
+        if saved["settings"].get("worker_host", "codex") != host:
+            raise ValueError("The batch has inconsistent saved AI hosts.")

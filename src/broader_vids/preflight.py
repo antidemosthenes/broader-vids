@@ -55,20 +55,26 @@ def feedback_summary(store, platform):
     }
 
 
-def external_checks(root, platform, *, asr=False, timeout=30):
+def external_checks(root, platform, *, asr=False, timeout=30, host="codex"):
+    from broader_vids.worker_context import validate_host
+
+    host = validate_host(host)
     token = uuid.uuid4().hex
     lock = root / "access/bilibili/browser.lock"
     try:
+        arguments = [
+            sys.executable,
+            "-m",
+            "broader_vids.preflight_checks",
+            str(root),
+            platform,
+            token,
+            "asr" if asr else "native",
+        ]
+        if host == "claude":
+            arguments.append(host)
         report = run_bounded(
-            [
-                sys.executable,
-                "-m",
-                "broader_vids.preflight_checks",
-                str(root),
-                platform,
-                token,
-                "asr" if asr else "native",
-            ],
+            arguments,
             timeout=timeout,
         )
         value = json.loads(report.stdout)
@@ -116,7 +122,11 @@ def preflight(
     check_feedback=True,
     allow_missing_feedback=False,
     max_seconds=30,
+    host="codex",
 ):
+    from broader_vids.worker_context import validate_host
+
+    host = validate_host(host)
     started = time.monotonic()
     settings = onboarding_status(store.root)
     platform = platform or settings["default_platform"]
@@ -174,7 +184,9 @@ def preflight(
             "remedy": "Check profile permissions and close conflicting writers, then retry.",
         }
     try:
-        report["model"], report["effort"] = resolve_worker_settings(model, effort)
+        report["model"], report["effort"] = resolve_worker_settings(
+            model, effort, host=host
+        )
         report["checks"]["model_settings"] = {"status": "available"}
     except (OSError, ValueError) as error:
         report["checks"]["model_settings"] = {
@@ -185,7 +197,9 @@ def preflight(
         time.monotonic() - started
     )
     if remaining > 0:
-        automated = external_checks(store.root, platform, asr=asr, timeout=remaining)
+        automated = external_checks(
+            store.root, platform, asr=asr, timeout=remaining, host=host
+        )
         report["checks"].update(automated["checks"])
         report["warnings"] = automated["warnings"]
     else:

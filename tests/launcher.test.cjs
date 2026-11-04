@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
-const { dataRoot, commandIndex, cacheWheel } = require('../bin/broader-vids.cjs');
+const { dataRoot, commandIndex, cacheWheel, parseHost } = require('../bin/broader-vids.cjs');
 
 test('explicit state location survives spaces and shell metacharacters', () => {
   const directory = 'example space & literal';
@@ -23,6 +23,8 @@ test('setup detection does not mistake a directory name for the command', () => 
   assert.equal(commandIndex(['--data-dir', 'setup', 'doctor']), 2);
   assert.equal(commandIndex(['--data-dir=x', 'setup']), 1);
   assert.equal(commandIndex(['setup', '--data-dir', 'x']), 0);
+  assert.equal(commandIndex(['--host', 'claude', 'recommend']), 2);
+  assert.deepEqual(parseHost(['--host=claude', 'recommend']), { args: ['recommend'], host: 'claude', explicit: true });
   assert.throws(() => dataRoot(['--data-dir'], {}));
 });
 
@@ -133,6 +135,7 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
 
     const invalidProfile = path.join(directory, 'invalid setup profile');
     assert.throws(() => main(['setup', '--data-dir', invalidProfile, '--evidnce']), /optional --evidence, --asr/);
+    assert.throws(() => main(['setup', '--host', 'claude', '--invalid']), /optional --evidence, --asr/);
     assert.deepEqual(calls, []);
     assert.equal(fs.existsSync(invalidProfile), false);
 
@@ -154,6 +157,10 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     main(['--data-dir', profile, 'onboarding', 'complete', '--format', 'chat']);
     const completion = calls.find((call) => call.command === executable);
     assert.deepEqual([...completion.args], ['-m', 'broader_vids', '--data-dir', profile, '--data-dir', profile, 'onboarding', 'complete', '--format', 'chat']);
+    calls.length = 0;
+    main(['--data-dir', profile, '--host', 'claude', 'onboarding', 'complete', '--format', 'chat', '--model', 'claude-model', '--effort', 'high']);
+    const claudeCompletion = calls.find((call) => call.command === executable);
+    assert.deepEqual([...claudeCompletion.args], ['-m', 'broader_vids', '--data-dir', profile, '--data-dir', profile, '--host', 'claude', 'onboarding', 'complete', '--format', 'chat', '--model', 'claude-model', '--effort', 'high']);
 
     fs.unlinkSync(receipt);
     assert.throws(() => main(['--data-dir', profile, 'onboarding', 'status']), (error) => error.code === 'RUNTIME_BUILD_MISMATCH');
@@ -323,7 +330,7 @@ test('npm plugin installation registers a pinned registry source without touchin
     const cli = path.join(directory, 'cli with spaces');
     fs.mkdirSync(cli);
     fs.writeFileSync(path.join(cli, 'codex.exe'), 'fixture');
-    const env = { CODEX_HOME: path.join(directory, 'codex'), PATH: cli, LOCALAPPDATA: path.join(directory, 'profiles') };
+    const env = { CODEX_HOME: path.join(directory, 'codex'), CLAUDE_CONFIG_DIR: path.join(directory, 'claude'), PATH: cli, LOCALAPPDATA: path.join(directory, 'profiles') };
     const calls = [];
     const version = require('../package.json').version;
     const report = installPlugin(version, (command, args) => calls.push({ command, args }), env);
@@ -337,6 +344,7 @@ test('npm plugin installation registers a pinned registry source without touchin
       ['plugin', 'add', 'broader-vids@broader-vids-npm'],
     ]);
     assert.equal(fs.existsSync(env.LOCALAPPDATA), false);
+    assert.equal(fs.existsSync(env.CLAUDE_CONFIG_DIR), false);
     assert.equal(fs.existsSync(path.join(root, 'install.lock')), false);
     assert.deepEqual(fs.readdirSync(path.dirname(catalog)), ['marketplace.json']);
     installPlugin(version, () => {}, env);
@@ -383,4 +391,81 @@ test('plugin help needs no runtime and profile flags cannot redirect the install
   const invalid = spawnSync(process.execPath, [launcher, '--data-dir', 'unused installer profile', 'plugin', 'install'], { env, encoding: 'utf8' });
   assert.equal(invalid.status, 2);
   assert.match(invalid.stderr, /without profile arguments/);
+});
+
+test('Claude npm installer uses an isolated marketplace and native CLI commands', () => {
+  const { installPlugin } = require('../bin/plugin-install.cjs');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-claude-'));
+  try {
+    const cli = path.join(directory, 'claude cli');
+    fs.mkdirSync(cli);
+    fs.writeFileSync(path.join(cli, 'claude.exe'), 'fixture');
+    const env = {
+      CLAUDE_CONFIG_DIR: path.join(directory, 'claude-home'),
+      CODEX_HOME: path.join(directory, 'codex-home'),
+      LOCALAPPDATA: path.join(directory, 'profiles'),
+      PATH: cli,
+    };
+    const calls = [];
+    const version = require('../package.json').version;
+    const report = installPlugin(version, (command, args) => calls.push({ command, args }), env, 'claude');
+    assert.deepEqual(report, { status: 'installed', marketplace: 'broader-vids-npm', version });
+    const root = path.join(env.CLAUDE_CONFIG_DIR, 'marketplaces', 'broader-vids-npm');
+    const catalogPath = path.join(root, '.claude-plugin', 'marketplace.json');
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+    assert.deepEqual(catalog.plugins[0].source, {
+      source: 'npm', package: 'broader-vids', version, registry: 'https://registry.npmjs.org',
+    });
+    assert.deepEqual(calls.map(call => call.args), [
+      ['plugin', 'marketplace', 'add', root],
+      ['plugin', 'install', 'broader-vids@broader-vids-npm'],
+    ]);
+    assert.equal(fs.existsSync(env.CODEX_HOME), false);
+    assert.equal(fs.existsSync(env.LOCALAPPDATA), false);
+    assert.equal(fs.existsSync(path.join(root, 'install.lock')), false);
+    assert.deepEqual(fs.readdirSync(path.join(root, '.claude-plugin')), ['marketplace.json']);
+    installPlugin(version, () => {}, env, 'claude');
+    assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), catalog);
+  } finally {
+    assert.ok(path.basename(directory).startsWith('broader-vids-claude-'));
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('Claude npm installer resolves Windows npm and native CLI entries without a shell', () => {
+  const { resolveClaude } = require('../bin/plugin-install.cjs');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-claude-cli-'));
+  try {
+    assert.throws(() => resolveClaude({ PATH: directory }, 'win32'), /Install Claude Code CLI/);
+    const script = path.join(directory, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.writeFileSync(script, 'fixture');
+    assert.deepEqual(resolveClaude({ PATH: directory }, 'win32'), [process.execPath, [script]]);
+    fs.unlinkSync(script);
+    const executable = path.join(directory, 'claude.exe');
+    fs.writeFileSync(executable, 'fixture');
+    assert.deepEqual(resolveClaude({ PATH: directory }, 'win32'), [executable, []]);
+    assert.deepEqual(resolveClaude({}, 'linux'), ['claude', []]);
+  } finally {
+    assert.ok(path.basename(directory).startsWith('broader-vids-claude-cli-'));
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('Node-handled data display consumes Claude host routing without a host CLI call', () => {
+  const { spawnSync } = require('node:child_process');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-host-data-'));
+  try {
+    const launcher = path.resolve(__dirname, '../bin/broader-vids.cjs');
+    const result = spawnSync(process.execPath, [launcher, 'data', 'show', '--host', 'claude'], {
+      encoding: 'utf8',
+      env: { ...process.env, LOCALAPPDATA: directory },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).data_directory, path.join(directory, 'broader-vids'));
+    assert.deepEqual(fs.readdirSync(directory), []);
+  } finally {
+    assert.ok(path.basename(directory).startsWith('broader-vids-host-data-'));
+    fs.rmSync(directory, { recursive: true });
+  }
 });

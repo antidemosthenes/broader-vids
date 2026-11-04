@@ -334,7 +334,7 @@ def report(store, identifier=None):
             else None
         )
         stage["unreported_calls"] = stage["calls"] - stage["reported_calls"]
-    return {
+    result = {
         "runs": roots,
         "report": {
             "run_id": identifier,
@@ -348,3 +348,6 @@ def report(store, identifier=None):
             "scope": "Recommendation model calls only. The host chat is not included. Input totals already include cached input.",
         },
     }
+    if root["settings"].get("worker_host") == "claude":
+        result["report"]["worker_host"] = "claude"
+    return result

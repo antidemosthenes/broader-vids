@@ -3,6 +3,8 @@ name: broader-vids-dashboard
 description: Open, inspect, or stop the Broader Vids local dashboard for recommendation feedback, optional calibration, token usage reports, and creator or tag exclusions. Use only for Broader Vids dashboard requests.
 ---
 
+> **Claude Code:** Read [the Claude host guide](../claude-host.md) and follow it instead of the Codex-specific instructions below.
+
 # Broader Vids dashboard
 
 Keep launcher commands internal.
