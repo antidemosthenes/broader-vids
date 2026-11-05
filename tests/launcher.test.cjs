@@ -419,6 +419,8 @@ test('Claude npm installer uses an isolated marketplace and native CLI commands'
     assert.deepEqual(calls.map(call => call.args), [
       ['plugin', 'marketplace', 'add', root],
       ['plugin', 'install', 'broader-vids@broader-vids-npm'],
+      ['plugin', 'marketplace', 'update', 'broader-vids-npm'],
+      ['plugin', 'update', 'broader-vids@broader-vids-npm', '--scope', 'user'],
     ]);
     assert.equal(fs.existsSync(env.CODEX_HOME), false);
     assert.equal(fs.existsSync(env.LOCALAPPDATA), false);
@@ -428,6 +430,75 @@ test('Claude npm installer uses an isolated marketplace and native CLI commands'
     assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')), catalog);
   } finally {
     assert.ok(path.basename(directory).startsWith('broader-vids-claude-'));
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('Claude npm update refreshes its pinned marketplace and preserves user data', () => {
+  const { installPlugin } = require('../bin/plugin-install.cjs');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-claude-update-'));
+  try {
+    const cli = path.join(directory, 'claude cli');
+    fs.mkdirSync(cli);
+    fs.writeFileSync(path.join(cli, 'claude.exe'), 'fixture');
+    const env = {
+      CLAUDE_CONFIG_DIR: path.join(directory, 'claude-home'),
+      LOCALAPPDATA: path.join(directory, 'profiles'),
+      PATH: cli,
+    };
+    const calls = [];
+    const version = require('../package.json').version;
+    const nextVersion = `${version.split('.')[0]}.${version.split('.')[1]}.${Number(version.split('.')[2]) + 1}`;
+    installPlugin(version, (command, args) => calls.push({ command, args }), env, 'claude');
+    const root = path.join(env.CLAUDE_CONFIG_DIR, 'marketplaces', 'broader-vids-npm');
+    const catalogPath = path.join(root, '.claude-plugin', 'marketplace.json');
+    const settingsPath = path.join(env.CLAUDE_CONFIG_DIR, 'settings.json');
+    const settings = '{"enabledPlugins":{"unrelated@marketplace":true}}\n';
+    fs.writeFileSync(settingsPath, settings);
+    const profileMarker = path.join(env.LOCALAPPDATA, 'profile-marker');
+    fs.mkdirSync(path.dirname(profileMarker), { recursive: true });
+    fs.writeFileSync(profileMarker, 'keep');
+    calls.length = 0;
+
+    const report = installPlugin(
+      nextVersion,
+      (command, args) => calls.push({ command, args }),
+      env,
+      'claude',
+      'update',
+    );
+
+    assert.deepEqual(report, { status: 'updated', marketplace: 'broader-vids-npm', version: nextVersion });
+    assert.deepEqual(JSON.parse(fs.readFileSync(catalogPath, 'utf8')).plugins[0].source, {
+      source: 'npm', package: 'broader-vids', version: nextVersion, registry: 'https://registry.npmjs.org',
+    });
+    assert.deepEqual(calls.map(call => call.args), [
+      ['plugin', 'marketplace', 'update', 'broader-vids-npm'],
+      ['plugin', 'update', 'broader-vids@broader-vids-npm', '--scope', 'user'],
+    ]);
+    assert.equal(fs.readFileSync(settingsPath, 'utf8'), settings);
+    assert.equal(fs.readFileSync(profileMarker, 'utf8'), 'keep');
+    assert.equal(fs.existsSync(path.join(root, 'install.lock')), false);
+
+    assert.throws(
+      () => installPlugin(nextVersion, () => {}, { ...env, CLAUDE_CONFIG_DIR: path.join(directory, 'fresh') }, 'claude', 'update'),
+      /managed Claude marketplace is not installed/,
+    );
+    assert.equal(fs.existsSync(path.join(directory, 'fresh')), false);
+
+    assert.throws(
+      () => installPlugin(nextVersion, (command, args) => {
+        if (args[1] === 'update') throw new Error('fixture update failed');
+      }, env, 'claude', 'update'),
+      /fixture update failed/,
+    );
+    assert.equal(fs.existsSync(path.join(root, 'install.lock')), false);
+    assert.throws(
+      () => installPlugin(nextVersion, () => assert.fail('must not invoke Codex'), env, 'codex', 'update'),
+      /supported only for Claude/,
+    );
+  } finally {
+    assert.ok(path.basename(directory).startsWith('broader-vids-claude-update-'));
     fs.rmSync(directory, { recursive: true });
   }
 });

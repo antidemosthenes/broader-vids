@@ -23,7 +23,8 @@
     "docs/ARCHITECTURE.md",
     "docs/SCORING.md",
     "docs/REFERENCE.md",
-    ".claude-plugin/"
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json"
   ],
   "scripts": {
     "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs",

@@ -981,6 +981,8 @@ An existing Git tag reserves its version, even when npm publication did not fini
 A different source receives a later version. A retry of the same source can reuse its tag.
 A higher version declared in the source acts as a minimum for the release version.
 The workflow synchronizes Node, Python, plugin, lock-file, and wheel-whitelist versions in a temporary release checkout.
+Staging uses the version synchronizer's file list, including both host manifests.
+Unstaged tracked changes stop the release before tag creation.
 It records the tested source commit in `package.json` under `broaderVidsRelease.sourceCommit`.
 It writes the version commit to main and creates its `vX.Y.Z` tag in one atomic push.
 The commit contains the tested functional source with synchronized release metadata.
@@ -1005,6 +1007,8 @@ It retains workflow artifacts for seven days.
 Retries resolve a tagged version commit back to its tested merge source.
 They reuse a release when its recorded source commit matches that source.
 An existing tag must have the expected parent and exact release tree.
+Rerunning publication cannot repair a tag with mismatched manifest versions.
+Keep that tag and merge a corrected main update to release a later version.
 The bot version commit does not allocate a second version.
 GitHub does not start another push workflow for a commit pushed with the workflow's `GITHUB_TOKEN`.
 See [GitHub's trigger rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
@@ -1051,14 +1055,14 @@ The account settings and the first live OIDC publication require separate accept
 ### Update an installed plugin
 
 Finish active recommendations and stop the dashboard before updating.
-For a GitHub installation:
+For a Codex GitHub installation:
 
 ```powershell
 codex plugin marketplace upgrade broader-vids
 codex plugin add broader-vids@broader-vids
 ```
 
-For an npm installation:
+For a Codex npm installation:
 
 ```powershell
 npx --yes broader-vids@latest plugin install
@@ -1077,6 +1081,30 @@ If an update action is unavailable, use the terminal commands for that marketpla
 Start a new conversation and run the setup skill after updating.
 Setup refreshes the matching runtime and preserves preferences, ratings, history, exclusions, and sign-in.
 An update does not run Reset or Clean.
+
+#### Update experimental Claude Code support
+
+For the repository marketplace:
+
+```powershell
+claude plugin marketplace update broader-vids
+claude plugin update broader-vids@broader-vids --scope user
+```
+
+For the managed npm marketplace:
+
+```powershell
+npx --yes broader-vids@latest plugin update --host claude
+```
+
+The npm command updates the managed catalog's pinned version, refreshes the listing, and updates the installed user-scope plugin.
+Use `plugin install --host claude` for the first installation.
+Installation also synchronizes the plugin version after registration.
+A marketplace refresh alone does not update installed Claude plugins.
+Start a new Claude session and run `/broader-vids:broader-vids-setup` after an update.
+The new engine preserves the selected profile.
+These commands follow the [Claude plugin command reference](https://code.claude.com/docs/en/plugins/cli-reference).
+Actual Claude-host update behavior remains unverified in this project.
 
 ### Repair the installed runtime
 
