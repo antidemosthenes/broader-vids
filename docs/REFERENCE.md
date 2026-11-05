@@ -776,9 +776,20 @@ It returns a nonzero exit code when a test or worker fails.
 The GitHub Actions test step uses three workers. Browser-test files remain serial.
 Recommendation and calibration fixtures create seed records in one transaction.
 Production requests and checkpoint tests retain their normal durability checks.
-The ordinary checks workflow cancels superseded checks for the same source branch.
-Its group also combines overlapping push and pull-request checks. Fork branches use separate repository names.
+
+Development branch pushes run lint, formatting, Node tests, and browser asset checks on Ubuntu.
+These checks do not install evidence dependencies or a browser.
+Pull requests targeting `main` run the full Windows and Ubuntu checks.
+Every push to `main`, including a merge, runs the full checks before release.
+Tag pushes do not start the checks workflow.
+
+The workflow cancels superseded runs within the same branch push or pull request.
+Push and pull-request runs use separate cancellation groups.
+The full jobs retain their existing names for required status checks.
+
 The release workflow keeps its separate publication controls.
+Automatic releases reuse the successful `main` checks. Manual releases run the full checks again.
+
 Use a smaller group for a change in one area:
 
 ```powershell
