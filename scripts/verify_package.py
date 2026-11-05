@@ -130,7 +130,16 @@ def main(archive_path):
         )
         assert claude_plugin["name"] == "broader-vids"
         assert claude_plugin["version"] == manifest["version"]
-        assert ".claude-plugin/" in manifest["files"]
+        claude_files = {".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"}
+        assert claude_files.issubset(manifest["files"])
+        assert {
+            name
+            for name in names
+            if name.startswith("package/.claude-plugin/")
+            and archive.getmember(name).isfile()
+        } == {"package/" + name for name in claude_files}, (
+            "Unexpected Claude metadata or version-recovery files"
+        )
         assert "package/.claude-plugin/plugin.json" in names
         claude_catalog = json.loads(
             (root / ".claude-plugin/marketplace.json").read_text(encoding="utf-8")

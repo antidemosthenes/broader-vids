@@ -130,19 +130,23 @@ function installCodexPlugin(version, run, env) {
   });
 }
 
-function installClaudePlugin(version, run, env) {
+function installClaudePlugin(version, run, env, operation = "install") {
   const [command, prefix] = resolveClaude(env);
   const home = path.resolve(
     env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"),
   );
   const root = path.join(home, "marketplaces", "broader-vids-npm");
   const directory = path.join(root, ".claude-plugin");
+  const catalog = path.join(directory, "marketplace.json");
+  if (operation === "update" && !fs.existsSync(catalog))
+    throw new Error(
+      "The managed Claude marketplace is not installed. Run plugin install first.",
+    );
   guardedDirectories(
     [home, path.join(home, "marketplaces"), root, directory],
     "The managed Claude marketplace must not contain symbolic links.",
   );
   return withMarketplaceLock(root, () => {
-    const catalog = path.join(directory, "marketplace.json");
     if (fs.existsSync(catalog) && fs.lstatSync(catalog).isSymbolicLink())
       throw new Error(
         "The managed Claude catalog must not be a symbolic link.",
@@ -172,23 +176,57 @@ function installClaudePlugin(version, run, env) {
         mode: 0o600,
       });
       fs.renameSync(temporary, catalog);
-      run(command, [...prefix, "plugin", "marketplace", "add", root]);
+      if (operation === "install") {
+        run(command, [...prefix, "plugin", "marketplace", "add", root]);
+        run(command, [
+          ...prefix,
+          "plugin",
+          "install",
+          "broader-vids@broader-vids-npm",
+        ]);
+      }
       run(command, [
         ...prefix,
         "plugin",
-        "install",
-        "broader-vids@broader-vids-npm",
+        "marketplace",
+        "update",
+        marketplace.name,
       ]);
-      return { status: "installed", marketplace: marketplace.name, version };
+      run(command, [
+        ...prefix,
+        "plugin",
+        "update",
+        "broader-vids@broader-vids-npm",
+        "--scope",
+        "user",
+      ]);
+      return {
+        status: operation === "update" ? "updated" : "installed",
+        marketplace: marketplace.name,
+        version,
+      };
     } finally {
       fs.rmSync(temporary, { force: true });
     }
   });
 }
 
-function installPlugin(version, run, env = process.env, host = "codex") {
+function installPlugin(
+  version,
+  run,
+  env = process.env,
+  host = "codex",
+  operation = "install",
+) {
+  if (!["install", "update"].includes(operation))
+    throw new Error("Operation must be install or update.");
+  if (operation === "update" && host !== "claude")
+    throw new Error(
+      "Plugin update is supported only for Claude; use the Codex marketplace upgrade workflow.",
+    );
   if (host === "codex") return installCodexPlugin(version, run, env);
-  if (host === "claude") return installClaudePlugin(version, run, env);
+  if (host === "claude")
+    return installClaudePlugin(version, run, env, operation);
   throw new Error("Host must be codex or claude.");
 }
 

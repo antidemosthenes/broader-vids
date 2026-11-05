@@ -21,6 +21,23 @@ class ReleaseTests(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 release.check(tag)
 
+    def test_mismatched_claude_version_identifies_the_file(self):
+        read_json = release.read_json
+
+        def mismatched(path):
+            value = read_json(path)
+            return (
+                {**value, "version": "0.0.0"}
+                if path == release.ROOT / ".claude-plugin/plugin.json"
+                else value
+            )
+
+        with patch.object(release, "read_json", side_effect=mismatched):
+            with self.assertRaisesRegex(
+                ValueError, r"\.claude-plugin/plugin\.json='0\.0\.0'"
+            ):
+                release.check()
+
     def test_changed_artifact_is_rejected_before_package_inspection(self):
         metadata = release.check()
         with tempfile.TemporaryDirectory() as directory:

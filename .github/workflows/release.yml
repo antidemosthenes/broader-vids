@@ -165,7 +165,8 @@ jobs:
           test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           uv run --no-sync scripts/release.py set-version --version "$RELEASE_VERSION" --source-sha "$SOURCE_SHA"
-          git add package.json package-lock.json plugin.json pyproject.toml uv.lock src/broader_vids/__init__.py
+          uv run --no-sync python -c 'import subprocess; from scripts.versioning import _FILES; subprocess.run(["git", "add", "--", *_FILES], check=True)'
+          git diff --exit-code
           git write-tree > .cache/expected-release-tree
           npm ci --ignore-scripts
           npm run release:prepare
@@ -180,6 +181,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git diff --exit-code
           remote="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
           if [[ -n "$remote" ]]; then
             git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"

@@ -1,10 +1,15 @@
 import json
+import os
+import shlex
+import subprocess
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 import versioning
@@ -124,6 +129,140 @@ class ReleaseVersionTests(unittest.TestCase):
         package = json.loads((self.root / "package.json").read_text(encoding="utf-8"))
         self.assertIn(f"python/broader_vids-{target_version}-*.whl", package["files"])
         self.assertNotIn(f"python/broader_vids-{original}-*.whl", package["files"])
+
+    def test_workflow_commits_every_versioned_manifest(self) -> None:
+        source = Path(__file__).parents[1]
+        make_repo(self.root, "0.1.5")
+        script = self.root / "scripts/versioning.py"
+        script.parent.mkdir()
+        shutil.copyfile(source / "scripts/versioning.py", script)
+        environment = {
+            **os.environ,
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "core.autocrlf",
+            "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "core.safecrlf",
+            "GIT_CONFIG_VALUE_1": "false",
+        }
+
+        def run(*command):
+            return subprocess.run(
+                command,
+                cwd=self.root,
+                env=environment,
+                check=True,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=15,
+            )
+
+        def commit(message):
+            run(
+                "git",
+                "-c",
+                "user.name=Release fixture",
+                "-c",
+                "user.email=release@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                f"core.hooksPath={self.root / 'empty-hooks'}",
+                "commit",
+                "-qm",
+                message,
+            )
+
+        run("git", "init", "-q")
+        run("git", "add", ".")
+        commit("Initial fixture")
+        versioning.set_version(self.root, "0.1.6")
+        workflow = yaml.safe_load(
+            (source / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        )
+        step = next(
+            item
+            for item in workflow["jobs"]["prepare"]["steps"]
+            if item.get("name") == "Build a versioned copy of the tested source"
+        )
+        stage = next(
+            line.strip()
+            for line in step["run"].splitlines()
+            if line.strip().startswith("git add ")
+            or "from scripts.versioning import _FILES" in line
+        )
+        arguments = shlex.split(stage)
+        if arguments[0] == "uv":
+            arguments = [sys.executable, *arguments[4:]]
+        run(*arguments)
+        run("git", "diff", "--exit-code")
+        staged = set(run("git", "diff", "--cached", "--name-only").stdout.splitlines())
+        self.assertEqual(staged, set(versioning._FILES))
+        commit("Release fixture")
+        for name in versioning._FILES:
+            self.assertEqual(
+                run("git", "show", f"HEAD:{name}").stdout,
+                (self.root / name).read_text(encoding="utf-8"),
+            )
+        self.assertEqual(
+            json.loads(run("git", "show", "HEAD:.claude-plugin/plugin.json").stdout)[
+                "version"
+            ],
+            "0.1.6",
+        )
+
+    def test_npm_excludes_claude_version_recovery_files(self) -> None:
+        source = Path(__file__).parents[1]
+        metadata = json.loads((source / "package.json").read_text(encoding="utf-8"))
+        files = [
+            name for name in metadata["files"] if name.startswith(".claude-plugin")
+        ]
+        (self.root / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "broader-vids-release-fixture",
+                    "version": "0.0.0",
+                    "files": files,
+                }
+            ),
+            encoding="utf-8",
+        )
+        directory = self.root / ".claude-plugin"
+        directory.mkdir()
+        for name in (
+            "plugin.json",
+            "marketplace.json",
+            ".plugin.json.fixture.bak",
+            ".plugin.json.fixture.tmp",
+        ):
+            (directory / name).write_text("{}", encoding="utf-8")
+        npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
+        self.assertIsNotNone(npm, "Release validation requires npm.")
+        result = subprocess.run(
+            [
+                npm,
+                "pack",
+                "--dry-run",
+                "--ignore-scripts",
+                "--json",
+                "--offline",
+                "--cache",
+                str(self.root / "cache"),
+            ],
+            cwd=self.root,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=20,
+        )
+        packed = {item["path"] for item in json.loads(result.stdout)[0]["files"]}
+        self.assertEqual(
+            packed,
+            {
+                "package.json",
+                ".claude-plugin/plugin.json",
+                ".claude-plugin/marketplace.json",
+            },
+        )
 
     def test_write_failure_rolls_back_already_replaced_files(self) -> None:
         original = make_repo(self.root)

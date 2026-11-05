@@ -282,25 +282,37 @@ function main(args = process.argv.slice(2)) {
       args.length === 2 &&
       ["--help", "-h"].includes(args[1])
     ) {
-      console.log("Usage: broader-vids plugin install [--host codex|claude]");
+      console.log(
+        "Usage: broader-vids plugin install [--host codex|claude] or broader-vids plugin update --host claude",
+      );
       return;
     }
-    if (index !== 0 || args.length !== 2 || args[1] !== "install")
+    if (
+      index !== 0 ||
+      args.length !== 2 ||
+      !["install", "update"].includes(args[1])
+    )
       throw new Error(
-        "Use broader-vids plugin install without profile arguments.",
+        "Use broader-vids plugin install, or plugin update --host claude, without profile arguments.",
       );
     const result = require("./plugin-install.cjs").installPlugin(
       manifest.version,
       invoke,
       process.env,
       host,
+      args[1],
     );
     console.log(JSON.stringify(result, null, 2));
-    console.log(
-      host === "claude"
-        ? "Start a new Claude Code session and invoke the Broader Vids setup skill."
-        : "Start a new Codex conversation and invoke the Broader Vids setup skill.",
-    );
+    if (args[1] === "update")
+      console.log(
+        "Start a new Claude Code session and run setup to refresh the matching runtime.",
+      );
+    else
+      console.log(
+        host === "claude"
+          ? "Start a new Claude Code session and invoke the Broader Vids setup skill."
+          : "Start a new Codex conversation and invoke the Broader Vids setup skill.",
+      );
     return;
   }
   if (args[index] === "data") {

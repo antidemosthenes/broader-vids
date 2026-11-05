@@ -39,19 +39,25 @@ def check(tag=None):
     claude_plugin = read_json(ROOT / ".claude-plugin/plugin.json")
     if claude_plugin["name"] != "broader-vids":
         raise ValueError("The Claude plugin manifest must use the broader-vids name.")
-    versions = [
-        read_json(ROOT / "plugin.json")["version"],
-        claude_plugin["version"],
-        python["project"]["version"],
-        npm_lock["version"],
-        npm_lock["packages"][""]["version"],
-        next(p["version"] for p in lock["package"] if p["name"] == "broader-vids"),
-    ]
+    versions = {
+        "plugin.json": read_json(ROOT / "plugin.json")["version"],
+        ".claude-plugin/plugin.json": claude_plugin["version"],
+        "pyproject.toml": python["project"]["version"],
+        "package-lock.json": npm_lock["version"],
+        "package-lock.json packages['']": npm_lock["packages"][""]["version"],
+        "uv.lock": next(
+            p["version"] for p in lock["package"] if p["name"] == "broader-vids"
+        ),
+    }
     source = (ROOT / "src/broader_vids/__init__.py").read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*"([^"]+)"', source)
-    if not match or match[1] != version or any(v != version for v in versions):
+    versions["src/broader_vids/__init__.py"] = match[1] if match else None
+    mismatches = ", ".join(
+        f"{name}={value!r}" for name, value in versions.items() if value != version
+    )
+    if mismatches:
         raise ValueError(
-            "Node, Python, Codex, Claude, and lock-file versions must agree."
+            f"Release versions must match package.json ({version}): {mismatches}."
         )
     if package.get("repository", {}).get("url") != REPOSITORY:
         raise ValueError("The release repository must match the npm trusted publisher.")
