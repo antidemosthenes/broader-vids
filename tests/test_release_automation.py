@@ -338,6 +338,47 @@ class ReleaseAutomationTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "tag"):
                         release_ci.github_release("0.1.1", directory)
 
+    def test_ci_routes_development_pushes_and_separates_cancellation(self):
+        workflow = yaml.safe_load(
+            (release_ci.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(workflow[True]["push"]["branches"], ["**"])
+        self.assertEqual(workflow[True]["pull_request"]["branches"], ["main"])
+        for event, ref, quick, full in (
+            ("push", "refs/heads/dev", True, False),
+            ("push", "refs/heads/feature/test", True, False),
+            ("push", "refs/heads/main", False, True),
+            ("pull_request", "refs/pull/12/merge", False, True),
+        ):
+            for name, expected in (("quick-checks", quick), ("checks", full)):
+                with self.subTest(event=event, ref=ref, job=name):
+                    condition = workflow["jobs"][name]["if"]
+                    condition = condition.replace("github.event_name", repr(event))
+                    condition = condition.replace("github.ref", repr(ref))
+                    self.assertEqual(
+                        eval(
+                            condition.replace("&&", " and ").replace("||", " or "),
+                            {"__builtins__": {}},
+                            {},
+                        ),
+                        expected,
+                    )
+        group = workflow["concurrency"]["group"]
+        self.assertIn("github.event_name", group)
+        self.assertIn("github.event.pull_request.number || github.ref", group)
+        self.assertTrue(workflow["concurrency"]["cancel-in-progress"])
+        self.assertEqual(
+            workflow["jobs"]["checks"]["strategy"]["matrix"]["os"],
+            ["ubuntu-latest", "windows-latest"],
+        )
+        commands = [
+            step.get("run", "") for step in workflow["jobs"]["quick-checks"]["steps"]
+        ]
+        self.assertIn("npm test", commands)
+        self.assertIn("npm run check:web", commands)
+        self.assertNotIn("uv sync --locked --extra evidence", commands)
+        self.assertFalse(any("playwright install" in command for command in commands))
+
     def test_workflow_releases_only_successful_push_checks_on_main(self):
         workflow = yaml.safe_load(
             (release_ci.ROOT / ".github/workflows/release.yml").read_text()

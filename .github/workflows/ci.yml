@@ -1,16 +1,39 @@
 name: checks
 
-on: [push, pull_request]
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
 
 concurrency:
-  group: checks-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: checks-${{ github.event_name }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  quick-checks:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: uv sync --locked
+      - run: npm ci --ignore-scripts
+      - run: uv run --no-sync ruff check src tests scripts
+      - run: uv run --no-sync ruff format --check src tests scripts
+      - run: npm test
+      - run: npm run check:web
+
   checks:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
