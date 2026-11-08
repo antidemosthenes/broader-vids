@@ -101,6 +101,13 @@ def dashboard_fixture(*, provisional=False):
                         carryover=False,
                         engagement_score={"score": 50},
                     )
+                    if index == 3:
+                        item["ranking_adjustments"] = {
+                            "version": 2,
+                            "score_before_duration_penalty": 85,
+                            "short_video_penalty": 5,
+                            "final_score": 80,
+                        }
                     items.append(item)
                     if not provisional:
                         store.db.execute(
@@ -320,6 +327,16 @@ class DashboardFeedbackTests(unittest.TestCase):
             )
             page.get_by_role("button", name="Score details", exact=True).click()
             self.assertTrue(page.locator("#details-dialog").is_visible())
+            expect(
+                page.locator("#details-dialog").get_by_role(
+                    "row", name="Short-video deduction −5.00 points", exact=True
+                )
+            ).to_be_visible()
+            expect(
+                page.locator("#details-dialog").get_by_role(
+                    "row", name="Final score 80.00 / 100", exact=True
+                )
+            ).to_be_visible()
             page.keyboard.press("Escape")
             self.assertFalse(page.locator("#details-dialog").is_visible())
             self.assertEqual(
@@ -354,6 +371,11 @@ class DashboardFeedbackTests(unittest.TestCase):
                 page.locator("#mobile-review-title").inner_text(), "Score details"
             )
             self.assertFalse(page.locator("#details-dialog").is_visible())
+            expect(
+                page.locator("#mobile-review-body").get_by_role(
+                    "row", name="Short-video deduction −5.00 points", exact=True
+                )
+            ).to_be_visible()
             page.keyboard.press("Escape")
             self.assertEqual(
                 page.locator("#mobile-review-title").inner_text(), "Video review"

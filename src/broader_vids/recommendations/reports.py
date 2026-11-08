@@ -213,7 +213,8 @@ def recommendation_report(store, identifier):
             if k != "account_id"
         },
         "total_model_calls": state["model_calls"]
-        + state.get("planning_model_calls", 0),
+        + state.get("planning_model_calls", 0)
+        + state.get("alignment_model_calls", 0),
         "counts": {
             "fresh_buffer": len(state["buffer"]),
             "eligible_buffer": len(state["buffer"]),
@@ -269,7 +270,7 @@ def write_recommendation_report(store, identifier):
         "",
         f"{report['counts']['eligible_buffer']} eligible candidates → {report['counts']['inspection']} inspection candidates → {report['counts']['quality_assessed']} assessed → {len(report['selected'])} recommendations.",
         "",
-        "Quality estimates are provisional. Topic fit uses curated query tags; authorship remains unverified.",
+        "Quality scores are estimates. Authorship is not independently verified.",
         "",
     ]
     if report["status"] != "completed":

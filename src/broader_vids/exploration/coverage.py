@@ -10,18 +10,116 @@ from broader_vids.storage import utc_now
 MEMORY_ID = hashlib.sha256(b"broader-vids-exploration-memory-v1").hexdigest()[:32]
 MAX_NODES = 1024
 COOLDOWN = 3
+PLATFORMS = ("youtube", "bilibili")
+MAX_COUNTER = 1_000_000_000
+
+
+def empty_summary():
+    return {
+        "version": 2,
+        "sequence": 0,
+        "nodes": [],
+        "usage": {},
+        "platform_usage": {p: {} for p in PLATFORMS},
+        "root_usage": {p: {} for p in PLATFORMS},
+    }
+
+
+def _empty_memory():
+    value = empty_summary()
+    value.pop("nodes")
+    value["rounds"] = {}
+    return _ensure_memory(value)
 
 
 def memory(store):
     row = store.db.execute("SELECT state FROM runs WHERE id=?", (MEMORY_ID,)).fetchone()
-    return (
-        json.loads(row[0])
-        if row
-        else {"version": 1, "sequence": 0, "usage": {}, "rounds": {}}
+    return _ensure_memory(json.loads(row[0])) if row else _empty_memory()
+
+
+def _ensure_memory(value):
+    value.setdefault("version", 1)
+    value.setdefault("sequence", 0)
+    value.setdefault("usage", {})
+    value.setdefault("rounds", {})
+    value.setdefault("platform_usage", {})
+    value.setdefault("root_usage", {})
+    value.setdefault("platform_sequences", {})
+    value.setdefault("platform_imports", {})
+    for platform in PLATFORMS:
+        value["platform_usage"].setdefault(platform, {})
+        value["root_usage"].setdefault(platform, {})
+        if platform not in value["platform_sequences"]:
+            value["platform_sequences"][platform] = max(
+                (
+                    max(cell.get("last_used", 0), cell.get("last_recommended", 0))
+                    for cell in value["platform_usage"][platform].values()
+                ),
+                default=0,
+            )
+        for group in value["rounds"].values():
+            group.setdefault("platform_numbers", {})
+    return value
+
+
+def _compact_round_baselines(store, value):
+    for owner, group in value["rounds"].items():
+        if "novelty_baseline" not in group:
+            continue
+        expected = group.get("expected_platforms")
+        if expected is None:
+            try:
+                run = store.get(owner)
+            except ValueError:
+                run = None
+            if run:
+                if run["settings"].get("kind") == "recommendation_batch":
+                    expected = list(PLATFORMS)
+                elif run["platform"] in PLATFORMS:
+                    expected = [run["platform"]]
+                if expected is not None:
+                    group["expected_platforms"] = list(expected)
+        published = set(group.get("published", []))
+        if expected is not None and set(expected) <= published:
+            group.pop("novelty_baseline", None)
+        elif expected is None and set(PLATFORMS) <= published:
+            group.pop("novelty_baseline", None)
+
+
+def _prune_root_usage(store, value):
+    current = nodes(store)
+    roots = {
+        normalized(domain)
+        for node in current.values()
+        for domain in [node["label"], *node["domains"]]
+    }
+    from broader_vids.preferences import get_profile
+
+    profile = get_profile(store)
+    interests = (
+        {normalized(name) for name in profile["interests"]} if profile else set()
     )
+    for platform in PLATFORMS:
+        usage = value["root_usage"][platform]
+        retained = [key for key in usage if key in roots]
+        retained.sort(
+            key=lambda key: (
+                key in interests,
+                usage[key].get("last_used", 0),
+                usage[key].get("searches", 0),
+                key,
+            ),
+            reverse=True,
+        )
+        value["root_usage"][platform] = {
+            key: usage[key] for key in retained[:MAX_NODES]
+        }
 
 
 def save_memory(store, value):
+    _compact_round_baselines(store, value)
+    if any(len(value["root_usage"][platform]) > MAX_NODES for platform in PLATFORMS):
+        _prune_root_usage(store, value)
     now = utc_now()
     store.db.execute(
         "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,state=excluded.state",
@@ -73,6 +171,21 @@ def round_number(store, owner):
 
 
 @atomic_update
+def platform_number(store, owner, platform):
+    if platform not in PLATFORMS:
+        raise ValueError("Unsupported exploration platform.")
+    round_number(store, owner)
+    value = memory(store)
+    group = value["rounds"][owner]
+    numbers = group.setdefault("platform_numbers", {})
+    if platform not in numbers:
+        value["platform_sequences"][platform] += 1
+        numbers[platform] = value["platform_sequences"][platform]
+        save_memory(store, value)
+    return numbers[platform]
+
+
+@atomic_update
 def reserve(store, owner, platform, identifiers, *, relaxations=()):
     number = round_number(store, owner)
     value = memory(store)
@@ -83,7 +196,51 @@ def reserve(store, owner, platform, identifiers, *, relaxations=()):
 
 
 @atomic_update
-def record_search(store, owner, identifier, saved_round=None):
+def allocation_coverage(store, platform, roots):
+    if platform not in PLATFORMS:
+        raise ValueError("Unsupported exploration platform.")
+    value = memory(store)
+    usage = value["root_usage"][platform]
+    roots = list(dict.fromkeys(roots))
+    existing = [usage[root] for root in roots if root in usage]
+    baseline = {
+        "searches": min((cell["searches"] for cell in existing), default=0),
+        "last_used": min((cell["last_used"] for cell in existing), default=0),
+    }
+    changed = False
+    for root in roots:
+        if root not in usage:
+            usage[root] = dict(baseline)
+            changed = True
+    if changed:
+        save_memory(store, value)
+    return {root: dict(usage.get(root, baseline)) for root in roots}
+
+
+@atomic_update
+def record_search(
+    store,
+    owner,
+    identifier,
+    saved_round=None,
+    *,
+    platform=None,
+    domain=None,
+    task_id=None,
+    source_run=None,
+):
+    if (
+        source_run is not None
+        and store.db.execute(
+            "SELECT 1 FROM domain_observations WHERE run_id=? AND node_id=?",
+            (source_run, identifier),
+        ).fetchone()
+    ):
+        return
+    if platform is not None:
+        if platform not in PLATFORMS:
+            raise ValueError("Unsupported exploration platform.")
+        platform_ordinal = platform_number(store, owner, platform)
     value = memory(store)
     number = value["rounds"].get(owner, {}).get("number") or saved_round
     if number is None:
@@ -92,10 +249,36 @@ def record_search(store, owner, identifier, saved_round=None):
     cell = value["usage"].setdefault(
         identifier, {"searches": 0, "last_used": 0, "last_recommended": 0}
     )
-    cell.update(
-        searches=min(1_000_000_000, cell["searches"] + 1),
-        last_used=max(cell["last_used"], number, value["sequence"]),
-    )
+    should_count = True
+    if platform is not None:
+        group = value["rounds"].setdefault(
+            owner, {"number": number, "platforms": {}, "published": []}
+        )
+        accounted = group.setdefault("accounted", [])
+        key = f"{platform}:{task_id if task_id is not None else identifier}"
+        should_count = key not in accounted
+        if should_count:
+            accounted.append(key)
+            del accounted[:-256]
+            branch = value["platform_usage"][platform].setdefault(
+                identifier, {"searches": 0, "last_used": 0, "last_recommended": 0}
+            )
+            branch["searches"] = min(MAX_COUNTER, branch["searches"] + 1)
+            branch["last_used"] = max(branch["last_used"], platform_ordinal)
+            if domain:
+                root = normalized(domain)
+                root_cell = value["root_usage"][platform].setdefault(
+                    root, {"searches": 0, "last_used": 0}
+                )
+                root_cell["searches"] = min(MAX_COUNTER, root_cell["searches"] + 1)
+                root_cell["last_used"] = max(
+                    root_cell["last_used"], number, value["sequence"]
+                )
+    if should_count:
+        cell.update(
+            searches=min(MAX_COUNTER, cell["searches"] + 1),
+            last_used=max(cell["last_used"], number, value["sequence"]),
+        )
     save_memory(store, value)
 
 
@@ -108,6 +291,10 @@ def record_recommendations(store, run):
     if plan.get("policy_version", 1) < 2:
         return
     owner = plan.get("coverage_owner", discovery)
+    branch_mode = plan.get("rotation_version") == 2 and run.get("platform") in PLATFORMS
+    platform_ordinal = (
+        platform_number(store, owner, run["platform"]) if branch_mode else None
+    )
     value = memory(store)
     number = max(plan.get("coverage_round", value["sequence"]), value["sequence"])
     group = value["rounds"].get(owner)
@@ -116,10 +303,18 @@ def record_recommendations(store, run):
         for origin in item.get("origins", []):
             identifier = origin.get("node_id")
             if identifier in known:
-                cell = value["usage"].setdefault(
+                counters = (
+                    value["platform_usage"][run["platform"]]
+                    if branch_mode
+                    else value["usage"]
+                )
+                cell = counters.setdefault(
                     identifier, {"searches": 0, "last_used": 0, "last_recommended": 0}
                 )
-                cell["last_recommended"] = max(cell["last_recommended"], number)
+                cell["last_recommended"] = max(
+                    cell["last_recommended"],
+                    platform_ordinal if branch_mode else number,
+                )
     if group is not None and run["platform"] not in group["published"]:
         group["published"].append(run["platform"])
     save_memory(store, value)
@@ -151,8 +346,14 @@ def export_summary(store):
         "origin",
         "status",
     )
+    live_roots = {
+        normalized(domain)
+        for key in chosen
+        if key in current
+        for domain in [current[key]["label"], *current[key]["domains"]]
+    }
     summary = {
-        "version": 1,
+        "version": 2,
         "sequence": value["sequence"],
         "nodes": [
             {name: current[key][name] for name in fields}
@@ -160,6 +361,38 @@ def export_summary(store):
             if key in current
         ],
         "usage": {key: cell for key, cell in value["usage"].items() if key in chosen},
+        "platform_usage": {
+            platform: {
+                key: {
+                    **cell,
+                    **{
+                        name: value["sequence"]
+                        - (value["platform_sequences"][platform] - cell[name])
+                        if cell[name]
+                        else 0
+                        for name in ("last_used", "last_recommended")
+                    },
+                }
+                for key, cell in value["platform_usage"][platform].items()
+                if key in chosen
+            }
+            for platform in PLATFORMS
+        },
+        "root_usage": {
+            platform: {
+                key: value["root_usage"][platform][key]
+                for key in sorted(
+                    (key for key in value["root_usage"][platform] if key in live_roots),
+                    key=lambda key: (
+                        value["root_usage"][platform][key]["last_used"],
+                        value["root_usage"][platform][key]["searches"],
+                        key,
+                    ),
+                    reverse=True,
+                )[:MAX_NODES]
+            }
+            for platform in PLATFORMS
+        },
     }
     validate_summary(summary)
     return summary
@@ -168,9 +401,21 @@ def export_summary(store):
 def validate_summary(summary):
     if (
         not isinstance(summary, dict)
-        or set(summary) != {"version", "sequence", "nodes", "usage"}
+        or summary.get("version") not in (1, 2)
+        or set(summary)
+        != (
+            {"version", "sequence", "nodes", "usage"}
+            if summary.get("version") == 1
+            else {
+                "version",
+                "sequence",
+                "nodes",
+                "usage",
+                "platform_usage",
+                "root_usage",
+            }
+        )
         or type(summary["version"]) is not int
-        or summary["version"] != 1
     ):
         raise ValueError("Invalid exploration coverage summary.")
 
@@ -256,6 +501,46 @@ def validate_summary(summary):
             or max(cell["last_used"], cell["last_recommended"]) > summary["sequence"]
         ):
             raise ValueError("Invalid exploration coverage counters.")
+    if summary["version"] == 2:
+        summary_roots = {
+            normalized(domain)
+            for node in summary["nodes"]
+            for domain in [node["label"], *node["domains"]]
+        }
+        for field, cell_fields in (
+            ("platform_usage", {"searches", "last_used", "last_recommended"}),
+            ("root_usage", {"searches", "last_used"}),
+        ):
+            branches = summary[field]
+            if not isinstance(branches, dict) or set(branches) != set(PLATFORMS):
+                raise ValueError("Invalid platform exploration coverage.")
+            for platform, entries in branches.items():
+                if not isinstance(entries, dict) or len(entries) > MAX_NODES:
+                    raise ValueError(
+                        "Exploration coverage exceeds its supported limits."
+                    )
+                for key, cell in entries.items():
+                    canonical = (
+                        key in current
+                        if field == "platform_usage"
+                        else isinstance(key, str)
+                        and key == normalized(key)
+                        and label(key)
+                        and key in summary_roots
+                    )
+                    if (
+                        not canonical
+                        or not isinstance(cell, dict)
+                        or set(cell) != cell_fields
+                        or not all(integer(n) for n in cell.values())
+                        or max(
+                            cell.get("last_used", 0), cell.get("last_recommended", 0)
+                        )
+                        > summary["sequence"]
+                    ):
+                        raise ValueError(
+                            "Invalid platform exploration coverage counters."
+                        )
 
 
 def _merge_nodes(store, summary):
@@ -325,6 +610,10 @@ def import_summary(store, summary):
         for name in ("last_used", "last_recommended"):
             if cell[name]:
                 cell[name] += shift
+    for entries in local["root_usage"].values():
+        for cell in entries.values():
+            if cell["last_used"]:
+                cell["last_used"] += shift
     for group in local["rounds"].values():
         group["number"] += shift
     imports = local.setdefault("imports", {})
@@ -336,6 +625,30 @@ def import_summary(store, summary):
     imports[checksum] = offset
     local["imports"] = dict(list(imports.items())[-32:])
     local["sequence"] = sequence
+    platform_offsets = {}
+    if summary["version"] == 2:
+        platform_imports = local["platform_imports"]
+        for platform in PLATFORMS:
+            previous_clock = local["platform_sequences"][platform]
+            new_clock = max(previous_clock, summary["sequence"])
+            clock_shift = new_clock - previous_clock
+            if clock_shift:
+                for cell in local["platform_usage"][platform].values():
+                    for name in ("last_used", "last_recommended"):
+                        if cell[name]:
+                            cell[name] += clock_shift
+                for group in local["rounds"].values():
+                    if group.get("platform_numbers", {}).get(platform):
+                        group["platform_numbers"][platform] += clock_shift
+                for offsets in platform_imports.values():
+                    if platform in offsets:
+                        offsets[platform] += clock_shift
+            local["platform_sequences"][platform] = new_clock
+            platform_offsets[platform] = platform_imports.get(checksum, {}).get(
+                platform, new_clock - summary["sequence"]
+            )
+        platform_imports[checksum] = platform_offsets
+        local["platform_imports"] = dict(list(platform_imports.items())[-32:])
     for node in added:
         put_node(store, node)
     for key, cell in summary["usage"].items():
@@ -346,4 +659,33 @@ def import_summary(store, summary):
         for name in ("last_used", "last_recommended"):
             restored = cell[name] + offset if cell[name] else 0
             target[name] = max(target[name], restored)
+    if summary["version"] == 2:
+        for field, names in (
+            ("platform_usage", ("searches", "last_used", "last_recommended")),
+            ("root_usage", ("searches", "last_used")),
+        ):
+            for platform, entries in summary[field].items():
+                for key, cell in entries.items():
+                    target = local[field][platform].setdefault(
+                        key, {name: 0 for name in names}
+                    )
+                    for name in names:
+                        restored = cell[name]
+                        if name != "searches" and restored:
+                            age_offset = (
+                                platform_offsets[platform]
+                                if field == "platform_usage"
+                                else offset
+                            )
+                            restored += age_offset
+                        target[name] = max(target[name], restored)
+    from broader_vids.preferences import get_profile
+
+    profile = get_profile(store)
+    if profile:
+        normalized_interests = sorted(normalized(name) for name in profile["interests"])
+        local["root_profiles"] = {
+            platform: list(normalized_interests) for platform in PLATFORMS
+        }
+    _prune_root_usage(store, local)
     save_memory(store, local)

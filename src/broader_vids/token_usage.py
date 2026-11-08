@@ -11,6 +11,7 @@ STAGES = {
     "screening": "Search and screening",
     "preparation": "Evidence preparation",
     "assessment": "Quality assessment",
+    "alignment": "Broad-interest alignment",
     "selection": "Scoring and selection",
 }
 

@@ -192,6 +192,13 @@ def prepare_rotation(store, run, save, remaining, model_runner, usage_owner=None
     parent = store.get(owner)
     owner = parent["settings"].get("batch_id") or owner
     state["coverage_owner"] = owner
+    if state.get("rotation_version", 1) == 2:
+        from broader_vids.exploration.allocation import allocate
+
+        with transaction(store):
+            allocate(store, state, owner, run["platform"])
+        state["platform"] = run["platform"]
+        save()
     current = nodes(store)
     usage = memory(store)["usage"]
     parents = {
@@ -207,6 +214,10 @@ def prepare_rotation(store, run, save, remaining, model_runner, usage_owner=None
             or usage.get(n["id"], {}).get("searches", 0) >= 3
         )
     }
+    if state.get("rotation_version", 1) == 2:
+        from broader_vids.exploration.allocation import expansion_parents
+
+        expand = expansion_parents(store, state)
     if expand and len(state["attempts"]) >= run["settings"]["max_planning_calls"] - 1:
         state["catalog_warning"] = (
             "The remaining planning allowance is reserved for query writing."
@@ -295,5 +306,10 @@ def prepare_rotation(store, run, save, remaining, model_runner, usage_owner=None
             attempt["seconds"] = round(time.monotonic() - started, 3)
             save()
     with transaction(store):
-        _select(store, state, owner, run["platform"])
+        if state.get("rotation_version", 1) == 2:
+            from broader_vids.exploration.allocation import select_branches
+
+            select_branches(store, state, owner, run["platform"])
+        else:
+            _select(store, state, owner, run["platform"])
     save()

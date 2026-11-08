@@ -206,12 +206,13 @@ Preference import and export do not transfer usage history.
 | Area | Main files | Responsibility |
 | --- | --- | --- |
 | Discovery | `queries.py`, `languages.py`, `sources.py`, `state.py`, `service.py` | Build searches, check keyword scripts, parse results, and retain discovery progress |
-| Exploration | `domains.py`, `coverage.py`, `rotation.py`, `proposals.py`, `planning.py` | Select underused leaf topics, coordinate reservations, and plan queries |
+| Exploration | `domains.py`, `coverage.py`, `allocation.py`, `rotation.py`, `proposals.py`, `planning.py` | Allocate per-platform topics by broad-root use, select branches, and plan queries |
 | Evidence | `service.py`, `media.py`, `downloader.py`, `captions.py`, `browser.py` | Resolve playable videos and collect bounded evidence |
 | Evidence workers | `preparation_worker.py`, `asr_worker.py` | Separate media preparation and optional transcription processes |
 | Assessment | `assessment.py`, `worker_instructions.txt`, `reports.py`, `retention.py` | Check model output, report evidence limits, and remove completed media |
 | Recommendations | `service.py`, `batch.py`, `parallel.py`, `timing.py` | Coordinate platform jobs, worker limits, and recovery |
 | Ranking | `engagement.py`, `metadata.py`, `originality.py`, `quality.py`, `ranking.py`, `diversity.py`, `personalization.py` | Screen candidates and select the final list |
+| Interest alignment | `learning/alignment.py`, `learning/features.py`, `learning/scoped.py` | Map assessed labels to saved interests and build learning features |
 | Learning | `features.py`, `topic_labels.py`, `inference.py`, `scoped.py`, `depth.py`, `service.py` | Capture predictors, fit models, and calculate predictions |
 | Preference transfer | `learning/transfer.py`, `learning/posterior.py`, `learning/baseline.py`, `web/static/preferences.js` | Transfer learned parameters without video records |
 | Feedback | `feedback.py`, `calibration.py`, `evaluation.py`, `evidence.py`, `annotations.py` | Store judgments, reserve test videos, and record evidence corrections |
@@ -270,7 +271,7 @@ Frozen evaluation records retain the tested model identity.
 Preference transfer accepts format 4 with learning model version 8 and feature version 1.
 Manual creator rules transfer separately from learning parameters and replace the manual lists transactionally on import.
 The export omits account-specific blacklist copies and sign-in data.
-It includes a bounded exploration summary with at most 1,024 nodes and aggregate counts and round ages.
+It includes aggregate coverage counters, including per-platform and broad-root use.
 It includes watched video IDs without titles, ratings, or recommendation records.
 Import adds their watched state without clearing local video states.
 It does not change SQLite schema 12.

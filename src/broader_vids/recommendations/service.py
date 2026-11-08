@@ -128,6 +128,9 @@ def create_recommendation(
         "creator_policy_version": 1,
         "schema": 1,
         "screening_policy_version": 5,
+        "ranking_policy_version": 2,
+        "interest_alignment_version": 1,
+        "rotation_version": 2,
         "collection_policy": default_collection_policy(),
         "inspection_limit": DEFAULT_INSPECTION_LIMIT,
         "worker_policy_version": 2,
@@ -176,8 +179,38 @@ def create_recommendation(
     )
 
 
-def _publish(store, run, remaining=None):
+def _publish(
+    store, run, remaining=None, *, alignment_runner=None, runtime=None, save=None
+):
     from broader_vids.learning.inference import work_scope
+    from broader_vids.learning.alignment import prepare_alignment
+
+    if remaining is None:
+        started, initial_elapsed = time.monotonic(), run["elapsed"]
+
+        def remaining():
+            return (
+                effective_limit(run["settings"])
+                - initial_elapsed
+                - (time.monotonic() - started)
+            )
+
+        def save():
+            run["elapsed"] = initial_elapsed + time.monotonic() - started
+            store.save(run)
+
+    current_profile = get_profile(store)
+    if (
+        not current_profile
+        or current_profile["revision"] != run["settings"]["profile"]["revision"]
+    ):
+        raise ValueError(
+            "The profile changed; start a new run to rescore with the revised profile."
+        )
+    save = save or (lambda: store.save(run))
+    prepare_alignment(
+        store, run, save, remaining, runner=alignment_runner, runtime=runtime
+    )
 
     def check():
         if remaining is not None and remaining() <= 0:
@@ -253,6 +286,9 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
         k: v for k, v in state["evidence"].items() if v.get("quality") is not None
     }
     if prepare_only:
+        from broader_vids.learning.alignment import aligned_items
+
+        candidates = aligned_items(run, candidates)
         recent = Counter()
         rows = store.db.execute(
             "SELECT v.payload FROM recommendation_exposures e JOIN video_state v USING(canonical_id) WHERE v.platform=? ORDER BY e.created_at DESC LIMIT 100",
@@ -270,6 +306,7 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
             learning=learning,
             creator_rules=state.get("creator_rules"),
             policy_version=run["settings"].get("screening_policy_version", 2),
+            ranking_policy_version=run["settings"].get("ranking_policy_version", 1),
         )
         return
     state["pending_at_publication"] = len(pending)
@@ -326,7 +363,9 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
         )
 
 
-def publish_recommendation(store, identifier, allow_incomplete=False):
+def publish_recommendation(
+    store, identifier, allow_incomplete=False, *, alignment_runner=None
+):
     run = store.get(identifier)
     if run["settings"].get("kind") != "recommendation":
         raise ValueError("Not a recommendation run.")
@@ -335,7 +374,7 @@ def publish_recommendation(store, identifier, allow_incomplete=False):
         run = store.get(identifier)
         if run["state"]["phase"] == "published":
             return run
-        if run["state"]["phase"] != "assess":
+        if run["state"]["phase"] not in {"assess", "alignment"}:
             raise ValueError("Finish screening before publishing recommendations.")
         if not allow_incomplete and run["state"]["assessment_index"] != len(
             run["state"]["shortlist"]
@@ -343,7 +382,7 @@ def publish_recommendation(store, identifier, allow_incomplete=False):
             raise ValueError(
                 "Assessment remains incomplete; use --allow-incomplete for a clearly labeled provisional digest."
             )
-        _publish(store, run)
+        _publish(store, run, alignment_runner=alignment_runner)
     return store.get(identifier)
 
 
@@ -389,6 +428,7 @@ def execute_recommendation(
     runtime=None,
     batch_id=None,
     progress=None,
+    alignment_runner=None,
 ):
     initial = store.get(identifier)
     if initial["settings"].get("kind") != "recommendation":
@@ -487,6 +527,7 @@ def execute_recommendation(
                         assessment_model=settings["assessment_model"],
                         reasoning_effort=settings["reasoning_effort"],
                         planning_policy=2,
+                        rotation_version=settings.get("rotation_version", 1),
                         **host_options(settings.get("worker_host", "codex")),
                     )
                     save()
@@ -801,7 +842,14 @@ def execute_recommendation(
                     "The parent stopped before publication; progress is checkpointed."
                 )
             run["elapsed"] = initial_elapsed + time.monotonic() - started
-            _publish(store, run, remaining)
+            _publish(
+                store,
+                run,
+                remaining,
+                alignment_runner=alignment_runner,
+                runtime=runtime,
+                save=save,
+            )
         except (BudgetExhausted, EvidencePending, AccessPaused) as error:
             from broader_vids.evidence.failures import failure_details
 
@@ -847,6 +895,14 @@ def _validate_current_round(run):
     ):
         raise ValueError(
             "This recommendation uses unsupported round policies; start a new round."
+        )
+    if (
+        settings.get("rotation_version", 1) not in (1, 2)
+        or settings.get("ranking_policy_version", 1) not in (1, 2)
+        or settings.get("interest_alignment_version", 0) not in (0, 1)
+    ):
+        raise ValueError(
+            "This recommendation uses unsupported exploration or ranking settings; start a new round."
         )
     if settings.get("screening_policy_version") != CURRENT_SCREENING_POLICY:
         raise ValueError(

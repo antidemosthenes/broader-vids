@@ -15,8 +15,8 @@ Setup preserves the existing profile unless you explicitly request Reset or Clea
 
 First-time setup introduces chat recommendations and the local dashboard.
 Choose the included starter preset, enter interests manually, or import preferences.
-The starter preset uses sanitized interests, model parameters, and uncertainty from the owner's export.
-It contains no watched IDs, video history, topic coverage, or creator exclusions.
+The preset uses a sanitized copy of a read-only export validated for preference format 4, model 8, and feature 1.
+Setup does not change the source export. Selecting the starter preset does not require Reset.
 An import asks for the full local JSON file path.
 For an existing profile, choose whether to keep or change its preferences.
 Keep preserves the saved preferences and sources. It skips source selection.
@@ -82,15 +82,26 @@ For example, mathematics can contain algebra, which can contain algebraic geomet
 The hierarchy describes search coverage.
 It does not prove that you like every child topic.
 
-Each new recommendation round targets twelve existing leaf topics and five new topics.
-The program selects existing topics before AI query writing.
-It favors underused branches and familiar topics.
-When alternatives exist, it skips narrow topics that appeared in recommendations during the last three rounds.
-Both platforms in one recommendation batch share topic reservations.
-The engine records when it relaxes a reservation or cooldown because it finds few alternatives.
-On a cold start, the AI can first propose subdivisions for selected topics.
-The AI then writes paired queries for selected concepts: English for YouTube and Simplified Chinese for Bilibili.
-The plan uses at most two calls for subdivision and query writing.
+Each platform allocates twelve existing-topic slots and five new-topic slots per round.
+The first six allocation slots use familiar broad roots when those roots exist.
+
+For later slots, the engine chooses the familiar or unrelated lane by eligible-root counts.
+The familiar lane weight is three times its eligible-root count.
+The unrelated lane weight equals its eligible-root count.
+The engine chooses a least-served root in the selected lane and breaks ties at random.
+
+The engine selects branches after root allocation.
+Optional subdivisions do not increase the topic allocation.
+A capacity limit can reduce the allocation. The report shows each reduction.
+
+Platforms track topic use independently, so their rounds can overlap.
+A branch cooldown covers the last three rounds for that platform.
+YouTube-only rounds do not age the Bilibili cooldown.
+A shared batch deduplicates new topic proposals across platforms at its baseline.
+It does not force the platforms to choose different topics.
+
+Legacy rounds retain their saved policies when they resume.
+New rounds use rotation version 2 and ranking policy 2.
 The language rule changes search text, not interest labels or hierarchy levels.
 Existing topic labels and aliases stay stable as the hierarchy grows.
 The engine converts Traditional Chinese keywords to Simplified Chinese and rejects incompatible scripts before a keyword search.
@@ -167,7 +178,8 @@ flowchart TD
   K -- "Access challenge or exhausted run allowance" --> P
   K -- "Candidate failure: continue other inspections" --> K
   K --> L["Recheck duration and exclusions and require assessed quality of at least 60"]
-  L --> M["Prefer distinct narrow topics and search queries; rank eligible choices by the calibrated full score"]
+  L --> LA["Align assessed labels and summary with saved interests in a text-only batch"]
+  LA --> M["Prefer the lowest topic and query overlap; compare full scores after duration adjustment"]
   M --> N["Publish up to 10 recommendations for this platform"]
   P --> O["Show a provisional preview when eligible assessments exist"]
 ```
@@ -319,7 +331,23 @@ The ranking combines quality, interest, community response, recency, and creator
 Feedback can change the learned ranking.
 The [scoring document](SCORING.md) explains the formulas and limits.
 
-The engine selects the final ten by the full recommendation score after quality assessment.
+After quality assessment, the engine aligns assessed labels and summaries with saved interests.
+
+Selection strictly minimizes topic and query overlap before it compares scores.
+This favors distinct videos. Repeats remain possible when all remaining videos overlap.
+This text-only batch contains at most thirty-five candidates.
+It matches medium- or high-confidence canonical topics.
+The alignment uses assessed content, not query origin.
+It preserves existing labels, manual narrow-topic feedback, and depth feedback.
+An interest edit does not trigger a full reassessment.
+
+If alignment fails, the engine retries three times after the initial call.
+It then uses exact matches and reports the fallback.
+
+The engine applies a duration deduction after the learned final score: 10 × clamp((300 − t) / 240, 0, 1).
+The deduction is 7.5 at two minutes, 5 at three, 2.5 at four, and 0 at five minutes.
+The adjusted score has a floor of zero.
+The existing evidence quality gate and screening rules remain unchanged.
 It applies no unrelated-topic quota.
 Unwatched recommendations can appear again.
 Their history remains saved even when they are outside the current list.
@@ -419,7 +447,7 @@ Open **Preferences** in the dashboard.
 Broader interests and import/export share one page.
 After import, edit the imported interests in place and select Save if needed.
 Save interest edits before exporting.
-Export saves your interests, learned weights, parameter uncertainty, watched video IDs, a bounded topic-coverage summary, and manual creator exclusions.
+Export saves interests, learned weights and uncertainty, watched IDs, aggregate coverage, and manual creator exclusions.
 Import previews a format 4 file before replacing those parameters.
 Broader Vids saves the earlier parameters in a local recovery file first.
 

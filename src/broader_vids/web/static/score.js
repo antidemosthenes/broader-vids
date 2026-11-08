@@ -37,6 +37,17 @@ export function scoreDetails(item, weights) {
     '<p class="note">Scores belong to this recommendation round. New feedback affects later rounds.</p><h4 class="score-heading">Final score / 100</h4><table><thead><tr><th>Component</th><th>Score / 100</th><th>Weight</th><th>Points</th></tr></thead><tbody>' +
     rows +
     "</tbody></table>";
+  if (item.ranking_adjustments?.version === 2) {
+    const adjustment = item.ranking_adjustments;
+    html +=
+      '<h4 class="score-heading">Short-video adjustment</h4><table><tbody><tr><th scope="row">Before deduction</th><td>' +
+      num(adjustment.score_before_duration_penalty) +
+      ' / 100</td></tr><tr><th scope="row">Short-video deduction</th><td>−' +
+      num(adjustment.short_video_penalty) +
+      ' points</td></tr><tr><th scope="row">Final score</th><td>' +
+      num(adjustment.final_score) +
+      " / 100</td></tr></tbody></table>";
+  }
   if (item.selection_diversity) {
     html +=
       '<p class="note">Topic diversity: ' +
@@ -192,6 +203,6 @@ export function scoreDetails(item, weights) {
       "</p>";
   }
   html +=
-    '<p class="note">Rates are shrunk toward a platform baseline using 1,000 prior views, then normalized. Missing rates use a neutral score of 50/100. In the final score YouTube likes have a maximum 5-point contribution; Bilibili likes, coins and favorites each have a maximum 1.67-point contribution. These rates are separate from the content judgment.</p><p class="note">Before detailed assessment, screening uses 70% community response + 30% title-anchor support within protected topic lanes. Topic fit currently uses query tags. Quality estimates remain provisional.</p>';
+    '<p class="note">Rates are shrunk toward a platform baseline using 1,000 prior views, then normalized. Missing rates use a neutral score of 50/100. In the final score YouTube likes have a maximum 5-point contribution; Bilibili likes, coins and favorites each have a maximum 1.67-point contribution. These rates are separate from the content judgment.</p><p class="note">Before detailed assessment, screening combines community response, title-anchor support, and available preference estimates within protected topic lanes. The video details show the topic-fit evidence. Quality scores are estimates.</p>';
   return html;
 }

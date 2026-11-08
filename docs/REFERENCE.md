@@ -146,8 +146,8 @@ Repeat `--interest` for every subject you want to retain.
 It does not infer interests from your watch history.
 The starter preset command previews its changes by default.
 Add `--apply` to import the preset and create the import backup.
-The preset includes sanitized interests, parameters, and parameter uncertainty.
-It excludes watched IDs, individual history, topic coverage, and creator exclusions.
+The preset includes interests, parameters, and parameter uncertainty from the supplied export.
+It clears watched IDs, creator exclusions, and exploration progress.
 
 ## Export or import learned preferences
 
@@ -175,11 +175,17 @@ Import checks the scoring version, checksum, and parameter uncertainty.
 It rejects incompatible or invalid files before changing preferences.
 
 Format 4 uses learning model version 8 and feature version 1.
-It transfers interests, learned parameters and their uncertainty, watched video IDs, a bounded exploration summary, and manual creator exclusions.
+It transfers interests, learned parameters and uncertainty, watched IDs, aggregate exploration coverage, and manual creator exclusions.
 Imports mark matching IDs as watched to prevent exact video repeats.
 Imports of other formats or model versions fail before they change preferences.
-The exploration summary contains at most 1,024 hierarchy nodes, aggregate counts, and relative round ages.
+Preference file format 4 remains unchanged.
+
+Use an updated plugin to read and write coverage summary version 2.
+Coverage summary version 2 contains at most 1,024 hierarchy nodes and aggregate counts.
+It includes overall, per-platform, and broad-root use counters.
 It contains no individual video history.
+Imports accept version 1 summaries. They start new counters at zero and preserve old aggregate counts.
+Merges use maximum counter values, so repeated imports do not add duplicate use.
 Files exclude titles, individual ratings, calibration examples, and recommendation history.
 They exclude tag rules, account-specific blacklist copies, account data, cookies, media, and dashboard settings.
 Manual creator rules use platform-specific stable IDs and names, with at most 10,000 rules per file.
@@ -419,6 +425,9 @@ uv run --no-sync broader-vids publish RUN_ID --allow-incomplete
 
 Use `--allow-incomplete` only when you want a partial list from the assessed subset.
 The report identifies that result as partial.
+Manual publication uses the same content-alignment step as automatic publication.
+It retains the round's saved model settings and remaining allowances.
+If alignment cannot finish, the report shows unresolved mappings and uses exact matches.
 
 ## Review and rate videos
 
@@ -597,6 +606,9 @@ Closing the dashboard server cancels a sign-in that has not reached activation.
 Select Token usage in the dashboard to inspect a saved recommendation round.
 The report remains available before publication and after a pause or failure.
 It shows input tokens, output tokens, cached input, and each step's share of reported tokens.
+
+Broad-interest alignment appears as its own model-usage stage.
+The stage reports alignment calls separately from quality assessment.
 Reported tokens equal input plus output. Input totals include cached input.
 Local search, screening, evidence preparation, and scoring do not use model tokens.
 Quality assessment combines caption and frame input in the same model call.
