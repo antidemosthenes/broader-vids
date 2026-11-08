@@ -98,6 +98,18 @@ Do not repeat the introduction for a completed profile during routine checks.
 Check Node.js 20 or later, UV, and Codex CLI availability.
 Report exact repair steps for missing system tools.
 Run `setup --evidence` to install the external runtime and evidence dependencies when needed.
+Setup creates the runtime directory before platform or interest configuration.
+On Windows, it uses UV to select Python and Python's standard module to create the virtual environment.
+If copied Windows launchers cannot initialize, setup tries an executable-link environment in the same directory once.
+It verifies isolation before installing packages. Do not disable the check or move data to make it pass.
+If the host denies file access, request its normal permission for the same data directory before retrying.
+If access was already granted in this session, do not repeat the same permission request or installation without a changed condition.
+If isolation verification fails, run `setup --check` in this same host conversation and permission context.
+Show its reason, prefix, base prefix, and access error. This command does not install packages or change profile data.
+It briefly holds a launcher lease and releases that lease after the check.
+Do not compare physical sandbox paths from an external terminal to diagnose this check.
+Do not move the profile or select another directory unless the user requests that change.
+Do not disable UV's protection for externally managed Python installations.
 Install optional transcription with `setup --asr` only when requested.
 Do not reinstall a working runtime during normal recommendation requests.
 If the launcher reports a missing or mismatched build receipt, refresh the runtime with `setup --evidence`.
