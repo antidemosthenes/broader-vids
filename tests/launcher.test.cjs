@@ -34,6 +34,15 @@ test('repeated state options agree with argparse last-option precedence', () => 
   assert.throws(() => dataRoot(['--data-dir=first', '--data-dir='], {}));
 });
 
+test('Windows environment creation uses standard Python while Linux retains UV venv', () => {
+  const { environmentArguments } = require('../bin/broader-vids.cjs');
+  const runtime = path.resolve('profile #! with spaces', 'runtimes', 'fixture');
+  assert.deepEqual(environmentArguments(runtime, 'win32'), ['run', '--no-project', '--python', '>=3.12', 'python', '-m', 'venv', '--without-pip', '--copies', runtime]);
+  assert.equal(environmentArguments(runtime, 'win32', true).includes('--symlinks'), true);
+  assert.throws(() => environmentArguments('profile;name', 'win32'), /semicolon/);
+  assert.deepEqual(environmentArguments(runtime, 'linux'), ['venv', '--allow-existing', '--python', '>=3.12', runtime]);
+});
+
 test('same-version rebuilds use different immutable wheel cache paths', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-wheel-'));
   try {
@@ -55,22 +64,34 @@ test('same-version rebuilds use different immutable wheel cache paths', () => {
 
 test('setup receipts gate stale engines and refresh atomically across same-version rebuilds', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'broader-vids-build-lifecycle-'));
-  const packageRoot = path.join(directory, 'plugin');
+  const packageRoot = path.join(directory, 'plugin #! 100%');
   const bin = path.join(packageRoot, 'bin');
   const python = path.join(packageRoot, 'python');
   const manifest = require('../package.json');
   const entrypoint = path.join(bin, 'broader-vids.cjs');
-  const runtime = path.join(directory, 'profile', 'runtimes', manifest.version);
-  const executable = path.join(runtime, process.platform === 'win32' ? 'Scripts' : 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
+  const runtime = path.join(directory, 'profile with #! and spaces', 'runtimes', manifest.version);
+  const executable = path.join(runtime, 'Scripts', 'python.exe');
   const receipt = path.join(runtime, 'broader-vids-build.json');
-  const profile = path.join(directory, 'profile');
+  const profile = path.join(directory, 'profile with #! and spaces');
   const calls = [];
   let failNextPip = false;
+  let failRuntimeProbe = false;
+  let unreadableConfiguration = false;
+  let inaccessibleConfiguration = false;
+  let resolvedSandboxPrefix;
+  let foreignRuntimeIdentity = false;
+  let requiresLinkedRuntime = false;
+  let linkedRuntime = false;
+  let refuseRuntimeLinks = false;
+  let linkedRuntimeDirectory = false;
+  let linkedConfiguration = false;
   const uv = (args) => {
     calls.push({ command: 'uv', args });
-    if (args[0] === 'venv') {
+    if (args[0] === 'venv' || (args[0] === 'run' && args.includes('venv'))) {
       fs.mkdirSync(path.dirname(executable), { recursive: true });
+      linkedRuntime = args.includes('--symlinks') && !refuseRuntimeLinks;
       fs.writeFileSync(executable, 'fake python executable');
+      fs.writeFileSync(path.join(runtime, 'pyvenv.cfg'), 'include-system-site-packages = false');
       return { status: 0 };
     }
     if (args[0] === 'pip' && failNextPip) {
@@ -79,8 +100,23 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     }
     return { status: 0 };
   };
-  const spawnSync = (command, args) => {
+  const spawnSync = (command, args, options) => {
+    if (command === 'uv' || command === executable) {
+      for (const name of ['PYTHONHOME', 'PYTHONPATH', '__PYVENV_LAUNCHER__', 'UV_INTERNAL__PYTHONHOME']) {
+        assert.equal(options.env[name], undefined);
+      }
+    }
     if (command === 'uv') return uv(args);
+    if (command === executable && args[0] === '-I') {
+      calls.push({ command, args });
+      const launcher = path.join(profile, '.launcher');
+      if (!fs.existsSync(path.join(launcher, 'setup.json'))) {
+        assert.equal(fs.readdirSync(launcher).filter((name) => name.endsWith('.use.json')).length, 1);
+        assert.throws(() => createRequire(entrypoint)('./runtime-lock.cjs').withSetup(profile, () => {}), /holds this profile/);
+      }
+      const identity = fs.statSync(runtime, { bigint: true });
+      return { status: 0, stdout: JSON.stringify({ root_identity: [identity.dev.toString(), foreignRuntimeIdentity ? '0' : identity.ino.toString()], prefix: failRuntimeProbe ? packageRoot : (resolvedSandboxPrefix || runtime), base_prefix: packageRoot, interpreter_executable: executable, environment_matches_executable: !failRuntimeProbe, isolated: !failRuntimeProbe, python_version: [3, 13], configuration_readable: !(unreadableConfiguration || (requiresLinkedRuntime && !linkedRuntime)), ...((unreadableConfiguration || (requiresLinkedRuntime && !linkedRuntime)) ? { configuration_error: { message: 'Access denied', errno: 13, winerror: 5 } } : {}) }) };
+    }
     if (command === executable && args.includes('dashboard') && args.includes('stop')) {
       const leases = fs.readdirSync(path.join(profile, '.launcher')).filter((name) => name.endsWith('.use.json'));
       assert.equal(leases.length, 1);
@@ -99,10 +135,32 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     const module = { exports: {} };
     const localRequire = (file) => {
       if (file === 'node:child_process') return { spawnSync };
+      if (file === 'node:fs') return { ...fs, lstatSync: (target, ...args) => {
+        const value = fs.lstatSync(target, ...args);
+        if (target === executable) value.isSymbolicLink = () => linkedRuntime;
+        if (target === runtime) value.isSymbolicLink = () => linkedRuntimeDirectory;
+        return value;
+      }, readdirSync: (target, options) => {
+        const entries = fs.readdirSync(target, options);
+        if (linkedConfiguration && target === runtime && options?.withFileTypes) {
+          const config = entries.find((entry) => entry.name === 'pyvenv.cfg');
+          config.name = 'PyVenv.CFG';
+          config.isSymbolicLink = () => true;
+        }
+        return entries;
+      }, statSync: (target, ...args) => {
+        if (inaccessibleConfiguration && target === path.join(runtime, 'pyvenv.cfg')) {
+          throw Object.assign(new Error('Access denied'), { code: 'EACCES' });
+        }
+        return fs.statSync(target, ...args);
+      }, realpathSync: (target) => {
+        if (target === packageRoot) throw Object.assign(new Error('Base directory metadata is restricted'), { code: 'EACCES' });
+        return fs.realpathSync(target);
+      } };
       return fakeRequire(file);
     };
     if (cli) localRequire.main = module;
-    const childProcess = { env: process.env, platform: process.platform, pid: process.pid, argv: ['node', entrypoint, ...args], exitCode: 0 };
+    const childProcess = { env: { ...process.env, PYTHONHOME: packageRoot, PYTHONPATH: packageRoot, __PYVENV_LAUNCHER__: packageRoot, UV_INTERNAL__PYTHONHOME: packageRoot }, platform: 'win32', pid: process.pid, argv: ['node', entrypoint, ...args], exitCode: 0 };
     vm.runInNewContext(`${source}\nmodule.exports.main = main;`, {
       module,
       exports: module.exports,
@@ -138,8 +196,19 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     assert.throws(() => main(['setup', '--host', 'claude', '--invalid']), /optional --evidence, --asr/);
     assert.deepEqual(calls, []);
     assert.equal(fs.existsSync(invalidProfile), false);
+    const semicolonProfile = path.join(directory, 'profile;invalid');
+    assert.throws(() => main(['setup', '--data-dir', semicolonProfile]), /semicolon/);
+    assert.equal(fs.existsSync(semicolonProfile), false);
 
     main(['setup', '--evidence', '--data-dir', profile]);
+    const wheelInstall = calls.find((call) => call.command === 'uv' && call.args.includes('--reinstall'));
+    const installedWheelURL = wheelInstall.args.at(-1);
+    assert.match(installedWheelURL, /^file:/);
+    const installedWheelPath = require('node:url').fileURLToPath(installedWheelURL);
+    assert.equal(path.basename(installedWheelPath), path.basename(wheel));
+    assert.doesNotMatch(installedWheelPath, /[#%?]/);
+    assert.equal(fs.existsSync(path.dirname(installedWheelPath)), false);
+    assert.equal(fs.readFileSync(cacheWheel(wheel, profile), 'utf8'), fs.readFileSync(wheel, 'utf8'));
     const firstReceipt = JSON.parse(fs.readFileSync(receipt, 'utf8'));
     const firstDigest = require('../bin/broader-vids.cjs').wheelDigest(wheel);
     assert.equal(firstReceipt.version, 2);
@@ -147,6 +216,105 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     assert.deepEqual(firstReceipt.groups, ['core', 'evidence']);
     assert.deepEqual(Object.keys(firstReceipt.requirements_sha256), ['core', 'evidence']);
     assert.equal(fs.existsSync(path.join(profile, '.launcher', 'setup.json')), false);
+
+    calls.length = 0;
+    main(['setup', '--evidence', '--data-dir', profile]);
+    assert.equal(calls.some((call) => call.command === 'uv' && call.args.includes('venv')), false);
+    fs.unlinkSync(path.join(runtime, 'pyvenv.cfg'));
+    calls.length = 0;
+    main(['setup', '--evidence', '--data-dir', profile]);
+    assert.equal(calls.some((call) => call.command === 'uv' && call.args.includes('venv')), true);
+    assert.equal(fs.existsSync(path.join(runtime, 'pyvenv.cfg')), true);
+
+    resolvedSandboxPrefix = path.join(directory, 'physical #!sandbox.uuid', 'runtimes', manifest.version);
+    calls.length = 0;
+    main(['--data-dir', profile, 'setup', '--check']);
+    const aliased = JSON.parse(output.pop());
+    assert.equal(aliased.status, 'ready');
+    assert.notEqual(aliased.prefix, runtime);
+    assert.equal(aliased.environment_matches_executable, true);
+    assert.equal(calls.some((call) => call.command === 'uv'), false);
+    foreignRuntimeIdentity = true;
+    main(['--data-dir', profile, 'setup', '--check']);
+    assert.equal(JSON.parse(output.pop()).status, 'unusable');
+    foreignRuntimeIdentity = false;
+    resolvedSandboxPrefix = undefined;
+    inaccessibleConfiguration = true;
+    calls.length = 0;
+    main(['--data-dir', profile, 'setup', '--check']);
+    const inaccessible = JSON.parse(output.pop());
+    assert.equal(inaccessible.status, 'unusable');
+    assert.match(inaccessible.reason, /EACCES/);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(fs.readdirSync(path.join(profile, '.launcher')), []);
+    assert.equal(fs.existsSync(receipt), true);
+    inaccessibleConfiguration = false;
+
+    requiresLinkedRuntime = true;
+    calls.length = 0;
+    main(['--data-dir', profile, 'setup', '--evidence']);
+    const creations = calls.filter((call) => call.command === 'uv' && call.args.includes('venv'));
+    assert.equal(creations.length, 2);
+    assert.equal(creations[0].args.includes('--copies'), true);
+    assert.equal(creations[1].args.includes('--symlinks'), true);
+    assert.equal(linkedRuntime, true);
+    main(['--data-dir', profile, 'setup', '--check']);
+    assert.equal(JSON.parse(output.pop()).executable_linked, true);
+    refuseRuntimeLinks = true;
+    linkedRuntime = false;
+    calls.length = 0;
+    const noLinks = loadMain(['--data-dir', profile, 'setup'], { cli: true });
+    const noLinksReport = JSON.parse(output.pop());
+    assert.equal(noLinks.process.exitCode, 2);
+    assert.equal(noLinksReport.link_fallback, 'unavailable');
+    assert.equal(calls.filter((call) => call.command === 'uv' && call.args.includes('venv')).length, 2);
+    assert.equal(calls.some((call) => call.command === 'uv' && call.args[0] === 'pip'), false);
+    refuseRuntimeLinks = false;
+    requiresLinkedRuntime = false;
+    main(['--data-dir', profile, 'setup']);
+
+    linkedRuntimeDirectory = true;
+    failRuntimeProbe = true;
+    calls.length = 0;
+    const preservedInterpreter = fs.readFileSync(executable, 'utf8');
+    assert.throws(() => main(['--data-dir', profile, 'setup']), /managed runtime directory is a link/);
+    assert.equal(fs.readFileSync(executable, 'utf8'), preservedInterpreter);
+    assert.equal(calls.some((call) => call.command === 'uv'), false);
+    linkedRuntimeDirectory = false;
+    linkedConfiguration = true;
+    assert.throws(() => main(['--data-dir', profile, 'setup']), /configuration is a link/);
+    assert.equal(fs.readFileSync(executable, 'utf8'), preservedInterpreter);
+    assert.equal(calls.some((call) => call.command === 'uv'), false);
+    linkedConfiguration = false;
+    failRuntimeProbe = false;
+    main(['--data-dir', profile, 'setup']);
+
+    unreadableConfiguration = true;
+    calls.length = 0;
+    const checked = loadMain(['--data-dir', profile, 'setup', '--check'], { cli: true });
+    const diagnostic = JSON.parse(output.pop());
+    assert.equal(checked.process.exitCode, 2);
+    assert.equal(diagnostic.status, 'unusable');
+    assert.equal(diagnostic.configuration_error.winerror, 5);
+    assert.equal(diagnostic.prefix, runtime);
+    assert.equal(calls.some((call) => call.command === 'uv'), false);
+    assert.equal(fs.existsSync(receipt), true);
+    calls.length = 0;
+    const blocked = loadMain(['--data-dir', profile, 'setup'], { cli: true });
+    assert.equal(blocked.process.exitCode, 2);
+    assert.equal(JSON.parse(output.pop()).configuration_error.winerror, 5);
+    assert.equal(calls.some((call) => call.command === 'uv' && call.args[0] === 'pip'), false);
+    unreadableConfiguration = false;
+    main(['--data-dir', profile, 'setup', '--evidence']);
+
+    failRuntimeProbe = true;
+    calls.length = 0;
+    assert.throws(() => main(['setup', '--evidence', '--data-dir', profile]), /not an isolated/);
+    assert.equal(calls.some((call) => call.command === 'uv' && call.args[0] === 'pip'), false);
+    assert.equal(fs.existsSync(receipt), false);
+    assert.equal(fs.existsSync(path.join(profile, '.launcher', 'setup.json')), false);
+    failRuntimeProbe = false;
+    main(['setup', '--evidence', '--data-dir', profile]);
 
     const evidenceRequirements = path.join(python, 'evidence-requirements.txt');
     fs.writeFileSync(evidenceRequirements, 'changed dependency lock');
@@ -195,6 +363,9 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     assert.equal(fs.existsSync(receipt), false);
     assert.equal(fs.existsSync(path.join(profile, '.launcher', 'setup.json')), false);
     assert.equal(fs.existsSync(path.join(profile, '.launcher', 'gate.lock')), false);
+    for (const call of calls.filter((call) => call.command === 'uv' && call.args.includes('--reinstall'))) {
+      assert.equal(fs.existsSync(path.dirname(require('node:url').fileURLToPath(call.args.at(-1)))), false);
+    }
     const temporaryFiles = [];
     const findTemporaryFiles = (root) => {
       for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -266,9 +437,11 @@ test('runtime leases permit parallel readers and reject setup until they finish'
       assert.throws(() => withSetup(directory, () => {}), /installation/);
       assert.throws(() => withRuntimeUse(directory, () => {}), /installation/);
       const { spawnSync } = require('node:child_process');
-      const response = spawnSync(process.execPath, [path.resolve(__dirname, '../bin/broader-vids.cjs'), '--data-dir', directory, 'recommend'], { encoding: 'utf8' });
-      assert.equal(response.status, 2);
-      assert.equal(JSON.parse(response.stdout).checks.runtime.status, 'busy');
+      for (const command of [['recommend'], ['setup', '--check']]) {
+        const response = spawnSync(process.execPath, [path.resolve(__dirname, '../bin/broader-vids.cjs'), '--data-dir', directory, ...command], { encoding: 'utf8' });
+        assert.equal(response.status, 2);
+        assert.equal(JSON.parse(response.stdout).checks.runtime.status, 'busy');
+      }
     });
     assert.throws(() => withSetup(directory, () => { throw Error('Failed install'); }), /Failed install/);
     assert.deepEqual(fs.readdirSync(path.join(directory, '.launcher')), []);

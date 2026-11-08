@@ -921,6 +921,8 @@ codex plugin add broader-vids@broader-vids-local
 
 The command builds the Python wheel, packs and verifies the npm archive, builds the plugin ZIP and local marketplace, and writes `dist/release.json` and `dist/SHA256SUMS`.
 The generated local marketplace contains the installable plugin payload.
+Use `dist/local-marketplace` to test unpublished source changes.
+The repository-root marketplace uses npm, even when you add that folder locally.
 These commands install locally and do not publish anything.
 
 Open a new desktop or CLI conversation after installation.
@@ -1135,6 +1137,7 @@ From an unpacked package, install its external engine:
 
 ```powershell
 node bin/broader-vids.cjs setup --evidence
+node bin/broader-vids.cjs setup --check
 node bin/broader-vids.cjs doctor
 ```
 
@@ -1144,6 +1147,39 @@ A missing, older, or mismatched build receipt requires one `setup --evidence` re
 This also applies to a rebuilt package with the same version.
 The refresh preserves profile data and sign-in. `dashboard stop` remains available during repair.
 Normal commands do not reinstall dependencies.
+Setup verifies the virtual environment before it installs packages.
+On Windows, UV selects Python and invokes its standard `venv` module with executable copies and no pip seed.
+This avoids UV's custom Windows interpreter launcher.
+Windows runtime paths cannot contain semicolons because Python venv rejects this character.
+See the [upstream Windows launcher change](https://github.com/astral-sh/uv/pull/19199) for the old `PYTHONHOME` behavior.
+UV still installs the engine and locked dependencies.
+If copied Windows launchers cannot initialize, setup tries one standard symlink-based environment in the same directory.
+This reuses the installed Python executable. Configuration, packages, and profile data stay in the selected sandbox.
+The host must permit executable symlinks. Setup does not enable Developer Mode or change Windows permissions.
+A failed fallback stops before dependency installation.
+Other platforms retain `uv venv`.
+It checks `pyvenv.cfg`, Python 3.12 or later, and the native identity of the selected environment.
+Python checks its own environment in its active filesystem namespace.
+Node compares directory identities rather than logical and physical sandbox path strings.
+The base Python directory does not need a separate filesystem lookup.
+An incomplete environment receives a repair before dependency installation.
+If verification still fails, setup stops without a success receipt.
+Inherited `PYTHONHOME`, `PYTHONPATH`, `__PYVENV_LAUNCHER__`, and `UV_INTERNAL__PYTHONHOME` values do not redirect the managed runtime.
+The launcher retains UV's protection for externally managed Python installations.
+Some UV versions misread local wheel paths that contain `#`, `%`, or `?`.
+The launcher copies the immutable cached wheel to a temporary directory when its path contains these characters.
+It removes the temporary copy after installation or failure.
+The temporary directory must also avoid these characters.
+The profile and runtime stay in the selected data directory.
+
+`setup --check` returns runtime identity and access diagnostics without installing packages or changing profile data.
+It uses a temporary launcher lease to prevent concurrent runtime repair. The launcher directory can remain afterward.
+Run it in the host conversation where setup failed, with the same directory and permissions.
+It reports the selected path, configured backend, executable-link status, resolved prefixes, and configuration access errors.
+A runtime check does not verify dependencies or complete onboarding.
+If the host reports `EPERM` or `EACCES`, request its normal access to that path and retry there.
+Do not disable sandboxing, change ACLs, or move the profile automatically.
+
 Finish active recommendations and Bilibili browser operations before setup.
 Concurrent setup or runtime use returns a busy result instead of changing active files.
 A failed child command releases its installation lock.
