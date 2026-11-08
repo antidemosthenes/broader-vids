@@ -80,6 +80,7 @@ class RotationTests(unittest.TestCase):
             platform,
             seed=19,
             planning_policy=2,
+            rotation_version=1,
             assessment_model="fixture-model",
             reasoning_effort="low",
         )

@@ -157,10 +157,15 @@ def rank_slate(
     creator_rules=None,
     *,
     policy_version=5,
+    ranking_policy_version=1,
 ):
     if policy_version != 5:
         raise ValueError(
             "Unsupported scoring policy; start a new recommendation round."
+        )
+    if ranking_policy_version not in (1, 2):
+        raise ValueError(
+            "Unsupported ranking policy; start a new recommendation round."
         )
     now, recent = now or datetime.now(timezone.utc), recent or Counter()
     pool = [
@@ -244,10 +249,32 @@ def rank_slate(
                     )
                 total, parts, details = learned_scores[cache_key]
                 total = round(total, 4)
-            scored.append((total, item["canonical_id"], item, parts, details))
-        total, _, chosen, parts, details = max(
-            scored, key=lambda entry: (entry[0], entry[1])
-        )
+            score_before_duration_penalty = total
+            duration_penalty = 0
+            if ranking_policy_version == 2:
+                duration = observations[item["canonical_id"]]["duration_seconds"]
+                duration_penalty = round(10 * max(0, min(1, (300 - duration) / 240)), 4)
+                total = round(max(0, total - duration_penalty), 4)
+            scored.append(
+                (
+                    total,
+                    item["canonical_id"],
+                    item,
+                    parts,
+                    details,
+                    score_before_duration_penalty,
+                    duration_penalty,
+                )
+            )
+        (
+            total,
+            _,
+            chosen,
+            parts,
+            details,
+            score_before_duration_penalty,
+            duration_penalty,
+        ) = max(scored, key=lambda entry: (entry[0], entry[1]))
         slate.append(
             {
                 **chosen,
@@ -255,6 +282,20 @@ def rank_slate(
                 "score": total,
                 "components": parts,
                 "quality_evidence": observations[chosen["canonical_id"]],
+                **(
+                    {
+                        "ranking_adjustments": {
+                            "version": 2,
+                            "score_before_duration_penalty": round(
+                                score_before_duration_penalty, 4
+                            ),
+                            "short_video_penalty": round(duration_penalty, 4),
+                            "final_score": total,
+                        }
+                    }
+                    if ranking_policy_version == 2
+                    else {}
+                ),
                 **(
                     {
                         "selection_diversity": {

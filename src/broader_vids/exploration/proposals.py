@@ -144,7 +144,16 @@ def fallback_queries(value, default):
     )[0]
 
 
-def validate_response(response, current, selected, allow_refinements, needed):
+def validate_response(
+    response,
+    current,
+    selected,
+    allow_refinements,
+    needed,
+    *,
+    novelty_baseline=None,
+    excluded_ids=(),
+):
     if not isinstance(response, dict):
         raise ValueError("Exploration response must be an object.")
     queries, proposals = response.get("existing_queries"), response.get("proposals")
@@ -183,7 +192,28 @@ def validate_response(response, current, selected, allow_refinements, needed):
                 raise ValueError("At most six aliases are allowed.")
             aliases = [text(a, 120) for a in aliases]
             names = {normalized(a) for a in [label, *aliases]}
-            if not all(names) or known & names:
+            shared = None
+            if known & names:
+                collisions = {
+                    n["id"]
+                    for n in current.values()
+                    if names & {normalized(a) for a in [n["label"], *n["aliases"]]}
+                }
+                if (
+                    novelty_baseline is not None
+                    and len(collisions) == 1
+                    and not collisions
+                    & (
+                        set(novelty_baseline)
+                        | selected_ids
+                        | set(excluded_ids)
+                        | {n["id"] for n in accepted}
+                    )
+                ):
+                    shared = current[next(iter(collisions))]
+                else:
+                    raise ValueError("Duplicate topic name or alias.")
+            if not all(names):
                 raise ValueError("Duplicate topic name or alias.")
             if (
                 not isinstance(parents, list)
@@ -201,6 +231,21 @@ def validate_response(response, current, selected, allow_refinements, needed):
             reason = text(proposal.get("novelty_reason"), 600)
             if len(accepted) >= needed:
                 raise ValueError("The five-new-topic target is already filled.")
+            if shared is not None:
+                if set(parents) != set(shared["parents"]):
+                    raise ValueError("A shared topic must retain its existing parents.")
+                accepted.append(
+                    {
+                        **shared,
+                        "queries": query_pair,
+                        "fallback_queries": fallback_queries(proposal, query_pair),
+                        "anchors": anchors,
+                        "novelty_reason": reason,
+                        "shared_existing": True,
+                    }
+                )
+                known.update(names)
+                continue
             ancestors = set(parents)
             for parent in parents:
                 ancestors.update(current[parent]["ancestors"])

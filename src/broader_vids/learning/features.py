@@ -31,6 +31,8 @@ def capture(item, observation=None):
             for d in origin.get("domains", [])
         }
     )
+    if item.get("content_interest_only"):
+        roots = []
     topics = sorted(
         {
             origin["family_id"]
@@ -73,7 +75,17 @@ def capture(item, observation=None):
         topics = [normalized(label) for label in semantic["specific"]]
     if semantic.get("broad"):
         roots = [normalized(label) for label in semantic["broad"]]
+    alignment = item.get("interest_alignment") or {}
+    matches = (
+        alignment.get("matches", [])
+        if alignment.get("version") == 1
+        and alignment.get("confidence") in {"medium", "high"}
+        else []
+    )
+    if matches:
+        roots = sorted({normalized(label) for label in matches})
     return {
+        **({"interest_alignment": alignment} if matches else {}),
         "version": FEATURE_VERSION,
         "canonical_id": item["canonical_id"],
         "platform": item["platform"],
@@ -128,8 +140,11 @@ def affinity_features(features):
         ("domains", "domain:", 1),
         ("topics", "topic:", 0.5),
     ):
-        for value in features[group]:
-            result[prefix + value] = strength / len(features[group])
+        values = features[group]
+        if group == "domains" and features.get("interest_alignment"):
+            values = sorted(set(values) | set(features.get("content_domains", [])))
+        for value in values:
+            result[prefix + value] = strength / len(values)
     if features["creator"]:
         result["creator:" + features["platform"] + ":" + features["creator"]] = 1
     return result

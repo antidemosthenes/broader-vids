@@ -9,6 +9,7 @@ from broader_vids.evidence.assessment import run_codex
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.exploration.domains import (
     is_related,
+    normalized,
     nodes,
     put_node,
     seed_interests,
@@ -27,14 +28,16 @@ from broader_vids.storage import utc_now
 POLICY_ID = hashlib.sha256(b"broader-vids-hierarchical-exploration-v1").hexdigest()
 
 
-def new_plan(store, seed=None, *, policy_version=2):
+def new_plan(store, seed=None, *, policy_version=2, rotation_version=2, platform=None):
+    if type(rotation_version) is not int or rotation_version not in (1, 2):
+        raise ValueError("Unsupported topic rotation version.")
     if policy_version != 2:
         raise ValueError("Unsupported exploration policy; start a new discovery round.")
     profile = seed_interests(store)
     seed = random.SystemRandom().getrandbits(63) if seed is None else seed
     if type(seed) is not int or not 0 <= seed < 2**63:
         raise ValueError("Exploration seed must be an integer from zero to 2^63-1.")
-    selected = select_existing(store, profile, seed)
+    selected = select_existing(store, profile, seed) if rotation_version == 1 else []
     recent = [
         {
             "node_id": row["node_id"],
@@ -45,11 +48,19 @@ def new_plan(store, seed=None, *, policy_version=2):
             },
         }
         for row in store.db.execute(
-            "SELECT node_id,payload FROM domain_observations ORDER BY created_at DESC,rowid DESC LIMIT 24"
+            "SELECT node_id,payload FROM domain_observations "
+            + (
+                "WHERE json_extract(payload,'$.platform')=? "
+                if platform and rotation_version == 2
+                else ""
+            )
+            + "ORDER BY created_at DESC,rowid DESC LIMIT 24",
+            (platform,) if platform and rotation_version == 2 else (),
         )
     ]
     return {
         "policy_version": policy_version,
+        "rotation_version": rotation_version,
         "seed": seed,
         "profile": profile,
         "selected": selected,
@@ -103,8 +114,14 @@ def prepare_plan(
             else any(a.get("stage") != "subdivision" for a in state["attempts"])
             or recent_empty >= 5
         )
+        context = current
+        if state.get("rotation_version", 1) == 2:
+            visible = set(state["novelty_baseline"]) | {
+                n["id"] for n in [*state["selected"], *state["new_nodes"]]
+            }
+            context = {key: node for key, node in current.items() if key in visible}
         prompt = proposal_prompt(
-            current,
+            context,
             state["selected"],
             state["recent"],
             state["profile"],
@@ -167,6 +184,8 @@ def prepare_plan(
                     state["selected"],
                     refine,
                     5 - len(state["new_nodes"]),
+                    novelty_baseline=state.get("novelty_baseline"),
+                    excluded_ids={n["id"] for n in state["new_nodes"]},
                 )
                 previous = {
                     key: state[key] for key in ("queries", "new_nodes", "rejections")
@@ -187,8 +206,9 @@ def prepare_plan(
                         "fallback_queries": fallback_queries(query, query["queries"]),
                     }
                 for node in additions:
-                    put_node(store, node)
-                    current[node["id"]] = node
+                    if not node.get("shared_existing"):
+                        put_node(store, node)
+                        current[node["id"]] = node
                 state.update(
                     queries=queries,
                     new_nodes=[*state["new_nodes"], *additions],
@@ -230,6 +250,10 @@ def prepare_plan(
     tasks = []
     for node in [*state["selected"], *state["new_nodes"]]:
         query = state["queries"].get(node["id"], node)
+        assigned = state.get("allocation_domains", {}).get(node["id"])
+        familiar = is_related(node, state["profile"]) or assigned in {
+            normalized(d) for d in state["profile"]["interests"]
+        }
         tasks.append(
             {
                 "family_id": node["id"],
@@ -239,11 +263,27 @@ def prepare_plan(
                 "intent": "intersection"
                 if len(node["parents"]) > 1
                 else "deep"
-                if is_related(node, state["profile"])
+                if familiar
                 else "horizon",
-                "domains": node["domains"],
+                "domains": sorted(
+                    set(node["domains"])
+                    | (
+                        {state["allocation_domains"][node["id"]]}
+                        if node["id"] in state.get("allocation_domains", {})
+                        else set()
+                    )
+                ),
                 "topic_ancestors": node["ancestors"],
                 "topic_depth": node["depth"],
+                **(
+                    {
+                        "allocation_domain": state.get("allocation_domains", {}).get(
+                            node["id"], normalized_domain(node)
+                        )
+                    }
+                    if state.get("rotation_version", 1) == 2
+                    else {}
+                ),
                 "purpose": node.get(
                     "novelty_reason",
                     "Explore an existing concept with a concrete query.",
@@ -279,6 +319,10 @@ def prepare_plan(
     save()
 
 
+def normalized_domain(node):
+    return normalized(sorted(node["domains"])[0])
+
+
 def observe_query(store, run, task, items, receipt):
     if not task.get("node_id"):
         return
@@ -306,20 +350,32 @@ def observe_query(store, run, task, items, receipt):
         "receipt": receipt,
         "semantic_relevance_verified": False,
     }
-    node = nodes(store)[task["node_id"]]
-    if matches:
-        node.update(status="active", activated_at=node.get("activated_at", utc_now()))
-    elif node["status"] != "active":
-        node["status"] = "unconfirmed"
-    node.setdefault("queries", {})[run["platform"]] = task["query"]
-    with store.db:
-        from broader_vids.exploration.coverage import record_search
+    from broader_vids.exploration.coverage import transaction, record_search
 
+    with transaction(store):
+        node = nodes(store)[task["node_id"]]
+        if matches:
+            node.update(
+                status="active", activated_at=node.get("activated_at", utc_now())
+            )
+        elif node["status"] != "active":
+            node["status"] = "unconfirmed"
+        node.setdefault("queries", {})[run["platform"]] = task["query"]
         record_search(
             store,
             run["state"]["exploration"]["coverage_owner"],
             node["id"],
             run["state"]["exploration"].get("coverage_round"),
+            **(
+                {
+                    "platform": run["platform"],
+                    "domain": task["allocation_domain"],
+                    "task_id": node["id"],
+                    "source_run": run["id"],
+                }
+                if run["state"]["exploration"].get("rotation_version", 1) == 2
+                else {}
+            ),
         )
         put_node(store, node)
         store.db.execute(

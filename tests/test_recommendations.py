@@ -401,7 +401,11 @@ class RecommendationTests(unittest.TestCase):
             user_action(
                 self.store, run["state"]["selected"][0]["canonical_id"], "watched"
             )
-            self.items.append(candidate(101))
+            replacement = candidate(101)
+            replacement["origins"][0]["domains"] = list(
+                run["state"]["selected"][0]["origins"][0]["domains"]
+            )
+            self.items.append(replacement)
             source = self.source()
             second = create_recommendation(
                 self.store,

@@ -42,6 +42,8 @@ def seed_interests(store):
         for interest in profile["interests"]:
             identifier = node_id(interest)
             if identifier in current:
+                if current[identifier]["status"] != "active":
+                    put_node(store, {**current[identifier], "status": "active"})
                 continue
             node = {
                 "id": identifier,

@@ -40,6 +40,7 @@ def create_discovery(
     assessment_model=None,
     reasoning_effort=None,
     planning_policy=2,
+    rotation_version=2,
     host="codex",
 ):
     if platform not in {"youtube", "bilibili"}:
@@ -52,6 +53,8 @@ def create_discovery(
         raise ValueError("Use 1–10 creators and 1–5 pages per creator.")
     if type(max_planning_calls) is not int or not 0 <= max_planning_calls <= 2:
         raise ValueError("Exploration permits zero to two planning calls per round.")
+    if rotation_version not in (1, 2):
+        raise ValueError("Unsupported topic rotation version.")
     if planning_policy != 2:
         raise ValueError("Unsupported exploration policy; start a new discovery round.")
     hierarchical = not curated and bank_path is None and get_profile(store) is not None
@@ -108,7 +111,13 @@ def create_discovery(
         "client_version": None,
     }
     if hierarchical:
-        state["exploration"] = new_plan(store, seed, policy_version=planning_policy)
+        state["exploration"] = new_plan(
+            store,
+            seed,
+            policy_version=planning_policy,
+            rotation_version=rotation_version,
+            platform=platform,
+        )
     return store.create(platform, settings, state)
 
 
@@ -130,6 +139,7 @@ def page_context(source, task, receipt):
                 "new_topic",
                 "topic_ancestors",
                 "topic_depth",
+                "allocation_domain",
             )
             if key in task
         },
@@ -179,6 +189,7 @@ def merge_page(run, items, source, task, receipt, cursor=None):
                             "new_topic",
                             "topic_ancestors",
                             "topic_depth",
+                            "allocation_domain",
                         )
                         if key in task
                     },
@@ -278,6 +289,7 @@ def _creator_tasks(run):
                                 "new_topic",
                                 "topic_ancestors",
                                 "topic_depth",
+                                "allocation_domain",
                             )
                             if key in creator
                         },

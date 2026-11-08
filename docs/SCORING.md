@@ -27,6 +27,10 @@ The engine requires a verified playable duration greater than sixty seconds and 
 The saved evidence quality must reach 60 points out of 100.
 For new assessments without a usable transcript, subtract ten points from quality after adding the duration prior, with a floor of zero.
 The same deduction applies to the learned quality component during ranking.
+After the learned final score, subtract 10 × clamp((300 − t) / 240, 0, 1), where t is seconds.
+This deduction is 7.5 at two minutes, 5 at three, 2.5 at four, and 0 at five minutes.
+Clamp the adjusted score at zero.
+The existing evidence quality gate and screening rules do not change.
 Audio quality is not a criterion.
 Captions and frames support the four existing content criteria.
 Only rubric-5 evidence is eligible for reuse or new recommendation work.
@@ -158,6 +162,11 @@ Length contributes at most five points.
 The contribution rises to one hour and then remains constant.
 These initial weights express a design choice, not a fitted optimum.
 The saved holistic evidence score remains a separate historical observation.
+After assessment, a separate text-only call aligns up to 35 videos with saved interests.
+It uses the assessed title, specific and broad labels, and summary.
+It ignores retrieval origin and accepts only medium- or high-confidence matches.
+Accepted matches supply canonical broad-root features for learned lookup.
+Assessed topic labels remain unchanged.
 
 The initial interest probability \(I_0\) is 0.75 for a domain related to the user's stated interests.
 It is 0.35 for a known unrelated domain and 0.50 when domains are unknown.
@@ -285,7 +294,17 @@ An explicit onboarding change can change the prior.
 A new dislike cannot move the prior by changing the parent association.
 
 A topic judgment does not update parent, sibling, global, or creator dislikes.
-A matching specific-topic posterior takes precedence over a broad-subject posterior.
+
+Canonical alignment contributes to broad-domain lookup. It does not replace assessed specific or broad labels.
+Lookup also retains raw broad labels so existing subject ratings and learned coefficients remain usable.
+New rounds do not inherit final interest membership from retrieval domains when content labels are missing.
+
+Manual per-video topic and domain feedback contributes at its own scope.
+Matching specific-topic scores take precedence over broad-root scores.
+
+Depth feedback then adjusts interest for the assessed topic and audience level.
+Direct feedback for that level takes precedence over transferred depth fit.
+
 Several matching topic scores use an average.
 Custom topic labels transfer only to matching normalized labels.
 
@@ -398,10 +417,15 @@ Maintenance uses retained frames and captions without downloading replacement me
 
 ## 8. Transfer of learned parameters
 
+Preference file format 4 remains unchanged. Coverage summary version 2 requires an updated plugin.
+
 Preference format 4 transfers interests, model version 8 parameters, watched video IDs, a bounded exploration summary, and manual creator exclusions.
+
 The engine rejects other preference formats before import changes the profile.
-The included starter preset provides sanitized interests, parameters, and parameter uncertainty from the owner's export.
-The preset excludes watched IDs, individual history, topic coverage, and creator exclusions.
+
+
+The included starter preset preserves interests, parameters, and parameter uncertainty from the supplied export.
+It clears watched IDs, creator exclusions, and exploration progress.
 Import replaces manual creator lists independently of learned parameters. These rules never create negative ratings.
 Blacklist sync combines the account-specific blacklist with the current manual rules.
 The exploration summary contains at most 1,024 hierarchy nodes, aggregate counts, and relative round ages.
@@ -412,7 +436,12 @@ Categorical groups retain Dirichlet concentration parameters and aggregate obser
 Depth models retain their posterior summaries and a three-by-three table of level/response counts per topic.
 These counts are sufficient statistics for the implemented depth likelihood. They contain no video identities or chronology.
 The watched-video ID list contains no titles, ratings, or recommendation records.
-The exploration summary preserves portable topic coverage without video identities or per-video history.
+Coverage summary version 2 adds aggregate, per-platform, and broad-root use counters.
+
+
+The new plugin accepts version 1 summaries. Older plugin releases do not read version 2 summaries.
+A version 1 import starts new counters at zero and preserves old aggregate counts.
+Merge uses maximum counter values, so repeated imports do not add duplicate use.
 Import merges those IDs into the target profile's watched state to prevent exact repeats.
 The target profile keeps its local ratings, video lists, tag rules, and account-specific blacklist copies.
 Quality calibration retains both continuation-stage models.

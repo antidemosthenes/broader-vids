@@ -132,6 +132,11 @@ def interest_prediction(features, base, scoped):
             "domain_interest",
             [
                 *features.get("domains", []),
+                *(
+                    features.get("content_domains", [])
+                    if features.get("interest_alignment")
+                    else []
+                ),
                 *scoped.get("video_domains", {}).get(identifier, []),
             ],
         ),
