@@ -10,7 +10,11 @@ from broader_vids.recommendations.collection_policy import (
     collection_lane,
     default_collection_policy,
 )
-from broader_vids.recommendations.engagement import metadata_fresh, rate_scores
+from broader_vids.recommendations.engagement import (
+    BilibiliVideoUnavailable,
+    metadata_fresh,
+    rate_scores,
+)
 from broader_vids.recommendations.metadata import (
     metadata_session,
     SnapshotPool,
@@ -217,16 +221,44 @@ def collect_batches(store, run, http, remaining, save, *, refill, snapshot_colle
                     ).fetchone()
                     snapshot = json.loads(row[0]) if row else None
                     if not snapshot or not metadata_fresh(snapshot, run["platform"]):
-                        snapshot = snapshots.get(item, save)
-                        with store.db:
-                            store.db.execute(
-                                "INSERT OR REPLACE INTO engagement_snapshots VALUES(?,?)",
-                                (item["canonical_id"], json.dumps(snapshot)),
-                            )
-                    apply_snapshot(item, snapshot or {})
-                    reason = rejection_reason(
-                        item, states, settings["profile"], state.get("creator_rules")
-                    )
+                        try:
+                            snapshot = snapshots.get(item, save)
+                        except BilibiliVideoUnavailable as error:
+                            reason = str(error)
+                            collection.setdefault("metadata_failures", {})[
+                                item["canonical_id"]
+                            ] = {
+                                "canonical_id": item["canonical_id"],
+                                "platform": run["platform"],
+                                "title": item["title"],
+                                "url": item["url"],
+                                "status": "skipped",
+                                "stage": "metadata",
+                                "reason": reason,
+                                "download_attempts": 0,
+                                "download_retries": 0,
+                                "failed_download_attempts": 0,
+                                "completed_download_attempts": 0,
+                                "download_outcome": "not_attempted",
+                                "metadata_attempts": error.attempts,
+                                "metadata_retries": error.attempts - 1,
+                                "candidate_retries": 0,
+                                "stop_reason": "retry_exhausted",
+                            }
+                        else:
+                            with store.db:
+                                store.db.execute(
+                                    "INSERT OR REPLACE INTO engagement_snapshots VALUES(?,?)",
+                                    (item["canonical_id"], json.dumps(snapshot)),
+                                )
+                    if reason is None:
+                        apply_snapshot(item, snapshot or {})
+                        reason = rejection_reason(
+                            item,
+                            states,
+                            settings["profile"],
+                            state.get("creator_rules"),
+                        )
                 if reason:
                     state["screening_rejections"][item["canonical_id"]] = reason
                 else:

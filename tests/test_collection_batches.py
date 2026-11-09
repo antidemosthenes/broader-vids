@@ -14,13 +14,15 @@ from broader_vids.recommendations.collection import (
 )
 from broader_vids.recommendations.collection_policy import collection_lane
 from broader_vids.recommendations.ranking import screen
+from broader_vids.recommendations.engagement import BilibiliVideoUnavailable
+from broader_vids.recommendations.reports import candidate_failures
 from broader_vids.recommendations.service import create_recommendation
 from broader_vids.storage import Store, utc_now
 from test_recommendations import candidate
 
 
-def item(index, lane, likes=100):
-    result = candidate(index)
+def item(index, lane, likes=100, platform="youtube"):
+    result = candidate(index, platform)
     result["origins"] = [
         {
             "family_id": lane,
@@ -41,10 +43,10 @@ class CollectionBatchTests(unittest.TestCase):
         self.profile = set_profile(self.store, ["math"])
         self.fetched = []
 
-    def run_data(self, candidates, max_requests=320):
+    def run_data(self, candidates, max_requests=320, platform="youtube"):
         identifier = create_recommendation(
             self.store,
-            "youtube",
+            platform,
             max_requests=max_requests,
             assessment_model="fixture-model",
             reasoning_effort="low",
@@ -110,6 +112,48 @@ class CollectionBatchTests(unittest.TestCase):
         shortlisted, _ = screen(state["buffer"], [], {}, self.profile)
         self.assertEqual(len(shortlisted), 35)
         self.assertEqual(len({v["canonical_id"] for v in shortlisted}), 35)
+
+    def test_unavailable_metadata_is_reported_and_replaced_in_the_same_lane(self):
+        values = [item(i + 1, "familiar", platform="bilibili") for i in range(71)] + [
+            item(i + 200, "exploratory", platform="bilibili") for i in range(30)
+        ]
+        run = self.run_data(values, platform="bilibili")
+        unavailable = values[71]
+        original = self.snapshot
+
+        def snapshot(http, value):
+            if value["canonical_id"] == unavailable["canonical_id"]:
+                error = BilibiliVideoUnavailable(value["video_id"])
+                error.attempts = 4
+                raise error
+            return {
+                **original(http, value),
+                "coins": 20,
+                "favorites": 40,
+                "metadata_version": 2,
+                "provenance_status": "complete",
+            }
+
+        self.snapshot = snapshot
+        self.collect(run)
+        saved = self.store.get(run["id"])
+        self.assertEqual(
+            saved["state"]["collection"]["counts"], {"familiar": 71, "exploratory": 29}
+        )
+        self.assertEqual(len(saved["state"]["buffer"]), 100)
+        self.assertNotIn(
+            unavailable["canonical_id"],
+            {value["canonical_id"] for value in saved["state"]["buffer"]},
+        )
+        (failure,) = candidate_failures(self.store, saved)
+        self.assertEqual(failure["canonical_id"], unavailable["canonical_id"])
+        self.assertEqual(failure["metadata_attempts"], 4)
+        self.assertEqual(failure["download_outcome"], "not_attempted")
+        self.assertEqual(failure["status"], "skipped")
+        fetched = list(self.fetched)
+        self.collect(saved)
+        self.assertEqual(self.fetched, fetched)
+        self.assertEqual(candidate_failures(self.store, saved), [failure])
 
     def test_refill_requests_only_the_missing_lane_and_duplicates_do_not_fill_slots(
         self,

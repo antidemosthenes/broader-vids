@@ -14,13 +14,14 @@ from broader_vids.recommendations.budgets import request_budget
 def candidate_failures(store, run):
     state = run["state"]
     observations = state.get("evidence", {})
+    result = list(state.get("collection", {}).get("metadata_failures", {}).values())
     identifiers = {
         value["evidence_run"]
         for value in observations.values()
         if value.get("evidence_run")
     }
     if not identifiers:
-        return []
+        return result
     details = {
         identifier: (
             json.loads(attempts or "[]"),
@@ -39,7 +40,6 @@ def candidate_failures(store, run):
             tuple(identifiers),
         )
     }
-    result = []
     cache_hits = set(state.get("cache_hit_ids", []))
     last_issues = {
         issue["canonical_id"]: issue

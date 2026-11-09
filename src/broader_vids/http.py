@@ -216,6 +216,14 @@ class PublicHttp:
                 self.sleeper(min(delay, available))
         self.check()
 
+    def metadata_failure_count(self, canonical_id, api_code):
+        return self.store.db.execute(
+            "SELECT COUNT(*) FROM requests WHERE run_id=? "
+            "AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.metadata_validation.canonical_id') END=? "
+            "AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.metadata_validation.api_code') END=?",
+            (self.run["id"], canonical_id, api_code),
+        ).fetchone()[0]
+
     def metadata_failed(self, diagnostic):
         if self.last_receipt:
             self.store.end_request(
