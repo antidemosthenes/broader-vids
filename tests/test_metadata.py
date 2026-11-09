@@ -4,10 +4,13 @@ import json
 import tempfile
 import unittest
 import urllib.error
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
-from broader_vids.recommendations.engagement import collect_snapshot
+from broader_vids.recommendations.engagement import (
+    BilibiliVideoUnavailable,
+    collect_snapshot,
+)
 from broader_vids.recommendations.metadata import metadata_session, refresh_metadata
 from broader_vids.storage import Store
 
@@ -83,6 +86,79 @@ class MetadataTests(unittest.TestCase):
                 ]
 
         yield Browser()
+
+    def test_not_found_retries_do_not_swallow_access_schema_or_budget_errors(self):
+        item = {"platform": "bilibili", "video_id": VIDEO, "canonical_id": KEY}
+        missing = {"code": -404, "message": "Not found", "data": None}
+        cases = (
+            ([missing, missing, payload()], None, 3, 2),
+            ([missing] * 4, BilibiliVideoUnavailable, 4, 4),
+            ([missing, {"code": -101}], AccessPaused, 2, 1),
+            ([missing, BudgetExhausted("request limit")], BudgetExhausted, 2, 1),
+            ([[]], AccessPaused, 1, 0),
+        )
+        for replies, error_type, count, failures in cases:
+            with self.subTest(error=error_type, count=count):
+                http = Mock(
+                    last_receipt={"request_id": 1},
+                    metadata_failure_count=Mock(return_value=0),
+                )
+                http.get_json.side_effect = replies
+                if error_type:
+                    with self.assertRaises(error_type) as caught:
+                        collect_snapshot(http, item)
+                    if error_type is BilibiliVideoUnavailable:
+                        self.assertEqual(caught.exception.attempts, 4)
+                    elif error_type is AccessPaused:
+                        self.assertNotIsInstance(
+                            caught.exception, BilibiliVideoUnavailable
+                        )
+                else:
+                    self.assertTrue(collect_snapshot(http, item)["identity_verified"])
+                self.assertEqual(http.get_json.call_count, count)
+                self.assertEqual(http.metadata_failed.call_count, failures)
+
+    def test_not_found_limit_survives_request_budget_pause_and_new_client(self):
+        item = {"platform": "bilibili", "video_id": VIDEO, "canonical_id": KEY}
+        missing = {"code": -404, "message": "Not found", "data": None}
+        identifier = self.store.create(
+            "bilibili", {"max_seconds": 60, "max_requests": 2}, {}
+        )
+        run = self.store.get(identifier)
+        now = [0.0]
+
+        def client():
+            return PublicHttp(
+                self.store,
+                run,
+                anonymous_session=True,
+                clock=lambda: now[0],
+                sleeper=lambda delay: now.__setitem__(0, now[0] + delay),
+            )
+
+        with patch(
+            "urllib.request.OpenerDirector.open",
+            side_effect=lambda *args, **kwargs: Reply(missing),
+        ) as request:
+            with self.assertRaises(BudgetExhausted):
+                collect_snapshot(client(), item)
+            self.assertEqual(request.call_count, 2)
+            run["settings"]["max_requests"] = 8
+            self.store.save(run)
+            with self.assertRaises(BilibiliVideoUnavailable) as caught:
+                collect_snapshot(client(), item)
+            self.assertEqual(caught.exception.attempts, 4)
+            self.assertEqual(request.call_count, 4)
+            with self.assertRaises(BilibiliVideoUnavailable):
+                collect_snapshot(client(), item)
+            self.assertEqual(request.call_count, 4)
+        self.assertEqual(self.store.request_count(identifier), 4)
+        other = self.http()
+        with patch(
+            "urllib.request.OpenerDirector.open", return_value=Reply(payload())
+        ) as request:
+            self.assertTrue(collect_snapshot(other, item)["identity_verified"])
+        self.assertEqual(request.call_count, 1)
 
     def test_authenticated_refresh_preserves_source_clues_and_private_state(self):
         before = self.store.db.execute("SELECT COUNT(*) FROM user_actions").fetchone()[

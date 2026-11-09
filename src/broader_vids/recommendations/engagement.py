@@ -169,7 +169,53 @@ def parse_youtube(body, identifier):
     }
 
 
+class BilibiliVideoUnavailable(AccessPaused):
+    def __init__(self, identifier):
+        self.attempts = 1
+        super().__init__(
+            f"Bilibili video {identifier} returned metadata code -404; availability could not be verified."
+        )
+
+
+def bilibili_snapshot(http, item):
+    from broader_vids.evidence.media import MAX_VIDEO_RETRIES
+
+    limit = 1 + MAX_VIDEO_RETRIES
+    reader = getattr(http, "metadata_failure_count", None)
+    previous = reader(item["canonical_id"], -404) if reader else 0
+    if previous >= limit:
+        error = BilibiliVideoUnavailable(item["video_id"])
+        error.attempts = previous
+        raise error
+    for attempt in range(previous + 1, limit + 1):
+        try:
+            return parse_bilibili(
+                http.get_json(
+                    f"https://api.bilibili.com/x/web-interface/view/detail?bvid={item['video_id']}"
+                ),
+                item["video_id"],
+            )
+        except BilibiliVideoUnavailable as error:
+            error.attempts = attempt
+            recorder = getattr(http, "metadata_failed", None)
+            if recorder:
+                recorder(
+                    {
+                        "requested_video_id": item["video_id"],
+                        "canonical_id": item["canonical_id"],
+                        "api_code": -404,
+                        "attempt": attempt,
+                    }
+                )
+            if attempt == limit:
+                raise
+
+
 def parse_bilibili(value, identifier):
+    if not isinstance(value, dict):
+        raise AccessPaused("Bilibili count metadata has an unrecognized schema.")
+    if value.get("code") == -404:
+        raise BilibiliVideoUnavailable(identifier)
     data = value.get("data")
     tags = data.get("Tags") if isinstance(data, dict) else None
     if isinstance(data, dict) and "View" in data:
@@ -242,12 +288,7 @@ def collect_snapshot(http, item):
     if item["platform"] == "youtube":
         value = youtube_snapshot(http, item)
     else:
-        value = parse_bilibili(
-            http.get_json(
-                f"https://api.bilibili.com/x/web-interface/view/detail?bvid={item['video_id']}"
-            ),
-            item["video_id"],
-        )
+        value = bilibili_snapshot(http, item)
         if value["provenance_status"] != "complete":
             raise AccessPaused(
                 "Bilibili metadata is missing its title, description, authorship declaration or tags; screening remains paused."

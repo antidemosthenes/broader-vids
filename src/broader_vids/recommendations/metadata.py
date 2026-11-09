@@ -5,13 +5,16 @@ import threading
 import time
 
 from broader_vids.evidence.browser import bilibili_browser, browser_cookie_jar
-from broader_vids.evidence.media import EvidencePending, public_error
+from broader_vids.evidence.media import EvidencePending, MAX_VIDEO_RETRIES, public_error
 from broader_vids.time_budget import report_limit
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp, RequestGate
 from broader_vids.creators import enrich
 from broader_vids.storage import Store
 from broader_vids.preferences import canonical_identity, platform_lock
-from broader_vids.recommendations.engagement import collect_snapshot
+from broader_vids.recommendations.engagement import (
+    BilibiliVideoUnavailable,
+    collect_snapshot,
+)
 from broader_vids.recommendations.originality import provenance
 
 
@@ -106,6 +109,8 @@ class SnapshotPool:
             client.request_gate = self.gate
             client.cancelled = Cancellation()
             return self.collector(client, item)
+        except BilibiliVideoUnavailable:
+            raise
         except AccessPaused as error:
             with self.error_lock:
                 if self.first_error is None:
@@ -190,7 +195,9 @@ def refresh_metadata(store, identifier, *, use_browser=False, http_factory=Publi
                 "identity": item,
                 "use_browser": use_browser,
                 "max_seconds": 60,
-                "max_requests": 2 if item["platform"] == "youtube" else 1,
+                "max_requests": 2
+                if item["platform"] == "youtube"
+                else 1 + MAX_VIDEO_RETRIES,
             },
             {"phase": "fetch"},
         )

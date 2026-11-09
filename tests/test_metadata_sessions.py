@@ -9,7 +9,10 @@ from unittest.mock import patch
 
 from broader_vids.evidence.failures import failure_details
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp, RequestGate
-from broader_vids.recommendations.engagement import YouTubeMetadataError
+from broader_vids.recommendations.engagement import (
+    BilibiliVideoUnavailable,
+    YouTubeMetadataError,
+)
 from broader_vids.recommendations.metadata import SnapshotPool
 from broader_vids.storage import Store
 from test_recommendations import candidate
@@ -98,6 +101,33 @@ class MetadataSessionTests(unittest.TestCase):
                 self.assertEqual(
                     len(list(parent.cookies)), 1 if platform == "youtube" else 2
                 )
+
+    def test_unavailable_bilibili_video_does_not_cancel_other_metadata_workers(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            identifier = store.create(
+                "bilibili", {"max_seconds": 60, "max_requests": 20}, {}
+            )
+            parent = PublicHttp(store, store.get(identifier), anonymous_session=True)
+            items = [candidate(index + 1, "bilibili") for index in range(3)]
+
+            def collect(client, item):
+                if item["canonical_id"] == items[0]["canonical_id"]:
+                    raise BilibiliVideoUnavailable(item["video_id"])
+                return {"views": 1000, "likes": 30}
+
+            with SnapshotPool(store, parent, lambda: 60, collect, enabled=True) as pool:
+                pool.prefetch(items, lambda _: True)
+                with self.assertRaises(BilibiliVideoUnavailable):
+                    pool.get(items[0], lambda: None)
+                self.assertFalse(pool.cancelled.is_set())
+                self.assertIsNone(pool.first_error)
+                self.assertEqual(pool.get(items[1], lambda: None)["likes"], 30)
+                pool.prefetch(items[2:], lambda _: True)
+                self.assertEqual(pool.get(items[2], lambda: None)["likes"], 30)
+            self.assertEqual(pool.futures, {})
 
     def test_youtube_access_denial_stops_queued_metadata_calls_and_preserves_first_error(
         self,
