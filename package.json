@@ -1,6 +1,6 @@
 {
   "name": "broader-vids",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Codex and experimental Claude Code skills for local YouTube/Bilibili recommendations",
   "license": "MIT",
   "engines": {
@@ -11,7 +11,7 @@
   },
   "files": [
     "bin/",
-    "python/broader_vids-0.1.11-*.whl",
+    "python/broader_vids-0.1.12-*.whl",
     "python/core-requirements.txt",
     "python/evidence-requirements.txt",
     "python/asr-requirements.txt",
@@ -48,6 +48,6 @@
     "tag": "latest"
   },
   "broaderVidsRelease": {
-    "sourceCommit": "f75476bc23dce185b4a8a5479a8a984f17bffa1d"
+    "sourceCommit": "450455e1888fec57843762d8245cf69b335d43c5"
   }
 }
