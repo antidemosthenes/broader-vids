@@ -1,3 +1,5 @@
+import hashlib
+
 from broader_vids.time_budget import (
     effective_limit,
     validate_optional_limit,
@@ -8,6 +10,61 @@ from broader_vids.onboarding import status as onboarding_status
 from broader_vids.worker_context import host_options, validate_host
 from broader_vids.preferences import platform_lock
 from broader_vids.preflight import preflight, charge_elapsed
+
+
+PLATFORM_ORDER = ("youtube", "bilibili")
+
+
+def startup_lock(platform):
+    return hashlib.sha256(f"recommendation-startup:{platform}".encode()).hexdigest()[
+        :32
+    ]
+
+
+def busy_report(platform):
+    return {
+        "status": "blocked",
+        "platform": platform,
+        "checks": {
+            "active_run": {
+                "status": "busy",
+                "remedy": "Wait for the active recommendation operation. Do not remove its lock.",
+            }
+        },
+        "elapsed_seconds": 0,
+    }
+
+
+def startup_platforms(store, args):
+    if args.command == "recommend":
+        platform = args.platform or onboarding_status(store.root)["default_platform"]
+        if platform == "both":
+            return PLATFORM_ORDER
+        return (platform,) if platform in PLATFORM_ORDER else ()
+    if args.command != "continue":
+        return ()
+    run = store.get(args.run_id)
+    kind = run["settings"].get("kind")
+    if kind == "recommendation_batch":
+        return PLATFORM_ORDER
+    if kind == "recommendation" and run["platform"] in PLATFORM_ORDER:
+        return (run["platform"],)
+    return ()
+
+
+def reserve_startup(store, args, stack):
+    platforms = startup_platforms(store, args)
+    selected = set(platforms)
+    try:
+        for platform in PLATFORM_ORDER:
+            if platform in selected:
+                stack.enter_context(store.lease(startup_lock(platform)))
+    except ValueError:
+        report_platform = (
+            "both" if selected == set(PLATFORM_ORDER) else next(iter(selected))
+        )
+        return busy_report(report_platform)
+    return None
 
 
 def prepare_recommendation(store, args):
@@ -104,17 +161,7 @@ def prepare_recommendation(store, args):
     if resume:
         locks += [run["id"], *run["state"].get("children", {}).values()]
     if any((store.root / f"{identifier}.lock").exists() for identifier in locks):
-        return {
-            "status": "blocked",
-            "platform": platform,
-            "checks": {
-                "active_run": {
-                    "status": "busy",
-                    "remedy": "Wait for the active recommendation operation. Do not remove its lock.",
-                }
-            },
-            "elapsed_seconds": 0,
-        }
+        return busy_report(platform)
     if resume:
         from broader_vids.recommendations.timing import recover_elapsed
 

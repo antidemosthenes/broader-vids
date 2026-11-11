@@ -12,6 +12,57 @@ from test_dashboard_feedback import (
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
 class CreatorDashboardTests(unittest.TestCase):
+    def test_stale_creator_snapshots_keep_rules_and_accept_newer_tags(self):
+        with dashboard_fixture() as (page, _):
+            result = page.evaluate("""async () => {
+                const {state, applyExclusions} = await import('/static/state.js');
+                const id = state.data.runs.youtube.selected[0].canonical_id;
+                const video = state.data.videos[id];
+                const calibration = state.calibration.find(entry => entry.item.canonical_id === id);
+                if (!video || !calibration)
+                    throw new Error('Fixture must expose the same video in both views.');
+                const creatorId = video.creator.creator_id;
+                applyExclusions({
+                    revision: 20,
+                    tag_revision: 30,
+                    creators: {youtube: [{creator_id: creatorId, imported: true}], bilibili: []},
+                    tags: {youtube: [], bilibili: []},
+                    bilibili_sync: {account_id: 'new-account', status: 'complete'},
+                });
+                applyExclusions({
+                    revision: 19,
+                    tag_revision: 31,
+                    creators: {youtube: [], bilibili: []},
+                    tags: {youtube: [{tag: 'newer tag'}], bilibili: []},
+                    bilibili_sync: {account_id: 'old-account', status: 'failed'},
+                });
+                return {
+                    revision: state.exclusions.revision,
+                    tag_revision: state.exclusions.tag_revision,
+                    has_newer_tag: state.exclusions.tags.youtube.some(rule => rule.tag === 'newer tag'),
+                    account_id: state.exclusions.bilibili_sync.account_id,
+                    video_creator: video.creator,
+                    calibration_creator: calibration.creator,
+                };
+            }""")
+            self.assertEqual(result["revision"], 20)
+            self.assertEqual(result["tag_revision"], 31)
+            self.assertTrue(result["has_newer_tag"])
+            self.assertEqual(result["account_id"], "new-account")
+            self.assertTrue(result["video_creator"]["excluded"])
+            self.assertTrue(result["video_creator"]["imported"])
+            self.assertTrue(result["calibration_creator"]["excluded"])
+            self.assertTrue(result["calibration_creator"]["imported"])
+
+            page.get_by_role("tab", name="Bilibili", exact=True).click()
+            page.get_by_role("tab", name="YouTube", exact=True).click()
+            open_first(page)
+            checkbox = page.get_by_role(
+                "checkbox", name="Exclude this creator from future rounds"
+            )
+            self.assertTrue(checkbox.is_checked())
+            self.assertTrue(checkbox.is_disabled())
+
     def test_creator_changes_do_not_overlap_across_navigation_and_keep_drafts(self):
         with dashboard_fixture() as (page, _):
             inspector = open_first(page)

@@ -57,27 +57,101 @@ def display_name(store, platform, identifier, name=""):
         "SELECT payload FROM discovery_registry WHERE platform=? AND kind='creator' AND item_key=?",
         (platform, identifier),
     ).fetchone()
-    cached = json.loads(row[0]).get("name") if row else None
+    return _display_name(name, identifier, row[0] if row else None)
+
+
+def _display_name(name, identifier, payload):
+    if isinstance(name, str) and name.strip() and name.strip() != identifier:
+        return name.strip()
+    return _cached_name(payload)
+
+
+def _cached_name(payload):
+    cached = json.loads(payload).get("name") if payload is not None else None
     return cached.strip() if isinstance(cached, str) else ""
 
 
-def video_creator(store, identifier):
-    key = (
+def _video_key(identifier):
+    return (
         canonical_identity(identifier)["canonical_id"]
         if identifier.startswith("https:")
         else identifier
     )
-    row = store.db.execute(
-        "SELECT payload FROM video_state WHERE canonical_id=?", (key,)
-    ).fetchone()
-    if row:
-        item = json.loads(row[0])
-    else:
-        calibration = store.db.execute(
-            "SELECT payload FROM calibration_items WHERE canonical_id=?", (key,)
-        ).fetchone()
-        if calibration:
-            payload = json.loads(calibration[0])
+
+
+def _fetch_creator_rows(store, keys):
+    result = {}
+    for start in range(0, len(keys), 500):
+        chunk = keys[start : start + 500]
+        requested = ",".join("(?)" for _ in chunk)
+        query = f"""WITH requested(canonical_id) AS (VALUES {requested})
+            SELECT requested.canonical_id, video_state.payload AS video_payload,
+                calibration_items.payload AS calibration_payload,
+                engagement_snapshots.payload AS engagement_payload
+            FROM requested
+            LEFT JOIN video_state USING(canonical_id)
+            LEFT JOIN calibration_items USING(canonical_id)
+            LEFT JOIN engagement_snapshots USING(canonical_id)"""
+        for row in store.db.execute(query, chunk):
+            result[row["canonical_id"]] = dict(row)
+    return result
+
+
+def _fetch_cached_names(store, pairs):
+    result = {}
+    grouped = {}
+    for platform, identifier in pairs:
+        grouped.setdefault(platform, set()).add(identifier)
+    for platform, identifiers in grouped.items():
+        values = sorted(identifiers)
+        for start in range(0, len(values), 500):
+            chunk = values[start : start + 500]
+            query = (
+                "SELECT item_key,payload FROM discovery_registry "
+                "WHERE platform=? AND kind='creator' AND item_key IN ("
+                + ",".join("?" for _ in chunk)
+                + ")"
+            )
+            result.update(
+                ((platform, row["item_key"]), row["payload"])
+                for row in store.db.execute(query, (platform, *chunk))
+            )
+    return result
+
+
+def video_creators(store, identifiers, *, state_items=None, snapshots=None):
+    keys_by_input = {}
+    for identifier in identifiers:
+        key = _video_key(identifier)
+        keys_by_input.setdefault(key, identifier)
+    keys = list(keys_by_input)
+    if not keys:
+        return {}
+
+    state_items = state_items or {}
+    video_items = dict(state_items)
+    engagement = dict(snapshots or {})
+    fetched = {}
+    needs_lookup = [key for key in keys if key not in state_items or snapshots is None]
+    if needs_lookup:
+        fetched = _fetch_creator_rows(store, needs_lookup)
+        for key, row in fetched.items():
+            if key not in video_items and row["video_payload"] is not None:
+                video_items[key] = json.loads(row["video_payload"])
+            if snapshots is None and row["engagement_payload"] is not None:
+                engagement[key] = json.loads(row["engagement_payload"])
+
+    calibrations = {
+        key: row["calibration_payload"]
+        for key, row in fetched.items()
+        if row["calibration_payload"] is not None
+    }
+    items = {}
+    for key, identifier in keys_by_input.items():
+        if key in video_items:
+            item = dict(video_items[key])
+        elif key in calibrations:
+            payload = json.loads(calibrations[key])
             item = {
                 **payload["item"],
                 "platform": payload["features"]["platform"],
@@ -85,24 +159,53 @@ def video_creator(store, identifier):
             }
         else:
             item = canonical_identity(identifier)
-    row = store.db.execute(
-        "SELECT payload FROM engagement_snapshots WHERE canonical_id=?", (key,)
-    ).fetchone()
-    if row:
-        enrich(item, json.loads(row[0]))
-    if identity(item) is None:
-        calibration = store.db.execute(
-            "SELECT payload FROM calibration_items WHERE canonical_id=?", (key,)
-        ).fetchone()
-        if calibration:
-            item["creator_id"] = json.loads(calibration[0])["features"].get("creator")
-    value = identity(item)
-    return {
-        "platform": item["platform"],
-        "creator_id": value,
-        "name": display_name(store, item["platform"], value, item.get("creator_name")),
-        "url": creator_url(item["platform"], value) if value else None,
-    }
+        if key in engagement:
+            enrich(item, engagement[key])
+        items[key] = item
+
+    unresolved = [key for key, item in items.items() if identity(item) is None]
+    missing_calibrations = [key for key in unresolved if key not in calibrations]
+    calibrations.update(
+        (key, row["calibration_payload"])
+        for key, row in _fetch_creator_rows(store, missing_calibrations).items()
+        if row["calibration_payload"] is not None
+    )
+    for key in unresolved:
+        payload = calibrations.get(key)
+        if payload:
+            items[key]["creator_id"] = json.loads(payload)["features"].get("creator")
+
+    values = {key: identity(item) for key, item in items.items()}
+    name_lookups = []
+    for key, item in items.items():
+        identifier = values[key]
+        name = item.get("creator_name")
+        if identifier and not (
+            isinstance(name, str) and name.strip() and name.strip() != identifier
+        ):
+            name_lookups.append((item["platform"], identifier))
+    cached_names = _fetch_cached_names(store, name_lookups)
+
+    result = {}
+    for key, item in items.items():
+        value = values[key]
+        name = item.get("creator_name")
+        if isinstance(name, str) and name.strip() and name.strip() != value:
+            resolved_name = name.strip()
+        else:
+            resolved_name = _cached_name(cached_names.get((item["platform"], value)))
+        result[key] = {
+            "platform": item["platform"],
+            "creator_id": value,
+            "name": resolved_name,
+            "url": creator_url(item["platform"], value) if value else None,
+        }
+    return result
+
+
+def video_creator(store, identifier):
+    key = _video_key(identifier)
+    return video_creators(store, [identifier])[key]
 
 
 def snapshot(store, platform):
@@ -154,15 +257,21 @@ def status(store):
     ).fetchone()
     creators = {"youtube": {}, "bilibili": {}}
     for row in store.db.execute(
-        "SELECT * FROM creator_exclusions WHERE source='manual' OR account_id=? ORDER BY platform,creator_id,source",
+        """SELECT exclusions.*, discovery_registry.payload AS cached_payload
+        FROM creator_exclusions AS exclusions
+        LEFT JOIN discovery_registry ON discovery_registry.platform=exclusions.platform
+            AND discovery_registry.kind='creator'
+            AND discovery_registry.item_key=exclusions.creator_id
+        WHERE exclusions.source='manual' OR exclusions.account_id=?
+        ORDER BY exclusions.platform,exclusions.creator_id,exclusions.source""",
         (policy["account_id"],),
     ):
         entry = creators[row["platform"]].setdefault(
             row["creator_id"],
             {
                 "creator_id": row["creator_id"],
-                "name": display_name(
-                    store, row["platform"], row["creator_id"], row["name"]
+                "name": _display_name(
+                    row["name"], row["creator_id"], row["cached_payload"]
                 ),
                 "url": creator_url(row["platform"], row["creator_id"]),
                 "sources": [],
@@ -191,19 +300,33 @@ def status(store):
     }
 
 
-def checkbox_state(creator, rules):
-    entry = next(
-        (
-            entry
-            for entry in rules["creators"][creator["platform"]]
-            if entry["creator_id"] == creator["creator_id"]
-        ),
-        None,
+def checkbox_state(creator, rules, index=None):
+    entry = (
+        index[creator["platform"]].get(creator["creator_id"])
+        if index is not None
+        else next(
+            (
+                entry
+                for entry in rules["creators"][creator["platform"]]
+                if entry["creator_id"] == creator["creator_id"]
+            ),
+            None,
+        )
     )
     return {
         **creator,
         "excluded": bool(entry),
         "imported": bool(entry and entry["imported"]),
+    }
+
+
+def checkbox_index(rules):
+    return {
+        platform: {
+            entry["creator_id"]: entry
+            for entry in reversed(rules["creators"][platform])
+        }
+        for platform in rules["creators"]
     }
 
 

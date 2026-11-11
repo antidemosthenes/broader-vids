@@ -397,6 +397,7 @@ Topic-planning calls have a 120-second timeout.
 A timeout automatically uses the next saved planning call, if one remains.
 This retry retains the selected topics, model, effort, and planning policy.
 The default planning allowance remains two calls, including optional subdivision.
+The round keeps this allowance when an invocation uses fewer calls.
 If planning still fails, the recommendation report includes the source failure.
 A model-capacity error requires service availability. It does not indicate a Bilibili sign-in failure.
 The engine does not switch to paid API access automatically.
@@ -1372,6 +1373,8 @@ They do not measure isolated model inference time.
 Paused rounds can show a provisional preview in the digest and dashboard.
 The dashboard labels the preview and allows ratings before publication.
 That preview does not publish recommendations or change pending membership.
+It uses the saved duration deduction and any validated interest mappings.
+A pause during interest alignment can also retain this preview.
 
 Scorecard schemas and validators use the same topic-label length bound of 120 characters.
 See the [OpenAI Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs) for supported schema constraints.

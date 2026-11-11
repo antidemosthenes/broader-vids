@@ -14,6 +14,7 @@ from broader_vids.creators import (
     snapshot,
     status,
     video_creator,
+    video_creators,
 )
 from broader_vids.learning.feedback import save_detail
 from broader_vids.learning.service import ensure_model
@@ -238,6 +239,100 @@ class CreatorExclusionTests(unittest.TestCase):
             display_name(self.store, "youtube", CHANNEL, "Current name"), "Current name"
         )
         self.assertEqual(display_name(self.store, "youtube", "UC" + "z" * 22), "")
+
+    def test_batch_creator_resolution_preserves_metadata_and_fallbacks(self):
+        verified = candidate(601)
+        verified_key = verified["canonical_id"]
+        original_creator = "UC" + "a" * 22
+        verified_creator = "UC" + "b" * 22
+        verified["creator_id"] = original_creator
+        verified["creator_name"] = "Original channel"
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO video_state VALUES(?,?,?,0,0,0,'fixture')",
+                (verified_key, "youtube", json.dumps(verified)),
+            )
+            self.store.db.execute(
+                "INSERT INTO engagement_snapshots VALUES(?,?)",
+                (
+                    verified_key,
+                    json.dumps(
+                        {
+                            "identity_verified": True,
+                            "creator_id": verified_creator,
+                            "creator_name": "Verified channel",
+                        }
+                    ),
+                ),
+            )
+
+        calibrated = candidate(602)
+        calibrated_key = calibrated["canonical_id"]
+        calibrated_creator = "UC" + "c" * 22
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO calibration_items VALUES(?,'fixture','train',?,0)",
+                (
+                    calibrated_key,
+                    json.dumps(
+                        {
+                            "item": {
+                                "canonical_id": calibrated_key,
+                                "platform": "youtube",
+                            },
+                            "features": {
+                                "platform": "youtube",
+                                "creator": calibrated_creator,
+                            },
+                        }
+                    ),
+                ),
+            )
+            self.store.db.execute(
+                "INSERT INTO discovery_registry VALUES('youtube','creator',?,?, 'fixture','fixture')",
+                (calibrated_creator, json.dumps({"name": "Cached channel name"})),
+            )
+
+        unknown_key = candidate(603)["canonical_id"]
+        statements = []
+        self.store.db.set_trace_callback(statements.append)
+        try:
+            batch = video_creators(
+                self.store, [verified_key, calibrated_key, unknown_key]
+            )
+        finally:
+            self.store.db.set_trace_callback(None)
+
+        self.assertEqual(
+            batch[verified_key],
+            {
+                "platform": "youtube",
+                "creator_id": verified_creator,
+                "name": "Verified channel",
+                "url": f"https://www.youtube.com/channel/{verified_creator}",
+            },
+        )
+        self.assertEqual(
+            batch[calibrated_key],
+            {
+                "platform": "youtube",
+                "creator_id": calibrated_creator,
+                "name": "Cached channel name",
+                "url": f"https://www.youtube.com/channel/{calibrated_creator}",
+            },
+        )
+        self.assertEqual(
+            batch[unknown_key],
+            {"platform": "youtube", "creator_id": None, "name": "", "url": None},
+        )
+        self.assertEqual(
+            batch,
+            {
+                key: video_creator(self.store, key)
+                for key in (verified_key, calibrated_key, unknown_key)
+            },
+        )
+        self.assertLessEqual(len(statements), 4)
 
     def test_bilibili_sync_runs_once_and_a_resumed_round_keeps_its_snapshot(self):
         run = self.store.get(

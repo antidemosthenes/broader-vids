@@ -325,14 +325,18 @@ def execute_discovery(
                     run["settings"]["max_seconds"], run["elapsed"] + max_seconds
                 ),
             }
+        planning_run = run
         if max_new_planning_calls is not None:
-            run["settings"] = {
-                **run["settings"],
-                "max_planning_calls": min(
-                    run["settings"].get("max_planning_calls", 0),
-                    len(run["state"].get("exploration", {}).get("attempts", []))
-                    + max_new_planning_calls,
-                ),
+            attempts = len(run["state"].get("exploration", {}).get("attempts", []))
+            planning_run = {
+                **run,
+                "settings": {
+                    **run["settings"],
+                    "max_planning_calls": min(
+                        run["settings"].get("max_planning_calls", 0),
+                        attempts + max_new_planning_calls,
+                    ),
+                },
             }
         http = http_factory(store, run, anonymous_session=True)
         http.cancelled = cancel_event
@@ -361,10 +365,10 @@ def execute_discovery(
                 )
             if state["phase"] == "planning":
                 if model_runner is None:
-                    model_runner = worker_runner(run["settings"])
+                    model_runner = worker_runner(planning_run["settings"])
                 prepare_plan(
                     store,
-                    run,
+                    planning_run,
                     save,
                     lambda: run["settings"]["max_seconds"] - http.elapsed(),
                     usage_owner=usage_owner,

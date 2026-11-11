@@ -184,6 +184,43 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(len(nodes(self.store)), 3)
 
+    def test_per_invocation_planning_allowance_does_not_lower_saved_cap(self):
+        identifier = create_discovery(
+            self.store,
+            "youtube",
+            max_planning_calls=2,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+
+        def failed(*args):
+            raise EvidencePending("Fixture model unavailable")
+
+        first = execute_discovery(
+            self.store,
+            identifier,
+            FixtureHttp,
+            model_runner=failed,
+            max_new_planning_calls=1,
+        )
+        self.assertEqual(first["status"], "paused")
+        self.assertEqual(first["settings"]["max_planning_calls"], 2)
+        self.assertEqual(len(first["state"]["exploration"]["attempts"]), 1)
+
+        second = execute_discovery(
+            self.store,
+            identifier,
+            FixtureHttp,
+            model_runner=self.model,
+            max_new_planning_calls=1,
+        )
+        self.assertTrue(second["state"]["exploration"]["ready"])
+        self.assertEqual(second["settings"]["max_planning_calls"], 2)
+        self.assertEqual(len(second["state"]["exploration"]["attempts"]), 2)
+        self.assertEqual(
+            second["state"]["exploration"]["attempts"][1]["status"], "completed"
+        )
+
     def test_planning_timeouts_retry_within_saved_allowance_on_both_platforms(self):
         from broader_vids.exploration.planning import prepare_plan
 

@@ -253,6 +253,10 @@ Historical snapshots can retain an older overall adjustment.
 Published historical lists retain their saved scores.
 Later runs use the current model.
 
+Provisional previews use the round's saved ranking policy and validated interest mappings.
+The short-video deduction applies once when the saved policy requires it.
+Previews create no recommendation history.
+
 ## 6. Structured feedback
 
 Topic interest, broad-subject interest, depth fit, and video quality are independent dimensions.

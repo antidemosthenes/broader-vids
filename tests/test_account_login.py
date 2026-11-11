@@ -15,6 +15,64 @@ from broader_vids.evidence.service import atomic_json
 
 
 class AccountLoginTests(unittest.TestCase):
+    def test_failed_status_publish_preserves_previous_login_status(self):
+        from broader_vids.evidence.browser import login_bilibili
+
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "access" / "bilibili"
+            directory.mkdir(parents=True)
+            target = directory / "status.json"
+            previous = '{"authenticated": false, "account_id": "100"}'
+            target.write_text(previous, encoding="utf-8")
+            confirmation = directory / "confirm.request"
+
+            class Page:
+                def goto(self, *args, **kwargs):
+                    pass
+
+                def is_closed(self):
+                    return False
+
+                def wait_for_timeout(self, value):
+                    confirmation.write_text("confirm", encoding="utf-8")
+
+            response = SimpleNamespace(
+                ok=True, json=lambda: {"data": {"isLogin": True}}
+            )
+            context = SimpleNamespace(
+                pages=[Page()],
+                cookies=lambda urls: [
+                    {"name": "SESSDATA", "value": "session"},
+                    {"name": "DedeUserID", "value": "200"},
+                ],
+                request=SimpleNamespace(get=lambda *args, **kwargs: response),
+            )
+
+            @contextmanager
+            def browser(*args, **kwargs):
+                yield context
+
+            original_replace = Path.replace
+
+            def fail_status_publish(source, destination):
+                if Path(destination) == target and Path(source).suffix == ".tmp":
+                    raise OSError("Fixture publication failure")
+                return original_replace(source, destination)
+
+            with (
+                patch("broader_vids.evidence.browser.bilibili_browser", browser),
+                patch(
+                    "broader_vids.blacklist.sync_blacklist",
+                    return_value={"status": "complete"},
+                ),
+                patch.object(Path, "replace", fail_status_publish),
+            ):
+                with self.assertRaisesRegex(OSError, "publication failure"):
+                    login_bilibili(root)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), previous)
+            self.assertEqual(list(directory.glob("*.tmp")), [])
+
     def test_authentication_requires_valid_signed_in_identity(self):
         context = SimpleNamespace(request=SimpleNamespace(get=lambda *a, **k: response))
         response = SimpleNamespace(ok=True, json=lambda: payload)

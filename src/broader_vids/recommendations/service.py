@@ -883,7 +883,7 @@ def execute_recommendation(
             save()
             raise
         finally:
-            if run["status"] == "paused" and state["phase"] == "assess":
+            if run["status"] == "paused" and state["phase"] in {"assess", "alignment"}:
                 from broader_vids.recommendations.preview import update_preview
 
                 update_preview(store, run)

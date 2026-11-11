@@ -22,7 +22,7 @@ from broader_vids.evidence.service import (
     transcribe_media,
     verify_bundle,
 )
-from broader_vids.evidence.reports import evidence_checks
+from broader_vids.evidence.reports import evidence_report
 from broader_vids.evidence.media import (
     EvidencePending,
     VideoFetcher,
@@ -934,8 +934,9 @@ class EvidencePipelineTests(unittest.TestCase):
         self.assertEqual(completed["status"], "prepared")
         self.assertEqual(len(completed["state"]["frame_positions_done"]), 4)
         self.assertEqual(completed["state"]["resources"]["media_download_bytes"], 0)
-        self.assertFalse(
-            evidence_checks(self.store, completed)["network_resolved_playable_unit"]
+        self.assertEqual(
+            evidence_report(self.store, identifier)["metadata"]["source"],
+            "user_supplied_file",
         )
 
 

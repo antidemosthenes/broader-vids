@@ -35,6 +35,13 @@ def new_plan(store, seed=None, *, policy_version=2, rotation_version=2, platform
     if policy_version != 2:
         raise ValueError("Unsupported exploration policy; start a new discovery round.")
     profile = seed_interests(store)
+    store.db.execute(
+        "CREATE INDEX IF NOT EXISTS domain_recent_platform_lookup "
+        "ON domain_observations(json_extract(payload,'$.platform'),created_at)"
+    )
+    store.db.execute(
+        "CREATE INDEX IF NOT EXISTS domain_recent_lookup ON domain_observations(created_at)"
+    )
     seed = random.SystemRandom().getrandbits(63) if seed is None else seed
     if type(seed) is not int or not 0 <= seed < 2**63:
         raise ValueError("Exploration seed must be an integer from zero to 2^63-1.")

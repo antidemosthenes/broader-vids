@@ -1,6 +1,5 @@
 from contextlib import contextmanager
 import http.cookiejar
-import json
 from pathlib import Path
 import time
 
@@ -148,6 +147,7 @@ def login_bilibili(root, timeout=600):
                 if verified:
                     from contextlib import closing
                     from broader_vids.blacklist import sync_blacklist
+                    from broader_vids.evidence.service import atomic_json
                     from broader_vids.storage import Store
 
                     with closing(Store(root)) as store:
@@ -159,7 +159,7 @@ def login_bilibili(root, timeout=600):
                         "blacklist_sync": blacklist,
                     }
                     target = Path(root) / "access" / "bilibili" / "status.json"
-                    target.write_text(json.dumps(status, indent=2), encoding="utf-8")
+                    atomic_json(target, status)
                     return status
                 print(
                     "The site did not verify the session; access remains pending and the browser stays open.",
