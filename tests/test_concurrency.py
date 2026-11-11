@@ -161,6 +161,197 @@ class ConcurrencyTests(unittest.TestCase):
         self.assertEqual(saved["status"], "paused")
         self.assertNotIn("active_attempt", saved["state"])
 
+    def test_platform_pause_stops_its_sibling_and_preserves_the_first_cause(self):
+        from broader_vids.recommendations.batch import batch_report
+
+        set_profile(self.store, ["math"])
+        cases = (
+            ("youtube", "discovery", False),
+            ("bilibili", "enrich", False),
+            ("youtube", "assess", False),
+            ("bilibili", "selection", True),
+        )
+        for platform, phase, crash in cases:
+            with self.subTest(platform=platform, phase=phase, crash=crash):
+                identifier = create_batch(
+                    self.store,
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                )
+                entered = threading.Barrier(2)
+                cause = f"Original {phase} failure"
+                cancelled = []
+
+                def runner(local, child, *, runtime, **kwargs):
+                    run = local.get(child)
+                    entered.wait(2)
+                    if run["platform"] == platform:
+                        run["state"]["phase"] = phase
+                        run.update(status="paused", reason=cause)
+                        local.save(run)
+                        if crash:
+                            raise ValueError(cause)
+                    else:
+                        cancelled.append(runtime.cancelled.wait(2))
+                        run["state"]["checkpoint_marker"] = "retained"
+                        run.update(status="paused", reason="Sibling cancellation")
+                        local.save(run)
+                    return run
+
+                result = execute_batch(self.store, identifier, runner)
+                self.assertEqual(cancelled, [True])
+                self.assertEqual(result["status"], "paused")
+                self.assertEqual(
+                    result["state"]["stop_cause"],
+                    {
+                        "platform": platform,
+                        "phase": phase,
+                        "reason": cause,
+                    },
+                )
+                self.assertIn(cause, result["reason"])
+                report, _ = batch_report(self.store, identifier)
+                self.assertEqual(report["stop_cause"], result["state"]["stop_cause"])
+                self.assertIn(
+                    cause,
+                    (
+                        self.store.root / "recommendations" / identifier / "digest.md"
+                    ).read_text(encoding="utf-8"),
+                )
+                sibling = next(
+                    child
+                    for p, child in result["state"]["children"].items()
+                    if p != platform
+                )
+                self.assertEqual(
+                    self.store.get(sibling)["state"]["checkpoint_marker"], "retained"
+                )
+
+                def resume(local, child, *, runtime, **kwargs):
+                    self.assertFalse(runtime.cancelled.is_set())
+                    run = local.get(child)
+                    run.update(status="completed", reason="Recovered fixture")
+                    local.save(run)
+                    return run
+
+                resumed = execute_batch(self.store, identifier, resume)
+                self.assertEqual(resumed["status"], "completed")
+                self.assertNotIn("stop_cause", resumed["state"])
+
+    def test_platform_pause_keeps_an_already_completed_sibling(self):
+        set_profile(self.store, ["math"])
+        identifier = create_batch(
+            self.store,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        completed = threading.Event()
+
+        def runner(local, child, **kwargs):
+            run = local.get(child)
+            if run["platform"] == "youtube":
+                run["state"]["phase"] = "published"
+                run.update(status="completed", reason="Published fixture")
+                local.save(run)
+                completed.set()
+            else:
+                self.assertTrue(completed.wait(2))
+                run.update(status="paused", reason="Bilibili fixture failure")
+                local.save(run)
+            return run
+
+        result = execute_batch(self.store, identifier, runner)
+        self.assertEqual(result["status"], "paused")
+        youtube = self.store.get(result["state"]["children"]["youtube"])
+        self.assertEqual(youtube["status"], "completed")
+        self.assertEqual(youtube["state"]["phase"], "published")
+        self.assertIn("Bilibili fixture failure", result["reason"])
+
+    def test_partial_publication_does_not_cancel_the_other_platform(self):
+        set_profile(self.store, ["math"])
+        identifier = create_batch(
+            self.store,
+            assessment_model="fixture-model",
+            reasoning_effort="low",
+        )
+        partial_reported = threading.Event()
+
+        def report(local, child):
+            if local.get(child)["platform"] == "bilibili":
+                partial_reported.set()
+
+        def runner(local, child, *, runtime, **kwargs):
+            run = local.get(child)
+            if run["platform"] == "bilibili":
+                run.update(
+                    status="partial", reason="Final list has fewer eligible videos"
+                )
+            else:
+                self.assertTrue(partial_reported.wait(2))
+                self.assertFalse(runtime.cancelled.is_set())
+                run.update(status="completed", reason="Completed fixture")
+            run["state"]["phase"] = "published"
+            local.save(run)
+            return run
+
+        with patch(
+            "broader_vids.recommendations.batch.write_recommendation_report",
+            side_effect=report,
+        ):
+            result = execute_batch(self.store, identifier, runner)
+        self.assertEqual(result["state"]["results"]["youtube"]["status"], "completed")
+        self.assertEqual(result["state"]["results"]["bilibili"]["status"], "partial")
+        self.assertNotIn("stop_cause", result["state"])
+
+    def test_publication_rechecks_cancellation_after_acquiring_the_write_lock(self):
+        from broader_vids.http import BudgetExhausted
+        from broader_vids.recommendations.service import (
+            create_recommendation,
+            _publish_scored,
+        )
+
+        set_profile(self.store, ["math"])
+        run = self.store.get(
+            create_recommendation(
+                self.store,
+                "youtube",
+                assessment_model="fixture-model",
+                reasoning_effort="low",
+            )
+        )
+        connection = self.store.db
+        cancelled = threading.Event()
+
+        class Connection:
+            def __enter__(self):
+                return connection.__enter__()
+
+            def __exit__(self, *args):
+                return connection.__exit__(*args)
+
+            def execute(self, sql, *args):
+                result = connection.execute(sql, *args)
+                if sql == "BEGIN IMMEDIATE":
+                    cancelled.set()
+                return result
+
+        def check():
+            if cancelled.is_set():
+                raise BudgetExhausted("Sibling platform paused")
+
+        with (
+            patch.object(self.store, "db", Connection()),
+            patch(
+                "broader_vids.recommendations.service.round_learning", return_value={}
+            ),
+            patch("broader_vids.recommendations.service._publish_locked") as publish,
+            self.assertRaisesRegex(BudgetExhausted, "Sibling platform paused"),
+        ):
+            _publish_scored(self.store, run, check)
+        self.assertEqual(publish.call_count, 1)
+        self.assertTrue(publish.call_args.kwargs["prepare_only"])
+        self.assertFalse(connection.in_transaction)
+
     def test_completed_children_can_be_recovered_after_the_deadline(self):
         set_profile(self.store, ["math"])
         identifier = create_batch(

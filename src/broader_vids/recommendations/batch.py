@@ -120,6 +120,7 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
                     "The batch does not own both platform checkpoints; start a new batch."
                 )
         started, prior = time.monotonic(), run["elapsed"]
+        runtime = None
 
         def remaining():
             return (
@@ -127,11 +128,20 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
             )
 
         def save():
+            if runtime is not None and runtime.stop_cause is not None:
+                cause = runtime.stop_cause
+                run["state"]["stop_cause"] = cause
+                name = {"youtube": "YouTube", "bilibili": "Bilibili"}[cause["platform"]]
+                run.update(
+                    status="paused",
+                    reason=f"Round stopped: {name} paused during {cause['phase']}. {cause['reason']}",
+                )
             run["elapsed"] = prior + time.monotonic() - started
             store.save(run)
 
         saved_children = {p: store.get(child) for p, child in children.items()}
         if all(child["status"] == "completed" for child in saved_children.values()):
+            run["state"].pop("stop_cause", None)
             run["state"]["results"] = {
                 p: {
                     "run_id": child["id"],
@@ -168,15 +178,29 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
                     runtime=runtime,
                     batch_id=identifier,
                 )
+                if result["status"] == "paused":
+                    runtime.stop(
+                        platform, result["state"].get("phase"), result["reason"]
+                    )
                 write_recommendation_report(local, child)
                 return platform, {
                     "run_id": child,
                     "status": result["status"],
                     "reason": result["reason"],
                 }
+            except Exception as error:
+                from broader_vids.evidence.media import public_error
+
+                runtime.stop(
+                    platform,
+                    local.get(child)["state"].get("phase"),
+                    public_error(error),
+                )
+                raise
             finally:
                 local.close()
 
+        run["state"].pop("stop_cause", None)
         run.update(
             status="running",
             reason="Both platforms share bounded local/model workers.",
@@ -201,6 +225,11 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
                         except Exception as error:
                             from broader_vids.evidence.media import public_error
 
+                            runtime.stop(
+                                platform,
+                                store.get(children[platform])["state"].get("phase"),
+                                public_error(error),
+                            )
                             result = {
                                 "run_id": children[platform],
                                 "status": "paused",
@@ -263,6 +292,7 @@ def batch_report(store, identifier):
         "run_id": identifier,
         "status": run["status"],
         "reason": run["reason"],
+        "stop_cause": run["state"].get("stop_cause"),
         "elapsed_seconds": live_elapsed(run),
         "shared_max_seconds": report_limit(run["settings"]),
         "platforms": {
@@ -274,7 +304,9 @@ def batch_report(store, identifier):
     for child in run["state"]["children"].values():
         write_recommendation_report(store, child)
     (root / "digest.md").write_text(
-        "\n\n".join(
+        run["reason"]
+        + "\n\n"
+        + "\n\n".join(
             (store.root / "recommendations" / child / "digest.md").read_text(
                 encoding="utf-8"
             )

@@ -66,6 +66,50 @@ class RunFailureTests(unittest.TestCase):
         self.assertNotIn("secret", str(caught.exception))
         self.assertTrue(path.with_suffix(".diagnostic.json").is_file())
 
+    def test_worker_timeout_diagnostic_reports_capacity_without_command_paths(self):
+        path = self.store.root / "response.json"
+        error = subprocess.TimeoutExpired(
+            ["codex", "exec", "private-path" * 100],
+            120,
+            stderr="Warning " * 100 + "Selected model is at capacity. cookie=secret",
+        )
+        with (
+            patch(
+                "broader_vids.evidence.assessment.shutil.which", return_value="codex"
+            ),
+            patch(
+                "broader_vids.evidence.assessment.run_bounded",
+                side_effect=[
+                    subprocess.CompletedProcess([], 0, "Logged in using ChatGPT", ""),
+                    error,
+                ],
+            ),
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run_codex(
+                    "fixture",
+                    self.store.root / "schema.json",
+                    path,
+                    [],
+                    120,
+                    model="fixture-model",
+                    effort="low",
+                )
+        diagnostic = json.loads(path.with_suffix(".diagnostic.json").read_text())
+        self.assertEqual(diagnostic["stage"], "worker")
+        self.assertEqual(diagnostic["category"], "timeout")
+        self.assertIn("at capacity", diagnostic["reason"])
+        self.assertNotIn("private-path", diagnostic["reason"])
+        self.assertNotIn("secret", json.dumps(diagnostic))
+        self.assertFalse(path.exists())
+        from broader_vids.evidence.failures import failure_details
+
+        preparation = failure_details(
+            subprocess.TimeoutExpired(["media"], 30), "preparation"
+        )
+        self.assertIn("30 seconds", preparation["reason"])
+        self.assertNotIn("AI", preparation["reason"])
+
     def test_bilibili_metadata_access_cause_survives_cancellation_of_an_earlier_candidate(
         self,
     ):

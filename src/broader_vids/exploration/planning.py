@@ -6,7 +6,8 @@ import time
 
 from broader_vids.discovery.languages import QueryLanguageError
 from broader_vids.evidence.assessment import run_codex
-from broader_vids.evidence.media import EvidencePending, public_error
+from broader_vids.evidence.failures import failure_details
+from broader_vids.evidence.media import EvidencePending
 from broader_vids.exploration.domains import (
     is_related,
     normalized,
@@ -110,7 +111,11 @@ def prepare_plan(
         )
         refine = (
             state["attempts"][-1]["allow_refinements"]
-            if state["attempts"] and state["attempts"][-1].get("language_error")
+            if state["attempts"]
+            and (
+                state["attempts"][-1].get("language_error")
+                or state["attempts"][-1].get("failure", {}).get("category") == "timeout"
+            )
             else any(a.get("stage") != "subdivision" for a in state["attempts"])
             or recent_empty >= 5
         )
@@ -226,7 +231,8 @@ def prepare_plan(
             EvidencePending,
             subprocess.TimeoutExpired,
         ) as error:
-            attempt.update(status="failed", reason=public_error(error))
+            failure = failure_details(error, "exploration")
+            attempt.update(status="failed", reason=failure["reason"], failure=failure)
             if isinstance(error, QueryLanguageError):
                 attempt["language_error"] = True
         finally:
@@ -234,13 +240,22 @@ def prepare_plan(
             save()
         if attempt["status"] == "failed":
             if (
-                attempt.get("language_error")
+                (
+                    attempt.get("language_error")
+                    or attempt.get("failure", {}).get("category") == "timeout"
+                )
                 and len(state["attempts"]) < allowance
                 and remaining() > 0
             ):
                 continue
             raise EvidencePending(
-                "Exploration generation failed; its attempt is recorded. Continue within the original planning allowance."
+                f"AI topic planning failed: {attempt['reason']} "
+                f"Planning calls used: {len(state['attempts'])}/{allowance}. "
+                + (
+                    "Continue the saved round."
+                    if len(state["attempts"]) < allowance
+                    else "The saved planning allowance is exhausted. Start a new round when the model is available."
+                )
             )
     missing = {n["id"] for n in state["selected"]} - state["queries"].keys()
     if missing:

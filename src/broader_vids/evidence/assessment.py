@@ -415,7 +415,7 @@ def run_codex(
         atomic_json(
             output_path.with_suffix(".diagnostic.json"),
             {
-                **failure_details(error, "assessment"),
+                **failure_details(error, "worker"),
                 "stdout_tail": public_error(getattr(error, "output", "") or ""),
                 "stderr_tail": public_error(getattr(error, "stderr", "") or ""),
             },

@@ -375,6 +375,11 @@ The combined batch shares worker slots and has no overall time limit by default.
 You can set an optional shared limit with `--max-seconds`.
 The limit can exceed 1,800 seconds.
 Its platform jobs retain separate request, media, and model allowances.
+If either platform pauses at any stage, the engine stops unfinished work on both platforms.
+The shared report gives the original platform, stage, and cause.
+Completed results remain available. Continue the batch only when the user requests it.
+Candidate failures that retry or skip without pausing a platform remain nonblocking.
+A published partial list does not cancel unfinished work on the other platform.
 Discovery requests use a separate bounded counter and a ten-minute stage timeout.
 Legacy checkpoints with the former default 1800-second cap continue without that cap.
 Explicit limits saved by this version remain effective during continuation.
@@ -388,6 +393,12 @@ The engine does not silently substitute global CLI defaults or a preset model.
 Accepted effort names are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
 The selected model and CLI must support the requested effort.
 Failed calls consume their allowance.
+Topic-planning calls have a 120-second timeout.
+A timeout automatically uses the next saved planning call, if one remains.
+This retry retains the selected topics, model, effort, and planning policy.
+The default planning allowance remains two calls, including optional subdivision.
+If planning still fails, the recommendation report includes the source failure.
+A model-capacity error requires service availability. It does not indicate a Bilibili sign-in failure.
 The engine does not switch to paid API access automatically.
 
 ## Continue an incomplete run

@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from broader_vids.exploration.domains import (
 )
 from broader_vids.exploration.proposals import validate_response
 from broader_vids.preferences import get_profile, set_profile
+from broader_vids.http import BudgetExhausted
 from broader_vids.recommendations.ranking import related
 from broader_vids.recommendations.service import (
     create_recommendation,
@@ -181,6 +183,101 @@ class ExplorationTests(unittest.TestCase):
         self.assertEqual(self.store.request_count(identifier), 0)
         self.assertEqual(self.calls, [])
         self.assertEqual(len(nodes(self.store)), 3)
+
+    def test_planning_timeouts_retry_within_saved_allowance_on_both_platforms(self):
+        from broader_vids.exploration.planning import prepare_plan
+
+        for platform in ("youtube", "bilibili"):
+            for recover in (True, False):
+                with self.subTest(platform=platform, recover=recover):
+                    identifier = create_discovery(
+                        self.store,
+                        platform,
+                        seed=42,
+                        assessment_model="fixture-model",
+                        reasoning_effort="low",
+                    )
+                    run = self.store.get(identifier)
+                    state = run["state"]["exploration"]
+                    catalog = nodes(self.store)
+                    state.update(
+                        rotation_ready=True,
+                        novelty_baseline=list(catalog),
+                        selected=select_existing(self.store, self.profile, 42),
+                    )
+                    prompts = []
+
+                    def runner(prompt, *args):
+                        prompts.append(prompt)
+                        if not recover or len(prompts) == 1:
+                            raise subprocess.TimeoutExpired(
+                                ["codex", "exec", "private-path" * 100],
+                                120,
+                                stderr="Warning " * 100
+                                + "Selected model is at capacity. cookie=secret",
+                            )
+                        return self.model(prompt, *args)
+
+                    def save():
+                        self.store.save(run)
+
+                    if recover:
+                        prepare_plan(self.store, run, save, lambda: 600, runner)
+                        self.assertTrue(state["ready"])
+                        self.assertEqual(run["state"]["phase"], "bootstrap")
+                    else:
+                        with self.assertRaisesRegex(EvidencePending, "at capacity"):
+                            prepare_plan(self.store, run, save, lambda: 600, runner)
+                        self.assertFalse(state["ready"])
+                        self.assertEqual(run["state"]["phase"], "planning")
+                        with self.assertRaises(BudgetExhausted):
+                            prepare_plan(self.store, run, save, lambda: 600, runner)
+                    self.assertEqual(len(prompts), 2)
+                    self.assertEqual(prompts[0], prompts[1])
+                    self.assertEqual(len(state["attempts"]), 2)
+                    failure = state["attempts"][0]["failure"]
+                    self.assertEqual(failure["stage"], "exploration")
+                    self.assertEqual(failure["category"], "timeout")
+                    self.assertIn("120 seconds", failure["reason"])
+                    self.assertNotIn("private-path", failure["reason"])
+                    self.assertNotIn("secret", json.dumps(failure))
+                    self.assertEqual(self.store.request_count(identifier), 0)
+
+    def test_recommendation_pause_preserves_the_discovery_failure_reason(self):
+        from broader_vids.recommendations.parallel import Runtime
+
+        runtime = Runtime()
+
+        def failed(*args):
+            raise EvidencePending("Selected model is at capacity.")
+
+        def discovery(store, identifier, **kwargs):
+            kwargs.pop("model_runner", None)
+            return execute_discovery(
+                store, identifier, FixtureHttp, model_runner=failed, **kwargs
+            )
+
+        with patch(
+            "broader_vids.recommendations.service.execute_discovery",
+            side_effect=discovery,
+        ):
+            run = execute_recommendation(
+                self.store,
+                create_recommendation(
+                    self.store,
+                    "bilibili",
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
+                runtime=runtime,
+            )
+        self.assertEqual(run["status"], "paused")
+        self.assertIn("at capacity", run["reason"])
+        self.assertEqual(run["state"]["model_calls"], 0)
+        self.assertTrue(runtime.cancelled.is_set())
+        self.assertEqual(runtime.stop_cause["platform"], "bilibili")
+        self.assertEqual(runtime.stop_cause["phase"], "discovery")
+        self.assertIn("at capacity", runtime.stop_cause["reason"])
 
     def test_empty_successful_search_does_not_activate_a_proposal(self):
         def no_match(*args):

@@ -126,6 +126,10 @@ For `assessment_insufficient_evidence`, summarize the saved assessment rationale
 A successful download does not need all four attempts. Do not download it again solely because its quality score is unknown.
 Do not stop or ask to continue only because the report marks a candidate unavailable.
 Keep nonblocking candidate failures in the final summary instead of interrupting the recommendation request.
+If either platform pauses, the engine cancels unfinished work in the combined round.
+Report the batch's original stop cause, including its platform and stage.
+End the request after reporting the pause. Continue only when the user asks.
+Keep completed lists and saved progress. Do not continue the other platform independently.
 When a round pauses, present its provisional preview if the digest contains one.
 Identify the preview as an assessed subset rather than a published recommendation list.
 Report the first failure and remaining allowances before proposing continuation.
