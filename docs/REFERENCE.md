@@ -1321,13 +1321,17 @@ Continuation preserves an explicit deadline and all cumulative request, media, a
 
 YouTube metadata retrieval uses one active watch-page request and starts at least one second apart.
 Bilibili metadata retrieval uses at most two concurrent requests and starts at least one second apart.
-A Bilibili metadata response with code `-404` receives one initial attempt and up to three retries.
-These attempts use the same signed-in session, pacing, and request allowance.
-Recorded `-404` attempts remain counted when a paused round continues. A new round has its own count.
-If all attempts return `-404`, collection skips and reports that candidate, then fills its lane from other candidates.
+Both platforms retry temporary metadata failures: HTTP 408, 500, 502, 503, or 504, timeouts, connection resets, and incomplete responses.
+These failures and Bilibili API code `-404` share one initial attempt and up to three retries per candidate.
+YouTube's identity-repair retry uses the same allowance. It does not start a separate retry cycle.
+Retries use the same session, pacing, and request allowance.
+Recorded failures remain counted when a paused round continues. A new round has its own count.
+A successful retry returns normal metadata without a score deduction.
+After retry exhaustion, collection skips and reports that candidate, then fills its lane from other candidates.
 Saved eligible candidates and unfinished batches remain available on continuation.
 This result does not prove permanent deletion and does not assign a quality score or preference rating.
-Login errors, access challenges, malformed metadata, and mismatched video identities still pause collection.
+Login errors, rate limits, access challenges, malformed metadata, and mismatched video identities still pause collection.
+The engine does not retry HTTP 401, 403, 412, or 429 automatically.
 Workers retain server-issued session cookies in memory.
 Pacing waits count toward an optional saved time allowance.
 The [yt-dlp request-rate guidance](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#common-youtube-errors) recommends longer waits between downloads when rate limits occur.

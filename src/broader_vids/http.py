@@ -2,6 +2,7 @@ import json
 import gzip
 import hashlib
 import http.cookiejar
+import http.client
 import io
 import time
 import urllib.error
@@ -19,6 +20,10 @@ class RequestGate:
 
 
 class AccessPaused(Exception):
+    pass
+
+
+class TransientRequestError(AccessPaused):
     pass
 
 
@@ -179,6 +184,7 @@ class PublicHttp:
             OSError,
             UnicodeError,
             EOFError,
+            http.client.IncompleteRead,
         ) as error:
             detail = (
                 f"HTTP {error.code}"
@@ -188,6 +194,30 @@ class PublicHttp:
             if isinstance(error, urllib.error.HTTPError):
                 error.close()
             self.store.end_request(request_id, "unresolved", detail)
+            cause = getattr(error, "reason", error)
+            transient = (
+                error.code in {408, 500, 502, 503, 504}
+                if isinstance(error, urllib.error.HTTPError)
+                else isinstance(
+                    cause,
+                    (
+                        TimeoutError,
+                        ConnectionError,
+                        EOFError,
+                        http.client.IncompleteRead,
+                    ),
+                )
+            )
+            if transient:
+                self.last_receipt = {
+                    "request_id": request_id,
+                    "url": url,
+                    "transport": self.transport,
+                    "request_error": detail,
+                }
+                raise TransientRequestError(
+                    f"Temporary platform request failed ({detail})."
+                ) from None
             if (
                 isinstance(error, urllib.error.HTTPError)
                 and error.code == 412
@@ -216,12 +246,22 @@ class PublicHttp:
                 self.sleeper(min(delay, available))
         self.check()
 
-    def metadata_failure_count(self, canonical_id, api_code):
+    def metadata_failure_count(self, canonical_id, api_code=None):
+        condition = (
+            "AND CASE WHEN json_valid(detail) THEN "
+            "(json_extract(detail,'$.metadata_validation.retryable')=1 OR "
+            "json_extract(detail,'$.metadata_validation.api_code')=-404) END"
+            if api_code is None
+            else "AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.metadata_validation.api_code') END=?"
+        )
+        parameters = (self.run["id"], canonical_id)
+        if api_code is not None:
+            parameters += (api_code,)
         return self.store.db.execute(
             "SELECT COUNT(*) FROM requests WHERE run_id=? "
             "AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.metadata_validation.canonical_id') END=? "
-            "AND CASE WHEN json_valid(detail) THEN json_extract(detail,'$.metadata_validation.api_code') END=?",
-            (self.run["id"], canonical_id, api_code),
+            + condition,
+            parameters,
         ).fetchone()[0]
 
     def metadata_failed(self, diagnostic):

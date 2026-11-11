@@ -12,7 +12,7 @@ from broader_vids.creators import enrich
 from broader_vids.storage import Store
 from broader_vids.preferences import canonical_identity, platform_lock
 from broader_vids.recommendations.engagement import (
-    BilibiliVideoUnavailable,
+    MetadataUnavailable,
     collect_snapshot,
 )
 from broader_vids.recommendations.originality import provenance
@@ -109,7 +109,7 @@ class SnapshotPool:
             client.request_gate = self.gate
             client.cancelled = Cancellation()
             return self.collector(client, item)
-        except BilibiliVideoUnavailable:
+        except MetadataUnavailable:
             raise
         except AccessPaused as error:
             with self.error_lock:
@@ -195,9 +195,7 @@ def refresh_metadata(store, identifier, *, use_browser=False, http_factory=Publi
                 "identity": item,
                 "use_browser": use_browser,
                 "max_seconds": 60,
-                "max_requests": 2
-                if item["platform"] == "youtube"
-                else 1 + MAX_VIDEO_RETRIES,
+                "max_requests": 1 + MAX_VIDEO_RETRIES,
             },
             {"phase": "fetch"},
         )

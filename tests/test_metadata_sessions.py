@@ -10,7 +10,7 @@ from unittest.mock import patch
 from broader_vids.evidence.failures import failure_details
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp, RequestGate
 from broader_vids.recommendations.engagement import (
-    BilibiliVideoUnavailable,
+    MetadataUnavailable,
     YouTubeMetadataError,
 )
 from broader_vids.recommendations.metadata import SnapshotPool
@@ -115,12 +115,12 @@ class MetadataSessionTests(unittest.TestCase):
 
             def collect(client, item):
                 if item["canonical_id"] == items[0]["canonical_id"]:
-                    raise BilibiliVideoUnavailable(item["video_id"])
+                    raise MetadataUnavailable("Temporary request failed (HTTP 504).", 4)
                 return {"views": 1000, "likes": 30}
 
             with SnapshotPool(store, parent, lambda: 60, collect, enabled=True) as pool:
                 pool.prefetch(items, lambda _: True)
-                with self.assertRaises(BilibiliVideoUnavailable):
+                with self.assertRaises(MetadataUnavailable):
                     pool.get(items[0], lambda: None)
                 self.assertFalse(pool.cancelled.is_set())
                 self.assertIsNone(pool.first_error)
