@@ -11,7 +11,7 @@ from broader_vids.recommendations.collection_policy import (
     default_collection_policy,
 )
 from broader_vids.recommendations.engagement import (
-    BilibiliVideoUnavailable,
+    MetadataUnavailable,
     metadata_fresh,
     rate_scores,
 )
@@ -223,7 +223,7 @@ def collect_batches(store, run, http, remaining, save, *, refill, snapshot_colle
                     if not snapshot or not metadata_fresh(snapshot, run["platform"]):
                         try:
                             snapshot = snapshots.get(item, save)
-                        except BilibiliVideoUnavailable as error:
+                        except MetadataUnavailable as error:
                             reason = str(error)
                             collection.setdefault("metadata_failures", {})[
                                 item["canonical_id"]

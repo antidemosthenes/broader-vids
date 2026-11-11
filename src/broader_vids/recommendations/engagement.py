@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import math
 import re
 
-from broader_vids.http import AccessPaused
+from broader_vids.http import AccessPaused, TransientRequestError
 from broader_vids.parsing import embedded_json, walk
 from broader_vids.storage import utc_now
 
@@ -92,19 +92,6 @@ class YouTubeMetadataError(AccessPaused):
         super().__init__(message)
 
 
-def youtube_snapshot(http, item):
-    for attempt in (1, 2):
-        try:
-            return parse_youtube(http.get(item["url"] + "&hl=en"), item["video_id"])
-        except YouTubeMetadataError as error:
-            diagnostic = {**error.metadata_diagnostic, "attempt": attempt}
-            recorder = getattr(http, "metadata_failed", None)
-            if recorder:
-                recorder(diagnostic)
-            if not error.retryable or attempt == 2:
-                raise
-
-
 def parse_youtube(body, identifier):
     try:
         player = embedded_json(body, r"(?:var\s+)?ytInitialPlayerResponse\s*=\s*")
@@ -169,46 +156,78 @@ def parse_youtube(body, identifier):
     }
 
 
-class BilibiliVideoUnavailable(AccessPaused):
+class MetadataUnavailable(AccessPaused):
+    def __init__(self, reason, attempts=1):
+        self.attempts = attempts
+        super().__init__(reason)
+
+
+class BilibiliVideoUnavailable(MetadataUnavailable):
     def __init__(self, identifier):
-        self.attempts = 1
         super().__init__(
             f"Bilibili video {identifier} returned metadata code -404; availability could not be verified."
         )
 
 
-def bilibili_snapshot(http, item):
+def metadata_snapshot(http, item):
     from broader_vids.evidence.media import MAX_VIDEO_RETRIES
 
     limit = 1 + MAX_VIDEO_RETRIES
     reader = getattr(http, "metadata_failure_count", None)
-    previous = reader(item["canonical_id"], -404) if reader else 0
+    previous = reader(item["canonical_id"]) if reader else 0
     if previous >= limit:
-        error = BilibiliVideoUnavailable(item["video_id"])
-        error.attempts = previous
-        raise error
+        raise MetadataUnavailable(
+            f"Video {item['video_id']} has exhausted its recorded metadata retries.",
+            previous,
+        )
+    identity_failures = 0
     for attempt in range(previous + 1, limit + 1):
         try:
+            if item["platform"] == "youtube":
+                return parse_youtube(http.get(item["url"] + "&hl=en"), item["video_id"])
             return parse_bilibili(
                 http.get_json(
                     f"https://api.bilibili.com/x/web-interface/view/detail?bvid={item['video_id']}"
                 ),
                 item["video_id"],
             )
-        except BilibiliVideoUnavailable as error:
-            error.attempts = attempt
+        except YouTubeMetadataError as error:
+            identity_failures += 1
+            recorder = getattr(http, "metadata_failed", None)
+            if recorder:
+                recorder(
+                    {
+                        **error.metadata_diagnostic,
+                        "canonical_id": item["canonical_id"],
+                        "retryable": error.retryable,
+                        "attempt": attempt,
+                    }
+                )
+            if not error.retryable or identity_failures >= 2 or attempt == limit:
+                raise
+        except (BilibiliVideoUnavailable, TransientRequestError) as error:
+            unavailable = (
+                error
+                if isinstance(error, MetadataUnavailable)
+                else MetadataUnavailable(str(error))
+            )
+            unavailable.attempts = attempt
             recorder = getattr(http, "metadata_failed", None)
             if recorder:
                 recorder(
                     {
                         "requested_video_id": item["video_id"],
                         "canonical_id": item["canonical_id"],
-                        "api_code": -404,
+                        "api_code": -404
+                        if isinstance(error, BilibiliVideoUnavailable)
+                        else None,
+                        "retryable": True,
+                        "reason": str(error),
                         "attempt": attempt,
                     }
                 )
             if attempt == limit:
-                raise
+                raise unavailable from None
 
 
 def parse_bilibili(value, identifier):
@@ -285,14 +304,11 @@ def parse_bilibili(value, identifier):
 
 
 def collect_snapshot(http, item):
-    if item["platform"] == "youtube":
-        value = youtube_snapshot(http, item)
-    else:
-        value = bilibili_snapshot(http, item)
-        if value["provenance_status"] != "complete":
-            raise AccessPaused(
-                "Bilibili metadata is missing its title, description, authorship declaration or tags; screening remains paused."
-            )
+    value = metadata_snapshot(http, item)
+    if item["platform"] == "bilibili" and value["provenance_status"] != "complete":
+        raise AccessPaused(
+            "Bilibili metadata is missing its title, description, authorship declaration or tags; screening remains paused."
+        )
     return {
         **value,
         "observed_at": utc_now(),

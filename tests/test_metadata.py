@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
 from broader_vids.recommendations.engagement import (
     BilibiliVideoUnavailable,
+    MetadataUnavailable,
     collect_snapshot,
 )
 from broader_vids.recommendations.metadata import metadata_session, refresh_metadata
@@ -149,7 +150,7 @@ class MetadataTests(unittest.TestCase):
                 collect_snapshot(client(), item)
             self.assertEqual(caught.exception.attempts, 4)
             self.assertEqual(request.call_count, 4)
-            with self.assertRaises(BilibiliVideoUnavailable):
+            with self.assertRaises(MetadataUnavailable):
                 collect_snapshot(client(), item)
             self.assertEqual(request.call_count, 4)
         self.assertEqual(self.store.request_count(identifier), 4)
@@ -159,6 +160,178 @@ class MetadataTests(unittest.TestCase):
         ) as request:
             self.assertTrue(collect_snapshot(other, item)["identity_verified"])
         self.assertEqual(request.call_count, 1)
+
+    def test_transient_metadata_errors_recover_or_skip_without_retrying_access_challenges(
+        self,
+    ):
+        for platform in ("bilibili", "youtube"):
+            video = VIDEO if platform == "bilibili" else "0000000001A"
+            item = {
+                "platform": platform,
+                "video_id": video,
+                "canonical_id": KEY if platform == "bilibili" else "youtube:" + video,
+                "url": URL if platform == "bilibili" else YOUTUBE_URL,
+            }
+            for scenario, expected, error_type in (
+                ("recover", 2, None),
+                ("timeout", 2, None),
+                ("exhaust", 4, MetadataUnavailable),
+                ("access", 2, AccessPaused),
+            ):
+                with self.subTest(platform=platform, scenario=scenario):
+                    identifier = self.store.create(
+                        platform, {"max_seconds": 60, "max_requests": 10}, {}
+                    )
+                    now = [0.0]
+                    client = PublicHttp(
+                        self.store,
+                        self.store.get(identifier),
+                        anonymous_session=True,
+                        clock=lambda: now[0],
+                        sleeper=lambda delay: now.__setitem__(0, now[0] + delay),
+                    )
+                    bodies = []
+                    calls = []
+
+                    def response(request, timeout):
+                        calls.append(request.full_url)
+                        if scenario == "timeout" and len(calls) == 1:
+                            raise urllib.error.URLError(TimeoutError("fixture"))
+                        if len(calls) == 1 or scenario in {"exhaust", "access"}:
+                            body = io.BytesIO(b"fixture")
+                            bodies.append(body)
+                            code = (
+                                429 if scenario == "access" and len(calls) == 2 else 504
+                            )
+                            raise urllib.error.HTTPError(
+                                request.full_url, code, "fixture", {}, body
+                            )
+                        return (
+                            Reply(payload())
+                            if platform == "bilibili"
+                            else YouTubeReply(
+                                {
+                                    "videoDetails": {
+                                        "videoId": video,
+                                        "lengthSeconds": "300",
+                                    }
+                                }
+                            )
+                        )
+
+                    with patch(
+                        "urllib.request.OpenerDirector.open", side_effect=response
+                    ):
+                        if error_type:
+                            with self.assertRaises(error_type) as caught:
+                                collect_snapshot(client, item)
+                            if error_type is MetadataUnavailable:
+                                self.assertEqual(caught.exception.attempts, 4)
+                                self.assertIn("504", str(caught.exception))
+                            else:
+                                self.assertNotIsInstance(
+                                    caught.exception, MetadataUnavailable
+                                )
+                        else:
+                            self.assertTrue(
+                                collect_snapshot(client, item)["identity_verified"]
+                            )
+                    self.assertEqual(len(calls), expected)
+                    self.assertEqual(self.store.request_count(identifier), expected)
+                    self.assertTrue(all(body.closed for body in bodies))
+                    failures = client.metadata_failure_count(item["canonical_id"])
+                    self.assertEqual(failures, 4 if scenario == "exhaust" else 1)
+
+    def test_transient_and_not_found_failures_share_a_durable_retry_limit(self):
+        item = {"platform": "bilibili", "video_id": VIDEO, "canonical_id": KEY}
+        missing = {"code": -404, "message": "Not found", "data": None}
+        identifier = self.store.create(
+            "bilibili", {"max_seconds": 60, "max_requests": 2}, {}
+        )
+        run = self.store.get(identifier)
+        now = [0.0]
+
+        def client():
+            return PublicHttp(
+                self.store,
+                run,
+                anonymous_session=True,
+                clock=lambda: now[0],
+                sleeper=lambda delay: now.__setitem__(0, now[0] + delay),
+            )
+
+        calls = []
+
+        def response(request, timeout):
+            calls.append(request.full_url)
+            if len(calls) % 2:
+                raise urllib.error.HTTPError(request.full_url, 504, "fixture", {}, None)
+            return Reply(missing)
+
+        with patch("urllib.request.OpenerDirector.open", side_effect=response):
+            with self.assertRaises(BudgetExhausted):
+                collect_snapshot(client(), item)
+            self.assertEqual(len(calls), 2)
+            run["settings"]["max_requests"] = 8
+            self.store.save(run)
+            with self.assertRaises(MetadataUnavailable) as caught:
+                collect_snapshot(client(), item)
+            self.assertEqual(caught.exception.attempts, 4)
+            self.assertEqual(len(calls), 4)
+            with self.assertRaises(MetadataUnavailable):
+                collect_snapshot(client(), item)
+            self.assertEqual(len(calls), 4)
+        self.assertEqual(client().metadata_failure_count(KEY), 4)
+
+    def test_youtube_identity_and_transport_retries_share_the_request_allowance(self):
+        item = {
+            "platform": "youtube",
+            "video_id": "0000000001A",
+            "canonical_id": "youtube:0000000001A",
+            "url": YOUTUBE_URL,
+        }
+        for resumed in (False, True):
+            with self.subTest(resumed=resumed):
+                identifier = self.store.create(
+                    "youtube",
+                    {"max_seconds": 60, "max_requests": 2 if resumed else 10},
+                    {},
+                )
+                run = self.store.get(identifier)
+                now = [0.0]
+
+                def client():
+                    return PublicHttp(
+                        self.store,
+                        run,
+                        anonymous_session=True,
+                        clock=lambda: now[0],
+                        sleeper=lambda delay: now.__setitem__(0, now[0] + delay),
+                    )
+
+                replies = [
+                    YouTubeReply({}),
+                    *[
+                        urllib.error.HTTPError(YOUTUBE_URL, 504, "fixture", {}, None)
+                        for _ in range(3)
+                    ],
+                    YouTubeReply({"videoDetails": {"videoId": "0000000001A"}}),
+                ]
+                self.addCleanup(replies[0].close)
+                self.addCleanup(replies[-1].close)
+                with patch(
+                    "urllib.request.OpenerDirector.open", side_effect=replies
+                ) as request:
+                    if resumed:
+                        with self.assertRaises(BudgetExhausted):
+                            collect_snapshot(client(), item)
+                        run["settings"]["max_requests"] = 10
+                        self.store.save(run)
+                    with self.assertRaises(MetadataUnavailable) as caught:
+                        collect_snapshot(client(), item)
+                    self.assertEqual(caught.exception.attempts, 4)
+                self.assertEqual(request.call_count, 4)
+                self.assertEqual(self.store.request_count(identifier), 4)
 
     def test_authenticated_refresh_preserves_source_clues_and_private_state(self):
         before = self.store.db.execute("SELECT COUNT(*) FROM user_actions").fetchone()[

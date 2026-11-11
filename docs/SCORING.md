@@ -52,22 +52,22 @@ Bilibili additionally requires coins/views >= 0.001 and favorites/views >= 0.002
 Missing required metrics fail admission.
 These hard floors use raw rates before the smoothing described below.
 
-For metric count \(c\), views \(v\), and platform baseline \(b\), the adjusted rate is
+For metric count $c$, views $v$, and platform baseline $b$, the adjusted rate is
 
-\[
+$$
 \widehat r=\frac{c+1000b}{v+1000}.
-\]
+$$
 
 The baseline is the middle sorted rate when at least ten valid platform observations exist.
 Otherwise, initial baselines are 0.03 for likes, 0.01 for coins, and 0.02 for favorites.
-The implementation limits the baseline below by \(10^{-6}\).
+The implementation limits the baseline below by $10^{-6}$.
 
 The metric score is
 
-\[
+$$
  e=100\sigma\left(\operatorname{clip}\left(\log\frac{\max(\widehat r,10^{-12})}{b},-8,8\right)\right),
  \qquad \sigma(z)=\frac{1}{1+e^{-z}}.
-\]
+$$
 
 The rate-score helper assigns 50 to a missing count or zero denominator.
 Such entries fail the hard admission floors and cannot enter a new recommendation shortlist.
@@ -147,16 +147,16 @@ Creator reputation does not guarantee a high grade.
 Existing scorecards remain stored. New work and cache reuse require rubric 5.
 
 An assessed criterion has an integer grade from zero to four.
-Its normalized value is \(u_j=\mathrm{grade}_j/4\).
+Its normalized value is $u_j=\mathrm{grade}_j/4$.
 An unknown criterion uses a prior mean of 0.5 and a separate missingness predictor.
 Its stored grade remains unknown.
 It does not inherit a high grade from another criterion.
 
-For duration \(t\) seconds, the derived initial quality index is
+For duration $t$ seconds, the derived initial quality index is
 
-\[
+$$
 d=\min(t/3600,1),\qquad Q_0=95\sum_j w_j u_j+5d.
-\]
+$$
 
 Length contributes at most five points.
 The contribution rises to one hour and then remains constant.
@@ -168,7 +168,7 @@ It ignores retrieval origin and accepts only medium- or high-confidence matches.
 Accepted matches supply canonical broad-root features for learned lookup.
 Assessed topic labels remain unchanged.
 
-The initial interest probability \(I_0\) is 0.75 for a domain related to the user's stated interests.
+The initial interest probability $I_0$ is 0.75 for a domain related to the user's stated interests.
 It is 0.35 for a known unrelated domain and 0.50 when domains are unknown.
 Search-domain labels describe retrieval context.
 They do not prove the video's semantic topic.
@@ -191,10 +191,10 @@ Current ratings use categorical topic, subject, depth, and quality responses.
 The quality model factors its categorical likelihood into logistic events.
 Each event uses a predictor vector and a proper Gaussian prior:
 
-\[
+$$
 y_i\sim\operatorname{Bernoulli}(\sigma(o_i+x_i^T\beta)),
 \qquad \beta_j\sim N(0,s_j^2).
-\]
+$$
 
 Numerical clipping keeps offsets finite.
 It does not limit the final learned probability.
@@ -216,20 +216,20 @@ Model version 8 retains its portable parameter groups for exact preference trans
 
 The initial weighted score is
 
-\[
+$$
 B=0.60Q+0.25I+0.05E+0.05R+0.05D.
-\]
+$$
 
 All components use a scale from zero to 100.
 Without structured feedback, quality and interest use their initial priors.
 The next section defines the structured replacements.
-\(E\) is community response.
-For age \(a\) in years, recency is \(R=100/(1+a/10)\).
-A missing publication date gives \(R=50\).
+$E$ is community response.
+For age $a$ in years, recency is $R=100/(1+a/10)$.
+A missing publication date gives $R=50$.
 
-Creator diversity is \(D=100/(1+n+0.1h)\).
-Here, \(n\) counts this creator in the developing list.
-The value \(h\) counts the creator in recent recommendation exposures.
+Creator diversity is $D=100/(1+n+0.1h)$.
+Here, $n$ counts this creator in the developing list.
+The value $h$ counts the creator in recent recommendation exposures.
 Randomness enters discovery rather than adding a random final-score bonus.
 This score component measures creator diversity.
 Screening policy 5 also applies a separate diversity rule when it constructs each platform list.
@@ -246,7 +246,7 @@ It adds no model calls. It cannot guarantee semantic uniqueness when labels or q
 Different videos about the same subject can therefore recur.
 A subject match alone does not establish repeated content or equal explanatory depth.
 
-Current profiles rank with \(B\), using learned structured quality and interest.
+Current profiles rank with $B$, using learned structured quality and interest.
 The initial component weights remain a ranking policy.
 An empty internal overall model does not change this score.
 Historical snapshots can retain an older overall adjustment.
@@ -278,15 +278,15 @@ The user can remove an exclusion.
 ### Topic and broad-subject interest
 
 Each user-selected topic or subject uses a separate Dirichlet categorical model.
-For initial mean \(b\), its Low/Medium/High prior is
+For initial mean $b$, its Low/Medium/High prior is
 
-\[
+$$
 \alpha=2\left((1-b)^2,\ 2b(1-b),\ b^2\right).
-\]
+$$
 
-Use \(b=0.75\) for an onboarding-related topic or subject and \(b=0.35\) otherwise.
-Current distinct-video category counts \(n\) give posterior \(\operatorname{Dirichlet}(\alpha+n)\).
-The interest index is \(100[P(\mathrm{High})+0.5P(\mathrm{Medium})]\).
+Use $b=0.75$ for an onboarding-related topic or subject and $b=0.35$ otherwise.
+Current distinct-video category counts $n$ give posterior $\operatorname{Dirichlet}(\alpha+n)$.
+The interest index is $100[P(\mathrm{High})+0.5P(\mathrm{Medium})]$.
 
 The earliest explicit topic or depth action anchors the topic's parent domains.
 Edits and clears preserve that anchor.
@@ -312,25 +312,26 @@ Custom topic labels transfer only to matching normalized labels.
 
 Depth uses an exact categorical model for each observed topic and audience level.
 The responses are want deeper, suitable, and want lighter.
-Their Dirichlet prior is \((0.5,1,0.5)\).
-For an observed level, \(s=P(\mathrm{suitable})\) multiplies interest odds by \(s/(1-s)\).
+Their Dirichlet prior is $(0.5,1,0.5)$.
+For an observed level, $s=P(\mathrm{suitable})$ multiplies interest odds by $s/(1-s)$.
 Its prior mean of 0.5 is neutral.
 
 For a level without direct feedback, a separate directional model transfers information within that topic.
-Encode introductory, intermediate, and advanced as \(l=0,1,2\).
-A latent preferred level has prior \(\mu\sim N(1,1.5^2)\).
-With \(w=0.75\), its likelihood is
+Encode introductory, intermediate, and advanced as $l=0,1,2$.
+A latent preferred level has prior $\mu\sim N(1,1.5^2)$.
+With $w=0.75$, its likelihood is
 
-\[
+$$
 P(\mathrm{deeper}\mid\mu,l)=\sigma(\mu-l-w),
 \quad P(\mathrm{lighter}\mid\mu,l)=\sigma(l-\mu-w),
-\]
-\[
+$$
+
+$$
 P(\mathrm{suitable}\mid\mu,l)=1-P(\mathrm{deeper})-P(\mathrm{lighter}).
-\]
+$$
 
 Adaptive one-dimensional quadrature approximates this posterior.
-The transfer adds \(\operatorname{logit}(s_{post})-\operatorname{logit}(s_{prior})\) to interest log odds.
+The transfer adds $\operatorname{logit}(s_{post})-\operatorname{logit}(s_{prior})$ to interest log odds.
 Thus, no feedback gives no adjustment.
 Want deeper shifts preference upward, while want lighter shifts it downward.
 Direct categorical feedback takes precedence when that candidate level receives observations.
@@ -341,7 +342,7 @@ Its fixed noise width cannot represent every possible response distribution.
 The exact categorical consistency result applies to directly observed topic-level groups.
 No unconditional convergence claim applies to transferred scores at an unobserved level.
 
-The engine clips depth suitability to \(10^{-12}\) through \(1-10^{-12}\) before conversion to log odds.
+The engine clips depth suitability to $10^{-12}$ through $1-10^{-12}$ before conversion to log odds.
 Depth does not change quality or domain interest.
 Unknown audience levels retain feedback but do not adjust future scores.
 The model supplies a cited level when the evidence supports one.
@@ -356,16 +357,16 @@ Duration does not establish audience level.
 
 The quality model uses two logistic stages:
 
-\[
+$$
 a=P(\mathrm{Medium\ or\ High}),\quad b=P(\mathrm{High}\mid\mathrm{not\ Low}).
-\]
+$$
 
-The category probabilities are \((1-a,\ a(1-b),\ ab)\).
+The category probabilities are $(1-a,\ a(1-b),\ ab)$.
 A Low response supplies only the first-stage event.
 Medium and High responses also supply the conditional second-stage event.
 This is one categorical likelihood, not duplicate votes or fractional Bernoulli labels.
 
-The quality index is \(Q=100[0.5P(\mathrm{Medium})+P(\mathrm{High})]\).
+The quality index is $Q=100[0.5P(\mathrm{Medium})+P(\mathrm{High})]$.
 It represents expected ordinal utility, not a binary approval percentage.
 Initial stage offsets use the quality prior when the retired binary model has no observations.
 Learned corrections can cancel these offsets.
@@ -451,12 +452,12 @@ They continue to label local videos without adding their old ratings to training
 
 For a logistic parameter vector, import uses the saved Gaussian approximation as a proper prior:
 
-\[
+$$
 \beta\sim N(m_0,\Sigma_0),\qquad
 \log p(\beta\mid D_{\mathrm{new}})
 =-\tfrac12(\beta-m_0)^\top\Sigma_0^{-1}(\beta-m_0)
 +\sum_{i\in D_{\mathrm{new}}}\log p(y_i\mid x_i,\beta)+C.
-\]
+$$
 
 The implementation preserves off-diagonal correlations.
 New coefficients receive the usual independent proper priors.
@@ -511,7 +512,7 @@ Larger models use matrix-free preconditioned conjugate gradients.
 Prediction uses finite Gaussian quadrature.
 These are numerical approximations, with conditional asymptotic justification rather than exact finite-sample posterior calculations.
 
-For a fixed categorical group, the exact posterior is \(\operatorname{Dirichlet}(\alpha+n)\).
+For a fixed categorical group, the exact posterior is $\operatorname{Dirichlet}(\alpha+n)$.
 If that group's distinct-video sample grows under stationary independent responses, empirical proportions converge and posterior variance tends to zero.
 Each topic or level group needs its own coverage.
 The ordinal model also requires positive second-stage frequency and well-specified conditional models.
