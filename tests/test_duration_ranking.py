@@ -77,6 +77,79 @@ class DurationRankingTests(unittest.TestCase):
             selected["ranking_adjustments"]["final_score"], selected["score"]
         )
 
+    def test_preview_uses_saved_duration_policy_and_interest_alignment(self):
+        from contextlib import closing
+        import tempfile
+        from broader_vids.learning.alignment import fingerprint
+        from broader_vids.preferences import set_profile
+        from broader_vids.recommendations.preview import update_preview
+        from broader_vids.recommendations.service import create_recommendation
+        from broader_vids.storage import Store
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            closing(Store(directory)) as store,
+        ):
+            set_profile(store, ["crime"])
+            run = store.get(
+                create_recommendation(
+                    store,
+                    "youtube",
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                )
+            )
+            item = candidate(1)
+            item["engagement_score"] = {"score": 50}
+            observation = {
+                **quality("fixture"),
+                "duration_seconds": 180,
+                "topics": {
+                    "specific": ["Art theft"],
+                    "broad": ["Art"],
+                    "confidence": "high",
+                },
+            }
+            key = item["canonical_id"]
+            run["state"].update(shortlist=[item], evidence={key: observation})
+            run["state"]["interest_alignment"] = {
+                "records": {
+                    key: {
+                        "version": 1,
+                        "matches": ["crime"],
+                        "confidence": "high",
+                        "fingerprint": fingerprint(item, observation, run["settings"]),
+                    }
+                }
+            }
+            for policy in (1, 2):
+                with (
+                    self.subTest(policy=policy),
+                    patch(
+                        "broader_vids.recommendations.preview.cached_quality",
+                        return_value=observation,
+                    ),
+                ):
+                    run["settings"]["ranking_policy_version"] = policy
+                    update_preview(store, run)
+                selected = run["state"]["preview"][0]
+                self.assertEqual(selected["interest_alignment"]["matches"], ["crime"])
+                if policy == 2:
+                    adjustment = selected["ranking_adjustments"]
+                    self.assertEqual(adjustment["short_video_penalty"], 5)
+                    self.assertAlmostEqual(
+                        selected["score"],
+                        adjustment["score_before_duration_penalty"] - 5,
+                    )
+                else:
+                    self.assertNotIn("ranking_adjustments", selected)
+            self.assertEqual(
+                store.db.execute(
+                    "SELECT COUNT(*) FROM recommendation_exposures"
+                ).fetchone()[0],
+                0,
+            )
+
     def test_default_policy_preserves_legacy_score_and_shape(self):
         selected = self.rank_one(120, ranking_policy_version=1)
         self.assertEqual(selected["score"], 80.0)

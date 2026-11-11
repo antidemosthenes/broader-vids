@@ -65,18 +65,33 @@ export function applyTagRules({ tags, tag_revision = 0 }) {
 
 export function applyExclusions(exclusions) {
   const previous = state.exclusions;
-  state.exclusions = exclusions;
-  if ((previous.tag_revision || 0) > (exclusions.tag_revision || 0))
-    Object.assign(state.exclusions, {
-      tags: previous.tags,
-      tag_revision: previous.tag_revision,
-    });
+  const staleCreators = (exclusions.revision || 0) < (previous.revision || 0);
+  applyTagRules(exclusions);
+  const tagRules = state.exclusions.tags;
+  const tagRevision = state.exclusions.tag_revision;
+  state.exclusions = {
+    ...exclusions,
+    ...(staleCreators
+      ? {
+          revision: previous.revision,
+          creators: previous.creators,
+          bilibili_sync: previous.bilibili_sync,
+        }
+      : {}),
+    tags: tagRules,
+    tag_revision: tagRevision,
+  };
+  const creators = state.exclusions.creators || {};
+  const creatorIndex = new Map(
+    Object.entries(creators).map(([platform, rules]) => [
+      platform,
+      new Map((rules || []).map((rule) => [rule.creator_id, rule])),
+    ]),
+  );
   const update = (entry) => {
     const creator = entry.creator;
     if (!creator) return;
-    const rule = exclusions.creators[creator.platform]?.find(
-      (rule) => rule.creator_id === creator.creator_id,
-    );
+    const rule = creatorIndex.get(creator.platform)?.get(creator.creator_id);
     entry.creator = {
       ...creator,
       excluded: !!rule,

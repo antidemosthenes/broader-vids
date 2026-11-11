@@ -10,7 +10,7 @@ from unittest.mock import patch, Mock
 
 from broader_vids.cli import main
 from broader_vids.cli.arguments import parser
-from broader_vids.cli.startup import prepare_recommendation
+from broader_vids.cli.startup import prepare_recommendation, startup_lock
 from broader_vids.onboarding import configure, complete, status
 from broader_vids.preferences import get_profile, set_profile, user_action
 from broader_vids.preflight import (
@@ -337,6 +337,51 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(report["platform"], "youtube")
         self.assertEqual(execute.call_count, 1)
         self.assertEqual(status(self.store.root)["default_platform"], "youtube")
+
+    def test_startup_reservation_blocks_reentrant_round_before_creation(self):
+        self.ready("youtube")
+        nested = {}
+        actual_preflight = preflight
+
+        def reenter(*args, **kwargs):
+            output = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(io.StringIO()):
+                nested["code"] = main(
+                    [
+                        "--data-dir",
+                        self.directory.name,
+                        "recommend",
+                        "youtube",
+                        "--model",
+                        "fixture-model",
+                        "--effort",
+                        "low",
+                    ]
+                )
+            nested["report"] = json.loads(output.getvalue())
+            return actual_preflight(*args, **kwargs)
+
+        with (
+            patch("broader_vids.cli.startup.preflight", side_effect=reenter),
+            patch("broader_vids.cli.app.execute_recommendation"),
+        ):
+            _, report = self.invoke(
+                "recommend",
+                "youtube",
+                "--model",
+                "fixture-model",
+                "--effort",
+                "low",
+                "--max-assessments",
+                "0",
+            )
+
+        self.assertEqual(nested["code"], 2)
+        self.assertEqual(nested["report"]["status"], "blocked")
+        self.assertEqual(nested["report"]["checks"]["active_run"]["status"], "busy")
+        self.assertEqual(report["platform"], "youtube")
+        self.assertEqual(len(self.store.list_runs()), 1)
+        self.assertFalse((self.store.root / f"{startup_lock('youtube')}.lock").exists())
 
     def test_resume_uses_saved_settings_ignores_feedback_and_charges_once(self):
         self.video("youtube:0000000001A")

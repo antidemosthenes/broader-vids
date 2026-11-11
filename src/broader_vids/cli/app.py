@@ -2,6 +2,7 @@ import http.client
 import json
 import os
 import subprocess
+from contextlib import ExitStack
 from pathlib import Path
 import sqlite3
 import sys
@@ -178,7 +179,15 @@ def main(argv=None):
                 }
             )
             return 2
+        startup_stack = None
         try:
+            from broader_vids.cli.startup import reserve_startup
+
+            startup_stack = ExitStack()
+            busy = reserve_startup(store, args, startup_stack)
+            if busy is not None:
+                emit(busy)
+                return 2
             if args.command == "usage":
                 from broader_vids.token_usage import report
 
@@ -721,7 +730,11 @@ def main(argv=None):
                 "This saved job type belongs to a retired research workflow."
             )
         finally:
-            store.close()
+            try:
+                if startup_stack is not None:
+                    startup_stack.close()
+            finally:
+                store.close()
     except KeyboardInterrupt:
         print(
             "broader-vids: Interrupted; saved checkpoints and original allowances are preserved.",

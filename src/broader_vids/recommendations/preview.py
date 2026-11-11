@@ -34,7 +34,9 @@ def update_preview(store, run, seconds=5):
                         observations[key] = verified
             if not observations:
                 return
-            states = video_states(store, run["platform"])
+            states = video_states(
+                store, identifiers=[i["canonical_id"] for i in state["shortlist"]]
+            )
             items = [
                 i
                 for i in state["shortlist"]
@@ -42,6 +44,9 @@ def update_preview(store, run, seconds=5):
                 and not states.get(i["canonical_id"], {}).get("dismissed")
                 and not excluded(i, state.get("creator_rules"))
             ]
+            from broader_vids.learning.alignment import aligned_items
+
+            items = aligned_items(run, items)
             learning = round_learning(store, run)
             if learning is None:
                 learning = ensure_model(store)
@@ -53,6 +58,7 @@ def update_preview(store, run, seconds=5):
                 learning=learning,
                 creator_rules=state.get("creator_rules"),
                 policy_version=settings.get("screening_policy_version", 2),
+                ranking_policy_version=settings.get("ranking_policy_version", 1),
             )
             state["preview_learning_snapshot"] = learning["id"]
             state.pop("preview_error", None)

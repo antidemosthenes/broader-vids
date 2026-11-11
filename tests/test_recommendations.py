@@ -184,6 +184,48 @@ class RecommendationTests(unittest.TestCase):
             write_recommendation_report(self.store, rid).read_text(encoding="utf-8"),
         )
 
+    def test_alignment_pause_retains_a_preview_of_verified_assessments(self):
+        from broader_vids.evidence.media import EvidencePending
+
+        def pause(store, run, *args, **kwargs):
+            run["state"]["phase"] = "alignment"
+            raise EvidencePending("Fixture alignment interrupted")
+
+        with (
+            patch(
+                "broader_vids.recommendations.service.collect_snapshot",
+                return_value={"observed_at": utc_now()},
+            ),
+            patch(
+                "broader_vids.recommendations.service.cached_quality",
+                side_effect=lambda s, key: quality(key),
+            ),
+            patch(
+                "broader_vids.recommendations.preview.cached_quality",
+                side_effect=lambda s, key: quality(key),
+            ),
+            patch("broader_vids.recommendations.service._publish", side_effect=pause),
+        ):
+            run = execute_recommendation(
+                self.store,
+                create_recommendation(
+                    self.store,
+                    "youtube",
+                    self.source(),
+                    assessment_model="fixture-model",
+                    reasoning_effort="low",
+                ),
+            )
+        self.assertEqual(run["status"], "paused")
+        self.assertTrue(run["state"]["preview"])
+        self.assertFalse(run["state"]["selected"])
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM recommendation_exposures"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_publication_validation_does_not_hold_a_database_write_lock(self):
         source = self.source()
         checked = []

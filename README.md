@@ -48,10 +48,9 @@ This command registers an npm backed marketplace and installs the plugin skills 
 
 The desktop app accepts repository URLs in **Add marketplace**. Use the npm command for npm installation. See the [plugin packaging guide](https://developers.openai.com/plugins/build/plugins) for supported sources.
 
-
 ### Experimental Claude Code path
 
-Claude Code support is experimental. Static package checks and launcher fixtures cover it. No host acceptance test has been performed. These installation steps require a future npm release that contains the Claude files. See the [Claude Code installation notes](docs/REFERENCE.md#experimental-claude-code-installation).
+Claude Code support is experimental. Static package checks and launcher fixtures cover it. No host acceptance test has been performed. See the [Claude Code installation notes](docs/REFERENCE.md#experimental-claude-code-installation).
 
 ## Update the plugin
 

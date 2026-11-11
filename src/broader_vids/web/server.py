@@ -27,7 +27,9 @@ from broader_vids.recommendations.originality import provenance
 from broader_vids.creators import (
     status as exclusion_status,
     video_creator,
+    video_creators,
     checkbox_state,
+    checkbox_index,
     set_exclusion,
 )
 
@@ -144,6 +146,13 @@ def dashboard_state(store):
             runs[run["platform"]] = entry
     states = video_states(store, identifiers=list(visible))
     structured = details(store, list(visible))
+    creator_values = video_creators(
+        store,
+        list(visible),
+        state_items={key: value["payload"] for key, value in states.items()},
+        snapshots=snapshots,
+    )
+    creator_rules_index = checkbox_index(exclusions)
     items = {key: value["payload"] for key, value in states.items()}
     items.update(
         {
@@ -174,7 +183,9 @@ def dashboard_state(store):
             k: {
                 "details": structured.get(k, {}),
                 "feedback_context": contexts.get(k, {}),
-                "creator": checkbox_state(video_creator(store, k), exclusions),
+                "creator": checkbox_state(
+                    creator_values[k], exclusions, creator_rules_index
+                ),
                 **{
                     field: v[field]
                     for field in (

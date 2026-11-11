@@ -83,7 +83,6 @@ def screen(
             )
     from broader_vids.recommendations.screening import rejection_reason, screening_score
 
-    compiled = None
     from broader_vids.recommendations.personalization import (
         blended_screening_score,
         compile_screening_learning,
@@ -190,14 +189,8 @@ def rank_slate(
     chosen_signatures = []
     slate, creators = [], Counter()
     learned_channels, learned_scores = {}, {}
-    target_unrelated = 0
     while pool and len(slate) < 10:
-        need = target_unrelated - sum(not i["related"] for i in slate)
-        eligible = (
-            [i for i in pool if not related(i, profile)]
-            if 10 - len(slate) <= need
-            else pool
-        ) or pool
+        eligible = pool
         repeats = 0
         if policy_version == CURRENT_SCREENING_POLICY:
             overlaps = {

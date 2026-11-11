@@ -239,7 +239,10 @@ See [data directory selection](REFERENCE.md#choose-a-data-directory).
 
 Onboarding uses an atomic versioned file protected by a separate configuration lease.
 It does not change SQLite schema 12 or the learning revision.
-Preference transfer excludes this file.
+Preference transfer excludes the onboarding file.
+
+Verified Bilibili login status also uses atomic file replacement.
+A failed replacement preserves the previous status file.
 Preflight counts unique recommendation exposures against current structured ratings.
 Cleared fields count as incomplete again.
 Its isolated subprocess checks have a deadline and owned process cleanup.
@@ -327,10 +330,21 @@ Pacing waits count toward an optional saved deadline.
 Access failures cancel queued retrieval before another YouTube collector starts.
 The gate preserves request pacing and prevents concurrent reservation of the last request slot.
 Platform locks prevent conflicting recommendation jobs.
+Separate startup reservations cover CLI readiness checks, round creation, execution, and reporting.
+YouTube and Bilibili requests reserve their platforms in a fixed order.
+The CLI releases each reservation when the request ends.
 Short database transactions protect user actions and final result writes.
 Dashboard lookup checks recommendation rounds from newest to oldest and stops at the first usable list.
 Feedback resolves the displayed video evidence before it acquires its database write transaction.
 Earlier pending videos retain their saved topic and depth context.
+Dashboard and calibration responses resolve creator metadata in batches of at most 500 video IDs.
+Each response builds a local creator-rule index. No profile-wide cache retains these objects.
+Creator and tag responses use separate revisions to reject stale updates.
+
+New exploration plans create recent-observation lookup indexes when needed.
+Index creation occurs during writable planning, rather than when a database connection opens.
+These derived indexes preserve schema 12 and all observation history.
+Per-invocation planning limits do not replace the saved round allowance.
 
 The engine checks profile, feedback, and queue changes before it saves a final recommendation list.
 A conflicting change requires another ranking calculation.
@@ -348,13 +362,15 @@ YouTube and Bilibili share the same limit of three retries for recoverable candi
 The engine saves attempt counts before worker dispatch. Continuation cannot grant an extra attempt.
 Manual cancellation preserves that allowance.
 Exhausted candidates become unavailable while other candidates continue.
-Caption access challenges stop acquisition for the affected platform.
-Already prepared assessments retain their individual timeouts and any explicit shared deadline.
-Other platform access challenges and shared model failures stop the applicable workers.
+Caption access challenges pause the affected platform.
+In a combined round, any platform pause cancels unfinished work on both platforms.
+Completed results remain available. Continuation requires a new user request.
 Reports preserve the first failure separately from later cancellation messages.
 Preparation checkpoints record transfer progress for interrupted-byte accounting.
 Unknown usage retains an explicit upper bound.
-Paused rounds can retain a provisional preview without creating exposure history.
+Paused assessment and alignment stages can retain a provisional preview without creating exposure history.
+Previews use the saved ranking policy and validated interest mappings.
+Their video-state lookup reads only inspection candidates.
 Batch heartbeats and live elapsed calculations keep progress reports current.
 
 ## Evidence lifetime

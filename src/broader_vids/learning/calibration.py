@@ -41,16 +41,27 @@ def calibration_list(store, *, latest=False, active=False):
     from broader_vids.learning.annotations import latest_annotations, apply_annotation
 
     annotations = latest_annotations(store)
-    from broader_vids.creators import status, video_creator, checkbox_state
+    from broader_vids.creators import (
+        status,
+        video_creators,
+        checkbox_state,
+        checkbox_index,
+    )
 
     exclusions = status(store)
+    creator_values = video_creators(
+        store,
+        [row["canonical_id"] for row in rows],
+        state_items={key: value["payload"] for key, value in states.items()},
+    )
+    creator_rules_index = checkbox_index(exclusions)
     for row in rows:
         state = states.get(row["canonical_id"], {})
         row["ratings"] = state.get("ratings", {})
         row["watched"] = bool(state.get("watched"))
         row["details"] = structured.get(row["canonical_id"], {})
         row["creator"] = checkbox_state(
-            video_creator(store, row["canonical_id"]), exclusions
+            creator_values[row["canonical_id"]], exclusions, creator_rules_index
         )
         row["feedback_context"] = context_from_features(
             apply_annotation(
