@@ -245,6 +245,7 @@ def _publish_scored(store, run, check):
     check()
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
+        check()
         _publish_locked(store, draft, learning)
     run.clear()
     run.update(draft)
@@ -467,6 +468,8 @@ def execute_recommendation(
         phase_clock = [state["phase"], started]
 
         def save():
+            if run["status"] == "paused" and runtime is not None:
+                runtime.stop(run["platform"], run["state"]["phase"], run["reason"])
             now = time.monotonic()
             current_state = run["state"]
             durations = current_state.setdefault("phase_seconds", {})
@@ -581,7 +584,11 @@ def execute_recommendation(
                     )
                 if source["state"]["phase"] != "finished":
                     raise EvidencePending(
-                        "Discovery is incomplete; continue its source run before continuing recommendations."
+                        "Discovery is incomplete. "
+                        + (
+                            source.get("reason")
+                            or "Continue the saved discovery round."
+                        )
                     )
                 states = video_states(store, run["platform"])
                 available = [

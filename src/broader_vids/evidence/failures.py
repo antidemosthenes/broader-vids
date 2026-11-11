@@ -36,6 +36,10 @@ def failure_details(error, stage):
         category = "cancelled"
     elif isinstance(error, subprocess.TimeoutExpired):
         category = "media_timeout" if stage == "download" else "timeout"
+        if stage != "download":
+            reason = f"Worker timed out after {error.timeout:g} seconds."
+            if "model is at capacity" in str(getattr(error, "stderr", "")).casefold():
+                reason += " The selected model reported that it was at capacity."
     elif isinstance(error, ValueError):
         category = "validation"
     result = {

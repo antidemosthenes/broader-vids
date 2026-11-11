@@ -53,10 +53,19 @@ class Runtime:
             platform: threading.BoundedSemaphore(min(2, preparations))
             for platform in ("youtube", "bilibili")
         }
-        self.preparation_stops = {
-            platform: threading.Event() for platform in ("youtube", "bilibili")
-        }
         self.cancelled = threading.Event()
+        self.stop_cause = None
+        self._stop_lock = threading.Lock()
+
+    def stop(self, platform, phase, reason):
+        with self._stop_lock:
+            if self.stop_cause is None:
+                self.stop_cause = {
+                    "platform": platform,
+                    "phase": phase,
+                    "reason": reason,
+                }
+            self.cancelled.set()
 
     @contextmanager
     def preparation_slot(self, platform, remaining, cancelled):
@@ -180,19 +189,9 @@ def _process_owned(
         else:
             platform = saved["platform"]
 
-            class PreparationCancellation:
-                def is_set(self):
-                    return (
-                        cancellation.is_set()
-                        or runtime.preparation_stops[platform].is_set()
-                    )
-
-            preparation_cancellation = PreparationCancellation()
             queued = time.monotonic()
             stage("queued_preparation")
-            with runtime.preparation_slot(
-                platform, remaining, preparation_cancellation
-            ):
+            with runtime.preparation_slot(platform, remaining, cancellation):
                 timing("preparation_queue_seconds", queued)
                 path = "$.preparation_usage." + json.dumps(work["preparation_token"])
                 with store.db:
@@ -207,7 +206,7 @@ def _process_owned(
                     max(0.01, min(work["seconds"], remaining())),
                     work["bytes"],
                     cookie_jar,
-                    preparation_cancellation,
+                    cancellation,
                     attempt_token=work["preparation_token"],
                     lease_owner=owner,
                 )
@@ -652,16 +651,10 @@ def assess_parallel(
                         if observation.get("status") == "pending":
                             if failure["scope"] != "candidate":
                                 stop_reason = stop_reason or failure["reason"]
-                                if (
-                                    failure["stage"] == "captions"
-                                    and failure["category"] == "access"
-                                    and failure["scope"] == "platform"
-                                ):
-                                    runtime.preparation_stops[run["platform"]].set()
-                                else:
-                                    cancelled.set()
-                                if failure["scope"] == "run":
-                                    runtime.cancelled.set()
+                                cancelled.set()
+                                runtime.stop(
+                                    run["platform"], failure["stage"], failure["reason"]
+                                )
                             elif retry_candidate(state, key, observation):
                                 item = next(
                                     i

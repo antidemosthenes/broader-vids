@@ -77,6 +77,8 @@ def _terminate(process):
 
 
 def run_bounded(command, *, timeout, input=None, env=None, cwd=None, cancelled=None):
+    if cancelled is not None and cancelled.is_set():
+        raise InterruptedError("The parent cancelled this worker.")
     options = (
         {
             "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP

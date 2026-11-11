@@ -187,7 +187,7 @@ class SchedulingRecoveryTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         set_profile(self.store, ["mathematics"])
 
-    def test_caption_access_pause_drains_prepared_assessments_without_launching_more(
+    def test_caption_access_pause_cancels_prepared_assessments_without_launching_more(
         self,
     ):
         identifier = create_recommendation(
@@ -220,10 +220,19 @@ class SchedulingRecoveryTests(unittest.TestCase):
                         "retryable": True,
                     },
                 }
-            self.assertTrue(runtime.preparation_stops["youtube"].wait(3))
-            self.assertFalse(cancelled.is_set())
-            self.assertFalse(runtime.cancelled.is_set())
-            return quality(work["evidence_run"])
+            self.assertTrue(runtime.cancelled.wait(3))
+            return {
+                "status": "pending",
+                "evidence_run": work["evidence_run"],
+                "reason": "Sibling work cancelled",
+                "failure": {
+                    "stage": "worker",
+                    "scope": "candidate",
+                    "category": "cancelled",
+                    "reason": "Sibling work cancelled",
+                    "retryable": True,
+                },
+            }
 
         with self.assertRaisesRegex(EvidencePending, "429"):
             assess_parallel(
@@ -240,10 +249,11 @@ class SchedulingRecoveryTests(unittest.TestCase):
             sum(
                 v.get("quality") is not None for v in run["state"]["evidence"].values()
             ),
-            3,
+            0,
         )
         self.assertEqual(run["state"]["inflight"], {})
-        self.assertFalse(runtime.preparation_stops["bilibili"].is_set())
+        self.assertEqual(runtime.stop_cause["reason"], "Original captions HTTP 429")
+        self.assertTrue(runtime.cancelled.is_set())
 
     def test_prepared_video_bypasses_preparation_queue(self):
         identifier = create_evidence(

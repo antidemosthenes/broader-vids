@@ -100,6 +100,20 @@ class ProcessTests(unittest.TestCase):
             time.sleep(1.2)
             self.assertFalse(finished.exists())
 
+    def test_pre_cancelled_work_creates_no_process_or_temporary_files(self):
+        from unittest.mock import patch
+
+        cancelled = threading.Event()
+        cancelled.set()
+        with (
+            patch("broader_vids.processes.start_owned") as start,
+            patch("broader_vids.processes.tempfile.TemporaryFile") as temporary,
+            self.assertRaises(InterruptedError),
+        ):
+            run_bounded(["fixture"], timeout=1, cancelled=cancelled)
+        start.assert_not_called()
+        temporary.assert_not_called()
+
     def test_parent_cancellation_stops_a_running_worker(self):
         cancelled = threading.Event()
         timer = threading.Timer(0.2, cancelled.set)

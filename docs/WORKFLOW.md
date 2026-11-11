@@ -257,7 +257,9 @@ Quality evidence can leave a video's quality unknown, which excludes that video 
 A candidate failure does not cancel unrelated inspections.
 Validation failures share the same three-retry limit and saved call and image allowances.
 Access challenges pause the affected platform.
-Missing model authentication or provider limits stop shared model work.
+In a combined round, any platform pause cancels unfinished work on both platforms.
+The report identifies the first platform, stage, and cause. Sibling cancellation messages do not replace this cause.
+Completed lists and saved progress remain available. Continuation requires a new user request.
 Final selection first favors candidates that avoid overlap with earlier picks in the same platform list.
 Overlap uses shared search queries, matching primary content topics, and secondary-school course markers.
 Broad subjects alone do not create overlap.
@@ -287,7 +289,7 @@ Optional local transcription supplies text when captions are unavailable.
 If no usable transcript exists, the video still receives a visual assessment using frames and readable burned-in text, with a separate ten-point quality deduction.
 Unsupported speech, sound and continuity properties remain unknown.
 Caption access challenges pause acquisition for the affected platform instead of triggering visual fallback.
-Prepared assessments finish before the engine saves this pause.
+A combined round cancels remaining downloads and assessments, then saves their progress before returning its report.
 A continuation retains completed assessments and remaining allowances.
 The initial assessment uses up to four distinct frames when captions are available.
 Without captions, new evidence jobs sample up to eight distinct frames across the video.

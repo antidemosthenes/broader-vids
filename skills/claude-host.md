@@ -29,7 +29,7 @@ For a successful explicit setup request, return the full guide produced by `onbo
 
 Use the recommendation skill's engine workflow, evidence rules, saved profile, and feedback gate. Run one recommendation command with `--host claude`, the verified `--model` and `--effort`, and the requested platform options.
 
-Do not bypass incomplete feedback without the user's explicit choice. Do not reduce requested platform coverage. Report incomplete results as partial and keep candidate failure details accurate. Continue a paused run only when the user asks.
+Do not bypass incomplete feedback without the user's explicit choice. Do not reduce requested platform coverage. Report incomplete results as partial and keep candidate failure details accurate. If either platform pauses, report the original batch cause and end the request. Continue a paused run only when the user asks.
 
 ## Dashboard
 
