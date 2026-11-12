@@ -198,8 +198,12 @@ def probe_media(path, timeout=30):
         timeout=timeout,
     )
     output = process.stderr.decode("utf-8", errors="replace")
-    duration = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
-    dimensions = re.search(r"Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b", output)
+    duration = re.search(r"(?m)^\s*Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    decoded_stream = re.split(r"(?m)^Output #\d+,", output, maxsplit=1)[-1]
+    dimensions = re.search(
+        r"(?m)^\s*Stream #\d+:\d+[^\r\n]*?Video:[^\r\n]*?\b(\d{2,5})x(\d{2,5})\b",
+        decoded_stream,
+    )
     if process.returncode or not duration or not dimensions:
         raise EvidencePending(
             "FFmpeg could not verify a complete playable local video stream."

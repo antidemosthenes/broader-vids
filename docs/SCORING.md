@@ -27,8 +27,15 @@ The engine requires a verified playable duration greater than sixty seconds and 
 The saved evidence quality must reach 60 points out of 100.
 For new assessments without a usable transcript, subtract ten points from quality after adding the duration prior, with a floor of zero.
 The same deduction applies to the learned quality component during ranking.
-After the learned final score, subtract 10 × clamp((300 − t) / 240, 0, 1), where t is seconds.
-This deduction is 7.5 at two minutes, 5 at three, 2.5 at four, and 0 at five minutes.
+After the learned final score, subtract 20 × clamp((300 − t) / 240, 0, 1), where t is seconds.
+This deduction is 15 at two minutes, 10 at three, 5 at four, and 0 at five minutes.
+New rounds use ranking policy 4, with a maximum short-video deduction of 20 points.
+Saved policy-2 rounds retain the previous ten-point maximum. Policy-1 rounds retain no duration deduction.
+Policy 4 also subtracts five final-score points for portrait videos with verified height greater than width.
+The engine adds this deduction to the short-video deduction after learned scoring.
+A square or landscape video receives zero portrait deduction. Unknown dimensions also give zero deduction.
+Eligibility uses evidence quality before these final-score deductions.
+Policy 3 applies the twenty-point short-video rule.
 Clamp the adjusted score at zero.
 The existing evidence quality gate and screening rules do not change.
 Audio quality is not a criterion.
@@ -167,6 +174,14 @@ It uses the assessed title, specific and broad labels, and summary.
 It ignores retrieval origin and accepts only medium- or high-confidence matches.
 Accepted matches supply canonical broad-root features for learned lookup.
 Assessed topic labels remain unchanged.
+
+Mapping policy 2 classifies the video's central subject.
+A crime match can include suspected, alleged, or unresolved crimes when investigation is central to the content.
+The match does not confirm an offense or establish guilt.
+A brief poisoning warning in a pet-care video need not match crime.
+Mapping confidence describes topic relevance, not the probability that an allegation is true.
+The rationale must preserve uncertainty about allegations.
+These instructions do not change quality grades or existing user feedback.
 
 The initial interest probability $I_0$ is 0.75 for a domain related to the user's stated interests.
 It is 0.35 for a known unrelated domain and 0.50 when domains are unknown.

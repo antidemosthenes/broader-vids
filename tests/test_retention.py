@@ -56,6 +56,45 @@ class RetentionTests(unittest.TestCase):
             saved["state"]["partial_media_cleanup"],
         )
 
+    def test_maintenance_retries_failed_partial_deletion_without_discarding_evidence(
+        self,
+    ):
+        run = self.store.get(self.identifier)
+        run["state"].update(
+            media=None,
+            failure={"scope": "candidate", "category": "media_timeout"},
+        )
+        self.store.save(run)
+        original_unlink = Path.unlink
+
+        def reject(path, *args, **kwargs):
+            if path == self.media:
+                raise PermissionError("Fixture sharing violation")
+            return original_unlink(path, *args, **kwargs)
+
+        with patch.object(Path, "unlink", reject):
+            discard_failed_media(self.store, self.identifier)
+            failed = cleanup_storage(self.store, apply=True)
+        self.assertEqual(len(failed["issues"]), 1)
+        self.assertTrue(self.media.exists())
+        before = self.store.get(self.identifier)
+        preview = cleanup_storage(self.store)
+        self.assertEqual(preview["files"], 1)
+        self.assertEqual(self.store.get(self.identifier), before)
+        applied = cleanup_storage(self.store, apply=True)
+        self.assertEqual(applied["files"], 1)
+        self.assertEqual(applied["issues"], [])
+        self.assertFalse(self.media.exists())
+        self.assertTrue(Path(before["state"]["captions"]["path"]).exists())
+        self.assertTrue(Path(before["state"]["frames"][0]["path"]).exists())
+        self.assertEqual(
+            self.store.get(self.identifier)["state"]["partial_media_cleanup"]["status"],
+            "removed",
+        )
+        repeated = cleanup_storage(self.store, apply=True)
+        self.assertEqual(repeated["files"], 0)
+        self.assertEqual(repeated["compacted_runs"], 0)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)

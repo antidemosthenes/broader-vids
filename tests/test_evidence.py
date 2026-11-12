@@ -256,6 +256,19 @@ class CaptionTests(unittest.TestCase):
             patch("subprocess.run", return_value=reply),
         ):
             self.assertEqual(probe_media("fixture")["duration_seconds"], 5400)
+        reply.stderr = (
+            b"    title : Output # demo Duration: 00:00:09.00\n" + reply.stderr
+        )
+        reply.stderr += b"Output #0, null, to 'pipe:':\nStream #0:0: Video: wrapped_avframe, yuv420p, 180x320\n"
+        with (
+            patch(
+                "broader_vids.evidence.media.ffmpeg_executable", return_value="fixture"
+            ),
+            patch("subprocess.run", return_value=reply),
+        ):
+            rotated = probe_media("fixture")
+        self.assertEqual(rotated["duration_seconds"], 5400)
+        self.assertEqual((rotated["width"], rotated["height"]), (180, 320))
         reply.stderr = reply.stderr.replace(b"01:30:00.00", b"01:30:00.01")
         with (
             patch(
@@ -510,8 +523,25 @@ class EvidencePipelineTests(unittest.TestCase):
         self.assertEqual(set(assessed["state"]["assessments"]), {"augmented"})
         result = cached_quality(self.store, identifier)
         self.assertEqual(result["missing_captions_penalty"], 10)
+        self.assertEqual(result["width"], assessed["state"]["media"]["width"])
+        self.assertEqual(result["height"], assessed["state"]["media"]["height"])
         self.assertAlmostEqual(result["quality"], 60.01, places=1)
         self.assertAlmostEqual(result["quality_interval"][0], 45.01, places=1)
+        from broader_vids.evidence.retention import compact_evidence
+
+        compact_evidence(self.store, identifier)
+        legacy = self.store.get(identifier)
+        legacy["state"]["media"].update(width=result["height"], height=result["width"])
+        self.store.save(legacy)
+        legacy = self.store.get(identifier)
+        corrected = cached_quality(self.store, identifier)
+        self.assertEqual(
+            (corrected["width"], corrected["height"]),
+            (result["width"], result["height"]),
+        )
+        self.assertEqual(corrected["quality"], result["quality"])
+        self.assertFalse(Path(legacy["state"]["media"]["path"]).exists())
+        self.assertEqual(self.store.get(identifier), legacy)
         with self.assertRaises(ValueError):
             assess_evidence(self.store, identifier, "baseline", model_runner=model)
 

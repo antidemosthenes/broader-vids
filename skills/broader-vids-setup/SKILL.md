@@ -98,6 +98,9 @@ Do not repeat the introduction for a completed profile during routine checks.
 Check Node.js 20 or later, UV, and Codex CLI availability.
 Report exact repair steps for missing system tools.
 Run `setup --evidence` to install the external runtime and evidence dependencies when needed.
+Successful setup removes obsolete managed runtimes and wheel copies under the installation lock.
+If `storage_cleanup.issues` is nonempty, report the deferred paths and reasons.
+Keep setup successful when only obsolete-file deletion fails. Never remove active files or shared caches manually.
 Setup creates the runtime directory before platform or interest configuration.
 On Windows, it uses UV to select Python and Python's standard module to create the virtual environment.
 If copied Windows launchers cannot initialize, setup tries an executable-link environment in the same directory once.

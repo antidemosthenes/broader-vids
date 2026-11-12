@@ -101,13 +101,19 @@ def dashboard_fixture(*, provisional=False):
                         carryover=False,
                         engagement_score={"score": 50},
                     )
-                    if index == 3:
+                    if index in (3, 4):
                         item["ranking_adjustments"] = {
                             "version": 2,
                             "score_before_duration_penalty": 85,
                             "short_video_penalty": 5,
                             "final_score": 80,
                         }
+                        if index == 3:
+                            item["ranking_adjustments"].update(
+                                score_before_duration_penalty=90,
+                                portrait_video_penalty=5,
+                                video_dimensions={"width": 360, "height": 640},
+                            )
                     items.append(item)
                     if not provisional:
                         store.db.execute(
@@ -330,6 +336,16 @@ class DashboardFeedbackTests(unittest.TestCase):
             expect(
                 page.locator("#details-dialog").get_by_role(
                     "row", name="Short-video deduction −5.00 points", exact=True
+                )
+            ).to_be_visible()
+            expect(
+                page.locator("#details-dialog").get_by_role(
+                    "row", name="Portrait video deduction −5.00 points", exact=True
+                )
+            ).to_be_visible()
+            expect(
+                page.locator("#details-dialog").get_by_role(
+                    "row", name="Video dimensions 360 × 640", exact=True
                 )
             ).to_be_visible()
             expect(

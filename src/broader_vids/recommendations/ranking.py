@@ -12,6 +12,9 @@ from broader_vids.recommendations.screening import (
 )
 
 
+CURRENT_RANKING_POLICY = 4
+
+
 def domains(item):
     return {
         d for origin in item.get("origins", []) for d in origin.get("domains", [])
@@ -162,10 +165,13 @@ def rank_slate(
         raise ValueError(
             "Unsupported scoring policy; start a new recommendation round."
         )
-    if ranking_policy_version not in (1, 2):
+    if ranking_policy_version not in (1, 2, 3, CURRENT_RANKING_POLICY):
         raise ValueError(
             "Unsupported ranking policy; start a new recommendation round."
         )
+    duration_penalty_cap = {1: 0, 2: 10, 3: 20, CURRENT_RANKING_POLICY: 20}[
+        ranking_policy_version
+    ]
     now, recent = now or datetime.now(timezone.utc), recent or Counter()
     pool = [
         dict(i)
@@ -179,6 +185,15 @@ def rank_slate(
         and not provenance(i, profile)["excluded"]
         and not excluded(i, creator_rules)
     ]
+    for item in pool:
+        item.pop("ranking_adjustments", None)
+    dimensions = {}
+    if ranking_policy_version >= 4:
+        for item in pool:
+            observation = observations[item["canonical_id"]]
+            width, height = observation.get("width"), observation.get("height")
+            if all(type(value) is int and value > 0 for value in (width, height)):
+                dimensions[item["canonical_id"]] = {"width": width, "height": height}
     from broader_vids.recommendations.diversity import signature, overlap_count
 
     signatures = (
@@ -243,11 +258,17 @@ def rank_slate(
                 total, parts, details = learned_scores[cache_key]
                 total = round(total, 4)
             score_before_duration_penalty = total
+            geometry = dimensions.get(item["canonical_id"])
+            portrait_penalty = (
+                5 if geometry and geometry["height"] > geometry["width"] else 0
+            )
             duration_penalty = 0
-            if ranking_policy_version == 2:
+            if duration_penalty_cap:
                 duration = observations[item["canonical_id"]]["duration_seconds"]
-                duration_penalty = round(10 * max(0, min(1, (300 - duration) / 240)), 4)
-                total = round(max(0, total - duration_penalty), 4)
+                duration_penalty = round(
+                    duration_penalty_cap * max(0, min(1, (300 - duration) / 240)), 4
+                )
+                total = round(max(0, total - duration_penalty - portrait_penalty), 4)
             scored.append(
                 (
                     total,
@@ -257,6 +278,7 @@ def rank_slate(
                     details,
                     score_before_duration_penalty,
                     duration_penalty,
+                    portrait_penalty,
                 )
             )
         (
@@ -267,6 +289,7 @@ def rank_slate(
             details,
             score_before_duration_penalty,
             duration_penalty,
+            portrait_penalty,
         ) = max(scored, key=lambda entry: (entry[0], entry[1]))
         slate.append(
             {
@@ -283,10 +306,20 @@ def rank_slate(
                                 score_before_duration_penalty, 4
                             ),
                             "short_video_penalty": round(duration_penalty, 4),
+                            **(
+                                {
+                                    "portrait_video_penalty": portrait_penalty,
+                                    "video_dimensions": dimensions.get(
+                                        chosen["canonical_id"]
+                                    ),
+                                }
+                                if ranking_policy_version >= 4
+                                else {}
+                            ),
                             "final_score": total,
                         }
                     }
-                    if ranking_policy_version == 2
+                    if duration_penalty_cap
                     else {}
                 ),
                 **(

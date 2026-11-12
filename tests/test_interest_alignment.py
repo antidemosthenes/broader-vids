@@ -1,10 +1,16 @@
+import copy
 import json
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from broader_vids.http import BudgetExhausted
-from broader_vids.learning.alignment import aligned_items, prepare_alignment
+from broader_vids.learning.alignment import (
+    ALIGNMENT_VERSION,
+    aligned_items,
+    fingerprint,
+    prepare_alignment,
+)
 from broader_vids.learning.features import capture, interest_prior, affinity_features
 from broader_vids.learning.scoped import group_key, interest_prediction
 from broader_vids.storage import Store
@@ -41,7 +47,7 @@ class InterestAlignmentTests(unittest.TestCase):
             }
         settings = {
             "kind": "recommendation",
-            "interest_alignment_version": 1,
+            "interest_alignment_version": ALIGNMENT_VERSION,
             "worker_host": "codex",
             "assessment_model": "fixture-model",
             "reasoning_effort": "low",
@@ -174,6 +180,83 @@ class InterestAlignmentTests(unittest.TestCase):
         self.assertEqual(usage["input_tokens"], 120)
         self.assertEqual(usage["output_tokens"], 20)
 
+    def test_subject_relevance_does_not_require_a_confirmed_crime(self):
+        run = self.create_run(
+            [
+                (
+                    1,
+                    "Suspected animal poisoning investigation",
+                    "Community safety",
+                    ["animals"],
+                ),
+                (2, "Pet care with a brief poisoning warning", "Pet care", ["crime"]),
+                (
+                    3,
+                    "Unsolved murder investigation",
+                    "Historical investigations",
+                    ["history"],
+                ),
+            ]
+        )
+        keys = [item["canonical_id"] for item in run["state"]["shortlist"]]
+        run["state"]["evidence"][keys[0]]["summary"] = (
+            "Investigates suspected animal poisoning with surveillance and testing requests. The allegation remains unverified."
+        )
+        evidence = copy.deepcopy(run["state"]["evidence"])
+        calls = []
+
+        def runner(prompt, *_args):
+            instructions, raw = prompt.split("\n", 1)
+            self.assertIn("A confirmed offense is not required.", instructions)
+            self.assertIn(
+                "A pet-care video that briefly mentions possible poisoning need not match crime.",
+                instructions,
+            )
+            self.assertIn(
+                "Confidence measures topic relevance, not the probability that an allegation is true.",
+                instructions,
+            )
+            self.assertIn(
+                "Preserve uncertainty about allegations in the rationale.", instructions
+            )
+            self.assertEqual(len(json.loads(raw)["videos"]), 3)
+            calls.append(True)
+            return {
+                "videos": [
+                    {
+                        "canonical_id": key,
+                        "matches": ["crime"] if index != 1 else [],
+                        "confidence": "high",
+                        "rationale": rationale,
+                    }
+                    for index, (key, rationale) in enumerate(
+                        zip(
+                            keys,
+                            [
+                                "The central subject is a suspected poisoning investigation. The allegation remains unverified.",
+                                "Animal care is central. Possible poisoning is mentioned only briefly.",
+                                "The central subject is an unresolved murder investigation.",
+                            ],
+                        )
+                    )
+                ]
+            }, None
+
+        self.prepare(run, runner)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(run["state"]["evidence"], evidence)
+        items = aligned_items(run, run["state"]["shortlist"])
+        matches = [
+            capture(item, evidence[item["canonical_id"]])["domains"] for item in items
+        ]
+        self.assertEqual(matches, [["crime"], ["pet care"], ["crime"]])
+        self.assertEqual(run["state"]["model_calls"], 0)
+        self.assertEqual(run["state"]["alignment_model_calls"], 1)
+        self.assertEqual(
+            list((self.store.root / "recommendations" / run["id"]).glob("alignment-*")),
+            [],
+        )
+
     def test_partial_output_retries_only_unresolved_and_low_confidence_is_ignored(self):
         run = self.create_run(
             [
@@ -286,6 +369,10 @@ class InterestAlignmentTests(unittest.TestCase):
     def test_cache_reuses_exact_fingerprint_and_invalidates_all_input_changes(self):
         changes = (
             (
+                "mapping_policy",
+                lambda run: run["settings"].update(interest_alignment_version=1),
+            ),
+            (
                 "interests",
                 lambda run: run["settings"]["profile"].update(
                     interests=["crime", "art"]
@@ -318,6 +405,25 @@ class InterestAlignmentTests(unittest.TestCase):
                 mutate(run)
                 self.prepare(run, runner)
                 self.assertEqual(len(calls), 2)
+                if label == "mapping_policy":
+                    key = run["state"]["shortlist"][0]["canonical_id"]
+                    self.assertEqual(
+                        fingerprint(
+                            run["state"]["shortlist"][0],
+                            run["state"]["evidence"][key],
+                            run["settings"],
+                        ),
+                        "98cf449453a9775f7fa4017983f0b382053b4e7d51feac306642832028f7a608",
+                    )
+                    self.assertNotIn("A confirmed offense is not required.", calls[-1])
+                    self.prepare(run, runner)
+                    self.assertEqual(len(calls), 2)
+                    run["settings"]["interest_alignment_version"] = 999
+                    with self.assertRaisesRegex(
+                        ValueError, "unsupported interest-mapping policy"
+                    ):
+                        self.prepare(run, runner)
+                    self.assertEqual(len(calls), 2)
 
     def test_manual_publication_prepares_alignment_and_resumes_alignment_phase(self):
         from broader_vids.preferences import set_profile
@@ -337,6 +443,10 @@ class InterestAlignmentTests(unittest.TestCase):
                     max_assessments=budget,
                 )
                 run = self.store.get(rid)
+                self.assertEqual(
+                    run["settings"]["interest_alignment_version"],
+                    ALIGNMENT_VERSION,
+                )
                 item = candidate(1)
                 item.update(title="Art crime", engagement_score={"score": 50})
                 key = item["canonical_id"]

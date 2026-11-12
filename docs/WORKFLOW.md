@@ -101,7 +101,7 @@ A shared batch deduplicates new topic proposals across platforms at its baseline
 It does not force the platforms to choose different topics.
 
 Legacy rounds retain their saved policies when they resume.
-New rounds use rotation version 2 and ranking policy 2.
+New rounds use rotation version 2 and ranking policy 4.
 The language rule changes search text, not interest labels or hierarchy levels.
 Existing topic labels and aliases stay stable as the hierarchy grows.
 The engine converts Traditional Chinese keywords to Simplified Chinese and rejects incompatible scripts before a keyword search.
@@ -340,14 +340,22 @@ This favors distinct videos. Repeats remain possible when all remaining videos o
 This text-only batch contains at most thirty-five candidates.
 It matches medium- or high-confidence canonical topics.
 The alignment uses assessed content, not query origin.
-It preserves existing labels, manual narrow-topic feedback, and depth feedback.
+New rounds use mapping policy 2 to classify the central subject.
+A suspected or unresolved crime investigation can match crime without confirming any allegation.
+A brief incidental mention does not establish the video's central subject.
+Confidence describes topic relevance. The rationale retains uncertainty about allegations.
+The alignment preserves existing labels, manual narrow-topic feedback, and depth feedback.
 An interest edit does not trigger a full reassessment.
 
 If alignment fails, the engine retries three times after the initial call.
 It then uses exact matches and reports the fallback.
 
-The engine applies a duration deduction after the learned final score: 10 × clamp((300 − t) / 240, 0, 1).
-The deduction is 7.5 at two minutes, 5 at three, 2.5 at four, and 0 at five minutes.
+The engine applies a duration deduction after the learned final score: 20 × clamp((300 − t) / 240, 0, 1).
+The deduction is 15 at two minutes, 10 at three, 5 at four, and 0 at five minutes.
+New rounds freeze ranking policy 4. Each round stores its policy for continuation.
+Verified portrait dimensions, where height exceeds width, add a five-point final-score deduction.
+The engine uses saved media dimensions and reports both deductions in Score details.
+Missing dimensions give zero portrait deduction.
 The adjusted score has a floor of zero.
 The existing evidence quality gate and screening rules remain unchanged.
 It applies no unrelated-topic quota.

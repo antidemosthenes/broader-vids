@@ -36,43 +36,54 @@ def owned_file(store, identifier, path):
 
 
 def discard_failed_media(store, identifier, *, lease_owner=None):
+    with store.lease(identifier, owner=lease_owner):
+        return _discard_failed_media(store, store.get(identifier))
+
+
+def _discard_failed_media(store, run, *, dry_run=False):
     from broader_vids.evidence.failures import terminal_media_failure
 
-    with store.lease(identifier, owner=lease_owner):
-        run = store.get(identifier)
-        state = run["state"]
-        if (
-            run["settings"].get("kind") != "evidence"
-            or state.get("media")
-            or not terminal_media_failure(state.get("failure", {}))
-        ):
-            return
-        root = store.root / "evidence" / identifier
-        files = [owned_file(store, identifier, path) for path in root.glob("media.*")]
-        if not files:
-            return
-        removed = 0
-        cleanup_failed = False
-        try:
-            for path in files:
-                if path.is_file():
-                    size = path.stat().st_size
-                    path.unlink()
-                    removed += size
-        except OSError as error:
-            cleanup_failed = True
-            state["cleanup_issue"] = type(error).__name__
-        if not cleanup_failed:
-            state.pop("cleanup_issue", None)
-        state["partial_media_cleanup"] = {
-            "removed_bytes": state.get("partial_media_cleanup", {}).get(
-                "removed_bytes", 0
-            )
-            + removed,
-            "status": "pending" if cleanup_failed else "removed",
-            "updated_at": utc_now(),
-        }
-        store.save(run)
+    state, identifier = run["state"], run["id"]
+    if (
+        run["settings"].get("kind") != "evidence"
+        or state.get("media")
+        or not terminal_media_failure(state.get("failure", {}))
+    ):
+        return None
+    root = store.root / "evidence" / identifier
+    files = [owned_file(store, identifier, path) for path in root.glob("media.*")]
+    files = [(path, path.stat().st_size) for path in files if path.is_file()]
+    result = {
+        "run_id": identifier,
+        "status": "would_discard" if dry_run else "discarded",
+        "files": len(files),
+        "bytes": sum(size for _, size in files),
+    }
+    if dry_run or (
+        not files and state.get("partial_media_cleanup", {}).get("status") != "pending"
+    ):
+        return result
+    removed, removed_bytes = 0, 0
+    cleanup_failed = False
+    try:
+        for path, size in files:
+            path.unlink()
+            removed += 1
+            removed_bytes += size
+    except OSError as error:
+        cleanup_failed = True
+        state["cleanup_issue"] = type(error).__name__
+        result.update(status="partial", reason=type(error).__name__)
+    if not cleanup_failed:
+        state.pop("cleanup_issue", None)
+    state["partial_media_cleanup"] = {
+        "removed_bytes": state.get("partial_media_cleanup", {}).get("removed_bytes", 0)
+        + removed_bytes,
+        "status": "pending" if cleanup_failed else "removed",
+        "updated_at": utc_now(),
+    }
+    store.save(run)
+    return {**result, "files": removed, "bytes": removed_bytes}
 
 
 def _validated_augmented(store, run):
@@ -117,6 +128,9 @@ def compact_evidence(store, identifier, *, dry_run=False, lease_owner=None):
         if run["settings"].get("kind") != "evidence":
             raise ValueError("Cleanup requires an evidence run.")
         _require_current_rubric(run["settings"])
+        discarded = _discard_failed_media(store, run, dry_run=dry_run)
+        if discarded is not None:
+            return discarded
         if not _validated_augmented(store, run):
             return {
                 "run_id": identifier,

@@ -23,6 +23,29 @@ def compatible_quality(settings, source):
     )
 
 
+def _display_dimensions(state):
+    dimensions = {
+        key: state["media"][key] for key in ("width", "height") if key in state["media"]
+    }
+    if not state["frames"] or not all(
+        type(dimensions.get(key)) is int and dimensions[key] > 0
+        for key in ("width", "height")
+    ):
+        return dimensions
+    width, height = dimensions["width"], dimensions["height"]
+    try:
+        from PIL import Image
+
+        with Image.open(state["frames"][0]["path"]) as frame:
+            if frame.width != frame.height and (frame.height > frame.width) != (
+                height > width
+            ):
+                dimensions = {"width": height, "height": width}
+    except (ImportError, OSError):
+        pass
+    return dimensions
+
+
 def cached_quality(store, evidence_run):
     run = store.get(evidence_run)
     if run["settings"].get("local_media") or run["settings"].get("kind") not in {
@@ -89,6 +112,7 @@ def cached_quality(store, evidence_run):
             "quality": expected,
             "mode": mode,
             "duration_seconds": duration,
+            **_display_dimensions(state),
             "summary": card["summary"],
             "unknowns": card["unknowns"],
             "content_quality": card["content_quality"],
