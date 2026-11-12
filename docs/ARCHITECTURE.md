@@ -33,6 +33,7 @@ broader-vids/
     broader-vids.cjs            Node setup and process launcher
     plugin-install.cjs         Explicit npm plugin registration through Codex
     runtime-lock.cjs            Shared runtime use and exclusive installation
+    runtime-storage.cjs         Obsolete runtime and wheel cleanup
     profile-data.cjs            Preview, reset, and complete data removal
   skills/
     broader-vids/               Recommendations and feedback instructions
@@ -237,6 +238,13 @@ See [data directory selection](REFERENCE.md#choose-a-data-directory).
 | `access/bilibili/profile/` | Separate browser profile for Bilibili sign-in |
 | `runtimes/`, `wheels/` | External engine environments and cached wheels for the Node launcher |
 
+After successful setup, `bin/runtime-storage.cjs` removes superseded managed runtimes and wheel copies.
+The launcher holds its exclusive installation lease through installation and cleanup.
+It retains the current build, newer versions, unknown content, and all profile records.
+Failed deletion leaves a recognizable staged directory for a later retry.
+The launcher reports cleanup issues without invalidating successful installation.
+The `runtime cleanup` command provides a preview and an explicit apply operation.
+
 Onboarding uses an atomic versioned file protected by a separate configuration lease.
 It does not change SQLite schema 12 or the learning revision.
 Preference transfer excludes the onboarding file.
@@ -337,6 +345,17 @@ Short database transactions protect user actions and final result writes.
 Dashboard lookup checks recommendation rounds from newest to oldest and stops at the first usable list.
 Feedback resolves the displayed video evidence before it acquires its database write transaction.
 Earlier pending videos retain their saved topic and depth context.
+New rounds freeze interest-mapping policy 2 separately from alignment record format 1.
+Rounds with alignment version 1 retain their original instructions and cache identities.
+Older builds reject new alignment-version-2 rounds during recovery.
+The mapping cache identity includes policy 2 when applicable.
+A policy change can require text-only mapping without repeating visual assessment.
+New rounds freeze ranking policy 4 for short-video and portrait deductions.
+Recovery uses the ranking policy saved in each round.
+Adjustment records use format 2 with portrait deduction and verified dimensions for policy 4.
+New media verification reads decoded FFmpeg output dimensions after automatic rotation.
+Quality-cache results carry saved dimensions into ranking, including after full-media cleanup.
+A retained, verified frame supplies the orientation for older cached dimensions.
 Dashboard and calibration responses resolve creator metadata in batches of at most 500 video IDs.
 Each response builds a local creator-rule index. No profile-wide cache retains these objects.
 Creator and tag responses use separate revisions to reject stale updates.

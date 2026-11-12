@@ -600,6 +600,41 @@ function main(args = process.argv.slice(2)) {
     if (result.status === "partial") process.exitCode = 2;
     return;
   }
+  if (args[index] === "runtime") {
+    const values = args.slice(index + 1);
+    if (values.length === 1 && ["--help", "-h"].includes(values[0])) {
+      console.log(
+        "Usage: broader-vids [--data-dir PATH] runtime cleanup [--apply]",
+      );
+      return;
+    }
+    if (
+      values[0] !== "cleanup" ||
+      values.length > 2 ||
+      (values.length === 2 && values[1] !== "--apply")
+    )
+      throw Error("Use runtime cleanup with optional --apply.");
+    require("./profile-data.cjs").validateRoot(root, packageRoot);
+    return withSetup(root, () => {
+      const digest = wheelDigest(bundledWheel(packageRoot, manifest.version));
+      if (
+        !runtimeBuildMatches(runtime, digest, packageRoot) ||
+        checkRuntime(runtime, executable).status !== "ready"
+      )
+        throw Error(
+          "Complete setup successfully before removing older runtimes. No runtime files were removed.",
+        );
+      const report = require("./runtime-storage.cjs").cleanupRuntimeStorage(
+        root,
+        packageRoot,
+        manifest.version,
+        digest,
+        { apply: values[1] === "--apply" },
+      );
+      console.log(JSON.stringify(report, null, 2));
+      if (report.status === "partial") process.exitCode = 2;
+    });
+  }
   if (args[index] === "setup") {
     validateSetupArguments(args, index);
     if (args.includes("--check")) {
@@ -682,11 +717,21 @@ function main(args = process.argv.slice(2)) {
           environment,
         );
       }
-      recordRuntimeBuild(runtime, wheelDigest(wheel), packageRoot, groups);
+      const installedDigest = wheelDigest(wheel);
+      recordRuntimeBuild(runtime, installedDigest, packageRoot, groups);
+      const storageCleanup =
+        require("./runtime-storage.cjs").cleanupRuntimeStorage(
+          root,
+          packageRoot,
+          manifest.version,
+          installedDigest,
+          { apply: true },
+        );
       console.log(
         JSON.stringify(
           {
             status: "installed",
+            storage_cleanup: storageCleanup,
             runtime,
             data_directory: root,
             next_action:

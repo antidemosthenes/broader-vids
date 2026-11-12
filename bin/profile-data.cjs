@@ -115,7 +115,7 @@ function validateRoot(root, packageRoot) {
     inside(root, path.resolve(packageRoot))
   )
     throw Error(
-      "Reset and Clean cannot target a system directory, user home, or a directory containing the plugin.",
+      "Data removal cannot target a system directory, user home, or a directory containing the plugin.",
     );
   for (let current = root; ; current = path.dirname(current)) {
     if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink())
@@ -324,4 +324,4 @@ function apply(root, operation, packageRoot, confirmation) {
   };
 }
 
-module.exports = { preview, apply, ensureMarker, MARKER };
+module.exports = { preview, apply, ensureMarker, validateRoot, MARKER };

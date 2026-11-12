@@ -40,12 +40,18 @@ from broader_vids.recommendations.budgets import (
     DEFAULT_METADATA_REQUESTS,
     collection_budget_message,
 )
-from broader_vids.recommendations.ranking import fair_buffer, screen, rank_slate
+from broader_vids.recommendations.ranking import (
+    CURRENT_RANKING_POLICY,
+    fair_buffer,
+    screen,
+    rank_slate,
+)
 from broader_vids.recommendations.quality import (
     cached_quality,
     unscored_quality,
     compatible_quality,
 )
+from broader_vids.learning.alignment import ALIGNMENT_VERSION, mapping_policy
 from broader_vids.recommendations.learning_snapshot import (
     freeze_learning,
     round_learning,
@@ -128,8 +134,8 @@ def create_recommendation(
         "creator_policy_version": 1,
         "schema": 1,
         "screening_policy_version": 5,
-        "ranking_policy_version": 2,
-        "interest_alignment_version": 1,
+        "ranking_policy_version": CURRENT_RANKING_POLICY,
+        "interest_alignment_version": ALIGNMENT_VERSION,
         "rotation_version": 2,
         "collection_policy": default_collection_policy(),
         "inspection_limit": DEFAULT_INSPECTION_LIMIT,
@@ -896,6 +902,7 @@ def execute_recommendation(
 def _validate_current_round(run):
     settings = run["settings"]
     validate_host(settings.get("worker_host", "codex"))
+    mapping_policy(settings)
     if (
         settings.get("time_policy_version") != 2
         or settings.get("creator_policy_version") != 1
@@ -903,11 +910,9 @@ def _validate_current_round(run):
         raise ValueError(
             "This recommendation uses unsupported round policies; start a new round."
         )
-    if (
-        settings.get("rotation_version", 1) not in (1, 2)
-        or settings.get("ranking_policy_version", 1) not in (1, 2)
-        or settings.get("interest_alignment_version", 0) not in (0, 1)
-    ):
+    if settings.get("rotation_version", 1) not in (1, 2) or settings.get(
+        "ranking_policy_version", 1
+    ) not in (1, 2, 3, CURRENT_RANKING_POLICY):
         raise ValueError(
             "This recommendation uses unsupported exploration or ranking settings; start a new round."
         )

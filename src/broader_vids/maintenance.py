@@ -18,9 +18,11 @@ def cleanup_storage(store, *, apply=False):
         except (OSError, ValueError, KeyError, TypeError) as error:
             summary["issues"].append({"run_id": row[0], "reason": str(error)[:400]})
             continue
+        if result["status"] == "partial":
+            summary["issues"].append({"run_id": row[0], "reason": result["reason"]})
         if result["status"] == "retained":
             summary["retained_runs"] += 1
-        else:
+        elif result["files"]:
             summary["compacted_runs"] += 1
             summary["files"] += result["files"]
             summary["bytes"] += result["bytes"]

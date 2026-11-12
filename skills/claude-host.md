@@ -7,7 +7,7 @@ This guide is for Claude Code. Use it instead of the Codex-specific instructions
 - Keep the user's selected profile stable. Run `data show` and pass its absolute path with `--data-dir` on every engine command.
 - Resolve the plugin root from the installed skill path. Run the Node launcher from that root.
 - Put `--host claude` before each engine subcommand. For example, run `node <plugin-root>/bin/broader-vids.cjs --host claude recommend`.
-- The Node launcher handles `data show`, `data use`, `data reset`, `reset`, and `clean`. It consumes `--host` for these commands.
+- The Node launcher handles `data show`, `data use`, `data reset`, `runtime cleanup`, `reset`, and `clean`. It consumes `--host` for these commands.
 - Run `setup --host claude --evidence` only to install or repair the runtime. The Node setup command does not complete onboarding.
 - Use Claude's active model and effort only when Claude exposes both values in the current session. Otherwise ask the user once for both values and wait. Never infer either value from Codex, an old setting, or a default.
 - Pass the verified values with `--model MODEL --effort EFFORT` for setup completion and recommendation commands. The engine can also read `BROADER_VIDS_CLAUDE_MODEL` and `BROADER_VIDS_CLAUDE_EFFORT` when the user explicitly sets both values.
@@ -18,6 +18,8 @@ This guide is for Claude Code. Use it instead of the Codex-specific instructions
 Use the setup skill's workflow as described here, with the engine's returned questions. Do not apply its Codex-specific host checks. Ask one question at a time. Do not invent interests, select a platform, or import a file without the user's answer.
 
 Check Node.js, UV, Claude CLI, FFmpeg, yt-dlp, Pillow, and the selected platform access. Use the Node launcher setup command to install the runtime. Use `doctor` for diagnostics. Preserve a working profile during repair.
+
+Successful setup removes obsolete managed runtimes and wheel copies. Report any `storage_cleanup.issues` without treating cleanup alone as an installation failure.
 
 Use `onboarding questions`, `onboarding status`, `profile show`, and `onboarding configure` as required by the engine. Preview starter preferences or imports before applying them. Open Bilibili sign-in only when needed. Wait for the user to report sign-in completion, then check access.
 

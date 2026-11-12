@@ -40,11 +40,24 @@ export function scoreDetails(item, weights) {
   if (item.ranking_adjustments?.version === 2) {
     const adjustment = item.ranking_adjustments;
     html +=
-      '<h4 class="score-heading">Short-video adjustment</h4><table><tbody><tr><th scope="row">Before deduction</th><td>' +
+      '<h4 class="score-heading">Score deductions</h4><table><tbody><tr><th scope="row">Before deductions</th><td>' +
       num(adjustment.score_before_duration_penalty) +
       ' / 100</td></tr><tr><th scope="row">Short-video deduction</th><td>−' +
       num(adjustment.short_video_penalty) +
-      ' points</td></tr><tr><th scope="row">Final score</th><td>' +
+      " points</td></tr>";
+    if (typeof adjustment.portrait_video_penalty === "number") {
+      const dimensions = adjustment.video_dimensions;
+      html +=
+        '<tr><th scope="row">Portrait video deduction</th><td>−' +
+        num(adjustment.portrait_video_penalty) +
+        ' points</td></tr><tr><th scope="row">Video dimensions</th><td>' +
+        (dimensions
+          ? esc(dimensions.width + " × " + dimensions.height)
+          : "Unavailable") +
+        "</td></tr>";
+    }
+    html +=
+      '<tr><th scope="row">Final score</th><td>' +
       num(adjustment.final_score) +
       " / 100</td></tr></tbody></table>";
   }

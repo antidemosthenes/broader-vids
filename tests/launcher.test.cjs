@@ -180,7 +180,7 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
   try {
     fs.mkdirSync(bin, { recursive: true });
     fs.mkdirSync(python, { recursive: true });
-    for (const name of ['runtime-lock.cjs', 'profile-data.cjs']) {
+    for (const name of ['runtime-lock.cjs', 'profile-data.cjs', 'runtime-storage.cjs']) {
       fs.copyFileSync(path.resolve(__dirname, '../bin', name), path.join(bin, name));
     }
     fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify(manifest));
@@ -358,8 +358,14 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     assert.deepEqual(coreOnlyReceipt.groups, ['core']);
     assert.deepEqual(Object.keys(coreOnlyReceipt.requirements_sha256), ['core']);
 
+    const obsoleteRuntime = path.join(profile, 'runtimes', '0.0.1');
+    fs.mkdirSync(obsoleteRuntime);
+    fs.writeFileSync(path.join(obsoleteRuntime, 'pyvenv.cfg'), 'fixture');
     failNextPip = true;
     assert.throws(() => main(['--data-dir', profile, 'setup', '--evidence']), /did not complete successfully/);
+    assert.ok(fs.existsSync(obsoleteRuntime));
+    assert.throws(() => main(["--data-dir", profile, "runtime", "cleanup", "--apply"]), /Complete setup successfully/);
+    assert.ok(fs.existsSync(obsoleteRuntime));
     assert.equal(fs.existsSync(receipt), false);
     assert.equal(fs.existsSync(path.join(profile, '.launcher', 'setup.json')), false);
     assert.equal(fs.existsSync(path.join(profile, '.launcher', 'gate.lock')), false);
@@ -376,6 +382,14 @@ test('setup receipts gate stale engines and refresh atomically across same-versi
     };
     findTemporaryFiles(profile);
     assert.deepEqual(temporaryFiles, []);
+    main(['--data-dir', profile, 'setup', '--evidence']);
+    assert.equal(fs.existsSync(obsoleteRuntime), false);
+    assert.equal(fs.existsSync(path.join(profile, 'wheels', firstDigest)), false);
+    assert.ok(fs.existsSync(path.join(profile, 'wheels', secondDigest)));
+    main(['--data-dir', profile, 'runtime', 'cleanup']);
+    assert.equal(JSON.parse(output.pop()).dry_run, true);
+    main(['--data-dir', profile, 'runtime', 'cleanup', '--apply']);
+    assert.equal(JSON.parse(output.pop()).status, 'completed');
     assert.deepEqual(stderr, []);
   } finally {
     assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));
@@ -465,7 +479,7 @@ test('failed UV launch releases the installation lock', () => {
     const fakePlugin = path.join(directory, 'plugin');
     fs.mkdirSync(path.join(fakePlugin, 'bin'), { recursive: true });
     fs.mkdirSync(path.join(fakePlugin, 'python'));
-    for (const name of ['broader-vids.cjs', 'runtime-lock.cjs', 'profile-data.cjs']) fs.copyFileSync(path.resolve(__dirname, '../bin', name), path.join(fakePlugin, 'bin', name));
+    for (const name of ['broader-vids.cjs', 'runtime-lock.cjs', 'profile-data.cjs', 'runtime-storage.cjs']) fs.copyFileSync(path.resolve(__dirname, '../bin', name), path.join(fakePlugin, 'bin', name));
     const manifest = require('../package.json');
     fs.writeFileSync(path.join(fakePlugin, 'package.json'), JSON.stringify(manifest));
     fs.writeFileSync(path.join(fakePlugin, 'python', `broader_vids-${manifest.version.replace('-alpha.', 'a')}-py3-none-any.whl`), 'fixture');

@@ -27,7 +27,7 @@
     ".claude-plugin/marketplace.json"
   ],
   "scripts": {
-    "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs",
+    "test": "node --test tests/launcher.test.cjs tests/profile-data.test.cjs tests/runtime-storage.test.cjs",
     "check:web": "prettier --check src/broader_vids/web/static",
     "release:prepare": "uv run --no-sync scripts/release.py prepare"
   },

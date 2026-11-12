@@ -440,6 +440,14 @@ The report identifies that result as partial.
 Manual publication uses the same content-alignment step as automatic publication.
 It retains the round's saved model settings and remaining allowances.
 If alignment cannot finish, the report shows unresolved mappings and uses exact matches.
+New rounds use subject-matter mapping policy 2. Saved rounds retain their original instructions.
+A central suspected-crime investigation can match crime while its allegations remain unverified.
+Mapping confidence describes relevance, not factual proof. A brief incidental mention need not produce a match.
+This policy does not rewrite published lists, quality evidence, or saved ratings.
+
+New ranking policy 4 adds a five-point final-score deduction for verified portrait videos.
+Portrait means height greater than width. Unknown dimensions give zero portrait deduction.
+Open Score details to inspect the dimensions, portrait deduction, short-video deduction, and final score.
 
 ## Review and rate videos
 
@@ -759,6 +767,36 @@ Interrupted copies resume from verified files.
 The engine removes temporary copies after failure or before the next reuse attempt.
 Add a frame before the augmented assessment, within that limit.
 
+## Remove obsolete runtime files
+
+Successful runtime setup removes older managed runtimes and obsolete wheel copies from the selected data directory.
+Cleanup starts only after installation succeeds and the current build receipt is saved.
+A failed installation preserves the previous runtime and wheel copies.
+The current runtime and its wheel remain available.
+A rollback setup also preserves runtimes and wheels from newer versions.
+
+To preview cleanup through an installed package, run:
+
+```powershell
+npx --yes broader-vids@latest --data-dir "C:\path\to\broader-vids" runtime cleanup
+```
+
+Use the same data directory that setup reports.
+Add `--apply` to remove the listed candidates.
+The command requires a verified current runtime.
+Stop the dashboard before cleanup. Finish active recommendation and sign-in operations first.
+
+The launcher holds the installation lock during cleanup.
+It preserves unknown directories, linked storage roots, profile data, account sessions, recovery backups, and optional models.
+A locked file can defer deletion without failing an otherwise successful setup.
+The setup result reports deferred paths under `storage_cleanup.issues`.
+Repeat cleanup after you resolve the reported file or permission issue.
+Interrupted deletions remain recognizable for the next cleanup attempt.
+
+Host plugin caches and shared npm or UV caches have separate owners.
+Broader Vids does not remove them automatically.
+Reset preserves installed tools. Clean removes all managed profile data after confirmation.
+
 ## Clean temporary evidence
 
 ```powershell
@@ -770,6 +808,8 @@ The first command previews disposable files.
 The second command applies the cleanup policy.
 The policy preserves user originals, active jobs, and user history.
 Completed assessments normally remove downloaded full videos automatically.
+Cleanup also retries deletion of partial media after a terminal download failure.
+It preserves resumable transfers, captions, frames, and resource accounting.
 
 ## Run automated checks
 

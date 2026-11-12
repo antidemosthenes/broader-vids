@@ -13,12 +13,20 @@ from broader_vids.token_usage import tracked_call
 from broader_vids.worker_context import worker_runner
 
 
-ALIGNMENT_VERSION = 1
+ALIGNMENT_VERSION = 2
+ALIGNMENT_RECORD_VERSION = 1
+
+
+def mapping_policy(settings):
+    value = settings.get("interest_alignment_version", 1)
+    if type(value) is not int or value not in (0, 1, ALIGNMENT_VERSION):
+        raise ValueError("This round uses an unsupported interest-mapping policy.")
+    return value
 
 
 def fingerprint(item, observation, settings):
     value = {
-        "version": ALIGNMENT_VERSION,
+        "version": ALIGNMENT_RECORD_VERSION,
         "canonical_id": item["canonical_id"],
         "title": item.get("title", ""),
         "topics": observation.get("topics"),
@@ -29,6 +37,9 @@ def fingerprint(item, observation, settings):
         "model": settings.get("assessment_model"),
         "effort": settings.get("reasoning_effort"),
     }
+    policy = mapping_policy(settings)
+    if policy != 1:
+        value["mapping_policy_version"] = policy
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
@@ -106,7 +117,7 @@ def _records(response, pending, interests):
         ):
             continue
         result[key] = {
-            "version": ALIGNMENT_VERSION,
+            "version": ALIGNMENT_RECORD_VERSION,
             "fingerprint": pending[key]["fingerprint"],
             "matches": matches if confidence in {"medium", "high"} else [],
             "confidence": confidence,
@@ -117,10 +128,12 @@ def _records(response, pending, interests):
 
 def prepare_alignment(store, run, save, remaining, *, runner=None, runtime=None):
     settings, state = run["settings"], run["state"]
-    if settings.get("interest_alignment_version") != ALIGNMENT_VERSION:
+    policy = mapping_policy(settings)
+    if settings.get("interest_alignment_version", 0) not in (1, ALIGNMENT_VERSION):
         return
     alignment = state.setdefault(
-        "interest_alignment", {"version": 1, "records": {}, "attempts": []}
+        "interest_alignment",
+        {"version": ALIGNMENT_RECORD_VERSION, "records": {}, "attempts": []},
     )
     pending = {}
     for item in state["shortlist"][:35]:
@@ -135,7 +148,7 @@ def prepare_alignment(store, run, save, remaining, *, runner=None, runtime=None)
         cached = alignment["records"].get(key) or item.get("interest_alignment")
         if (
             isinstance(cached, dict)
-            and cached.get("version") == 1
+            and cached.get("version") == ALIGNMENT_RECORD_VERSION
             and cached.get("fingerprint") == identity
         ):
             alignment["records"][key] = cached
@@ -159,6 +172,16 @@ def prepare_alignment(store, run, save, remaining, *, runner=None, runtime=None)
         settings, cancelled=runtime.cancelled if runtime else None
     )
     interests = settings["profile"]["interests"]
+    subject_guidance = (
+        "Match the central subject matter, not the truth of an allegation. "
+        "Crime includes investigations of suspected, alleged, or unresolved crimes when central to the content. "
+        "A confirmed offense is not required. "
+        "A pet-care video that briefly mentions possible poisoning need not match crime. "
+        "Confidence measures topic relevance, not the probability that an allegation is true. "
+        "Preserve uncertainty about allegations in the rationale. "
+        if policy == 2
+        else ""
+    )
     attempts = alignment["attempts"]
     while pending and len(attempts) < 4:
         if remaining() <= 0 or (runtime is not None and runtime.cancelled.is_set()):
@@ -178,7 +201,8 @@ def prepare_alignment(store, run, save, remaining, *, runner=None, runtime=None)
             "Do not infer a match from retrieval history. Art crime can match crime; a documentary mainly about painting techniques need not. "
             "Return only exact supplied interest names. An empty matches list is valid. Use low confidence when uncertain. "
             "Preserve distinctions between video games and other games, programming and unrelated uses of coding. "
-            "Return one record for each supplied canonical_id with a brief rationale. Do not assess quality or invent evidence. JSON only.\n"
+            + subject_guidance
+            + "Return one record for each supplied canonical_id with a brief rationale. Do not assess quality or invent evidence. JSON only.\n"
             + json.dumps(
                 {
                     "interests": interests,
@@ -293,7 +317,10 @@ def _warnings(state, alignment, pending):
 
 
 def aligned_items(run, items):
-    if run["settings"].get("interest_alignment_version") != ALIGNMENT_VERSION:
+    if run["settings"].get("interest_alignment_version", 0) not in (
+        1,
+        ALIGNMENT_VERSION,
+    ):
         return items
     records = run["state"].get("interest_alignment", {}).get("records", {})
     result = []
