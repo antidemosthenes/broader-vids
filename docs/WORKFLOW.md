@@ -101,7 +101,7 @@ A shared batch deduplicates new topic proposals across platforms at its baseline
 It does not force the platforms to choose different topics.
 
 Legacy rounds retain their saved policies when they resume.
-New rounds use rotation version 2 and ranking policy 4.
+New rounds use rotation version 2 and ranking policy 5.
 The language rule changes search text, not interest labels or hierarchy levels.
 Existing topic labels and aliases stay stable as the hierarchy grows.
 The engine converts Traditional Chinese keywords to Simplified Chinese and rejects incompatible scripts before a keyword search.
@@ -352,10 +352,18 @@ It then uses exact matches and reports the fallback.
 
 The engine applies a duration deduction after the learned final score: 20 × clamp((300 − t) / 240, 0, 1).
 The deduction is 15 at two minutes, 10 at three, 5 at four, and 0 at five minutes.
-New rounds freeze ranking policy 4. Each round stores its policy for continuation.
+New rounds freeze ranking policy 5. Each round stores its policy for continuation.
 Verified portrait dimensions, where height exceeds width, add a five-point final-score deduction.
 The engine uses saved media dimensions and reports both deductions in Score details.
 Missing dimensions give zero portrait deduction.
+For Bilibili, the existing content-analysis batch also classifies recorded courses in verified multipart archives.
+A recorded course with at least two parts and a total duration above five hours receives a ten-point final-score deduction.
+The engine requires medium or high confidence in the course classification.
+It uses the existing archive metadata and content-analysis request. It adds no separate request.
+Retries preserve valid interest matches and course classifications independently.
+The response requires course records only for eligible multipart archives.
+Uncertain classifications receive zero deduction and appear in the round report.
+Score details shows the deduction, part count, series duration, and classification reason.
 The adjusted score has a floor of zero.
 The existing evidence quality gate and screening rules remain unchanged.
 It applies no unrelated-topic quota.

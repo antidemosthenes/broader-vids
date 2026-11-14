@@ -15,9 +15,15 @@ class DurationRankingTests(unittest.TestCase):
         width=None,
         height=None,
         platform="youtube",
+        engagement=None,
+        course_recording=None,
     ):
         item = candidate(1, platform)
         item["engagement_score"] = {"score": 50}
+        if engagement is not None:
+            item["engagement"] = engagement
+        if course_recording is not None:
+            item["interest_alignment"] = {"course_recording": course_recording}
         item["ranking_adjustments"] = {"version": 2, "final_score": 1}
         observation = quality("fixture")
         observation.update(duration_seconds=duration, width=width, height=height)
@@ -51,6 +57,7 @@ class DurationRankingTests(unittest.TestCase):
             for policy, penalty in (
                 (2, penalties[0]),
                 (3, penalties[1]),
+                (4, penalties[1]),
                 (CURRENT_RANKING_POLICY, penalties[1]),
             ):
                 with self.subTest(duration=duration, policy=policy):
@@ -119,6 +126,98 @@ class DurationRankingTests(unittest.TestCase):
         )
         self.assertEqual(selected["ranking_adjustments"]["short_video_penalty"], 3.6058)
         self.assertEqual(selected["score"], 71.3942)
+
+    def test_course_series_deduction_requires_both_conditions_and_preserves_legacy(
+        self,
+    ):
+        engagement = {
+            "identity_verified": True,
+            "scope": "archive",
+            "source": "public_video_metadata",
+            "declared_part_count": 2,
+            "pages": [
+                {"page": 1, "cid": 101, "duration": 10000},
+                {"page": 2, "cid": 102, "duration": 10000},
+            ],
+        }
+        for status, confidence, deduction in (
+            ("recorded_course", "high", 10),
+            ("recorded_course", "medium", 10),
+            ("recorded_course", "low", 0),
+            ("other", "high", 0),
+            ("unknown", "low", 0),
+        ):
+            with self.subTest(status=status, confidence=confidence):
+                selected = self.rank_one(
+                    180,
+                    platform="bilibili",
+                    width=360,
+                    height=640,
+                    engagement=engagement,
+                    course_recording={
+                        "status": status,
+                        "confidence": confidence,
+                        "rationale": "Fixture content evidence.",
+                    },
+                )
+                adjustment = selected["ranking_adjustments"]
+                self.assertEqual(adjustment["course_series_penalty"], deduction)
+                self.assertEqual(adjustment["course_series"]["part_count"], 2)
+                self.assertEqual(selected["score"], 65 - deduction)
+                self.assertEqual(selected["components"]["quality"], 80)
+        classification = {
+            "status": "recorded_course",
+            "confidence": "high",
+            "rationale": "Recorded lessons.",
+        }
+        legacy = self.rank_one(
+            600,
+            platform="bilibili",
+            engagement=engagement,
+            course_recording=classification,
+            ranking_policy_version=4,
+        )
+        self.assertEqual(legacy["score"], 80)
+        self.assertNotIn("course_series_penalty", legacy["ranking_adjustments"])
+        youtube = self.rank_one(
+            600, engagement=engagement, course_recording=classification
+        )
+        self.assertEqual(youtube["ranking_adjustments"]["course_series_penalty"], 0)
+        engagement["pages"][1]["duration"] = 8000
+        exact_boundary = self.rank_one(
+            600,
+            platform="bilibili",
+            engagement=engagement,
+            course_recording=classification,
+        )
+        self.assertEqual(exact_boundary["score"], 80)
+        self.assertEqual(
+            exact_boundary["ranking_adjustments"]["course_series_penalty"], 0
+        )
+        engagement["pages"][1]["duration"] = 10000
+        for before, expected in ((73.25, 48.25), (4, 0)):
+            with (
+                self.subTest(learned_score=before),
+                patch("broader_vids.learning.features.capture", return_value={}),
+                patch(
+                    "broader_vids.learning.service.score_components", return_value={}
+                ),
+                patch(
+                    "broader_vids.learning.service.final_score",
+                    return_value=(before, {"quality": before}, {"base_score": before}),
+                ) as model,
+            ):
+                selected = self.rank_one(
+                    180,
+                    platform="bilibili",
+                    width=360,
+                    height=640,
+                    engagement=engagement,
+                    course_recording=classification,
+                    learning={"profile": {}, "models": {}},
+                )
+            self.assertEqual(model.call_count, 1)
+            self.assertEqual(selected["score"], expected)
 
     def test_adjustment_follows_learned_score_and_is_not_reapplied(self):
         learning = {"profile": {}, "models": {}}
@@ -200,6 +299,7 @@ class DurationRankingTests(unittest.TestCase):
                 (1, 0),
                 (2, 5),
                 (3, 10),
+                (4, 10),
                 (CURRENT_RANKING_POLICY, 10),
             ):
                 with (

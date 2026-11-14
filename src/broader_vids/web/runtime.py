@@ -193,29 +193,39 @@ def dashboard(root, operation="open", *, port=8765, open_browser=True):
                 {
                     "creationflags": subprocess.CREATE_NO_WINDOW
                     | subprocess.CREATE_NEW_PROCESS_GROUP
+                    | subprocess.CREATE_BREAKAWAY_FROM_JOB
                 }
                 if os.name == "nt"
                 else {"start_new_session": True}
             )
             with log.open("ab") as output:
-                child = subprocess.Popen(
-                    [
-                        sys.executable,
-                        "-m",
-                        "broader_vids.web.runtime",
-                        "--root",
-                        str(root),
-                        "--port",
-                        str(port),
-                        "--instance",
-                        instance,
-                    ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=output,
-                    stderr=subprocess.STDOUT,
-                    cwd=root,
-                    **options,
-                )
+                try:
+                    child = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-m",
+                            "broader_vids.web.runtime",
+                            "--root",
+                            str(root),
+                            "--port",
+                            str(port),
+                            "--instance",
+                            instance,
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=output,
+                        stderr=subprocess.STDOUT,
+                        cwd=root,
+                        **options,
+                    )
+                except PermissionError as error:
+                    if os.name != "nt":
+                        raise
+                    raise PermissionError(
+                        "Windows denied dashboard process creation. "
+                        "Approve running a persistent local dashboard in this host, "
+                        "then retry dashboard open with the same data directory."
+                    ) from error
             deadline = time.monotonic() + 10
             try:
                 while time.monotonic() < deadline:

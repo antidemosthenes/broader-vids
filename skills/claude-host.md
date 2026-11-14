@@ -35,7 +35,12 @@ Do not bypass incomplete feedback without the user's explicit choice. Do not red
 
 ## Dashboard
 
-Open the dashboard by running the engine's `dashboard` command with `--host claude`. Use the returned local URL. Do not start another server when one is already active. Stop only the verified Broader Vids dashboard for the selected profile.
+Open the dashboard with the engine's `dashboard` command and `--host claude`.
+After open finishes, verify `dashboard status` in a separate tool call before presenting the returned local URL.
+If Windows denies persistent startup, request host permission through its supported approval mechanism.
+Verify status after one retry. Report the failure if startup remains blocked.
+Do not start another server when one is already active.
+Stop only the verified Broader Vids dashboard for the selected profile.
 
 The dashboard manages ratings, exclusions, interests, imports, and token reports. Do not create ratings or change preferences without the user's instruction. Dashboard access does not require a recommendation round.
 

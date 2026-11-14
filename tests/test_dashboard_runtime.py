@@ -2,6 +2,11 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 import http.client
 import json
+import os
+import subprocess
+import sys
+import textwrap
+import uuid
 from pathlib import Path
 import tempfile
 import threading
@@ -93,6 +98,88 @@ class DashboardRuntimeTests(unittest.TestCase):
                 if original_session:
                     atomic_json(session_path(root), original_session)
                 dashboard(root, "stop")
+
+    @unittest.skipUnless(os.name == "nt", "Windows dashboard process lifetime")
+    def test_dashboard_survives_launcher_job_exit_or_reports_permission_denial(self):
+        import ctypes
+        from broader_vids.windows_job import (
+            kernel,
+            ExtendedLimits,
+            EXTENDED_LIMIT_INFORMATION,
+            KILL_ON_JOB_CLOSE,
+        )
+
+        api = kernel()
+        for allow_detach in (False, True):
+            with (
+                self.subTest(allow_detach=allow_detach),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                name = "Local\\Broader-Vids-dashboard-test-" + uuid.uuid4().hex
+                job = api.CreateJobObjectW(None, name)
+                if not job:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                try:
+                    limits = ExtendedLimits()
+                    limits.basic.flags = KILL_ON_JOB_CLOSE | (
+                        0x800 if allow_detach else 0
+                    )
+                    if not api.SetInformationJobObject(
+                        job,
+                        EXTENDED_LIMIT_INFORMATION,
+                        ctypes.byref(limits),
+                        ctypes.sizeof(limits),
+                    ):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    arguments = [
+                        "--data-dir",
+                        directory,
+                        "dashboard",
+                        "open",
+                        "--port",
+                        "0",
+                        "--no-browser",
+                    ]
+                    script = textwrap.dedent(f"""
+                        import ctypes
+                        from ctypes import wintypes
+                        from broader_vids.windows_job import kernel
+                        from broader_vids.cli import main
+                        api = kernel()
+                        api.OpenJobObjectW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+                        api.OpenJobObjectW.restype = wintypes.HANDLE
+                        job = api.OpenJobObjectW(1, False, {name!r})
+                        if not job:
+                            raise ctypes.WinError(ctypes.get_last_error())
+                        try:
+                            if not api.AssignProcessToJobObject(job, wintypes.HANDLE(-1)):
+                                raise ctypes.WinError(ctypes.get_last_error())
+                        finally:
+                            api.CloseHandle(job)
+                        raise SystemExit(main({arguments!r}))
+                    """)
+                    reply = subprocess.run(
+                        [sys.executable, "-c", script],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                    if not api.TerminateJobObject(job, 1):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if allow_detach:
+                        self.assertEqual(reply.returncode, 0, reply.stderr)
+                        self.assertEqual(json.loads(reply.stdout)["status"], "running")
+                        self.assertEqual(
+                            dashboard(directory, "status")["status"], "running"
+                        )
+                    else:
+                        self.assertEqual(reply.returncode, 2, reply.stderr)
+                        self.assertIn("persistent local dashboard", reply.stderr)
+                        self.assertFalse(session_path(directory).exists())
+                finally:
+                    api.TerminateJobObject(job, 1)
+                    api.CloseHandle(job)
+                    dashboard(directory, "stop")
 
     def test_corrupt_registry_and_missing_server_are_recoverable(self):
         with tempfile.TemporaryDirectory() as directory:

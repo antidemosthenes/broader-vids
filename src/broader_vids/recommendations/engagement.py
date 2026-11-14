@@ -270,6 +270,7 @@ def parse_bilibili(value, identifier):
         "metadata_version": 2,
         "title": data.get("title", ""),
         "description": data.get("desc", ""),
+        "declared_part_count": data.get("videos"),
         "declared_copyright": data.get("copyright"),
         "declared_copyright_status": "recognized"
         if type(data.get("copyright")) is int and data["copyright"] in (1, 2)
@@ -297,7 +298,12 @@ def parse_bilibili(value, identifier):
         )
         else "incomplete",
         "pages": [
-            {"page": p.get("page"), "cid": p.get("cid"), "duration": p.get("duration")}
+            {
+                "page": p.get("page"),
+                "cid": p.get("cid"),
+                "duration": p.get("duration"),
+                "part": p.get("part"),
+            }
             for p in pages
         ],
     }

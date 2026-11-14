@@ -20,7 +20,12 @@ If the runtime is missing, use the packaged [setup skill](../broader-vids-setup/
 
 For an open request, run `dashboard open` with an explicit absolute `--data-dir`.
 The command starts or reuses that profile's server and requests the system browser.
-Present the returned URL as a clickable link.
+After open finishes, run `dashboard status` in a separate tool call.
+Use the same data directory.
+Present the verified URL as a clickable link only when status reports running.
+If the server stopped or Windows denied process creation, request host permission for a persistent local dashboard.
+Retry once through the host's supported approval mechanism, then verify status again.
+If permission is denied or the server stops again, report the failure and end the request.
 `browser_opened: true` means the system accepted the browser request. It does not prove that the page rendered.
 If `browser_opened` is false, show the returned fallback message and link.
 Use `--no-browser` when the user requests only a link or server startup.

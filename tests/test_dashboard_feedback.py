@@ -110,7 +110,15 @@ def dashboard_fixture(*, provisional=False):
                         }
                         if index == 3:
                             item["ranking_adjustments"].update(
-                                score_before_duration_penalty=90,
+                                score_before_duration_penalty=100,
+                                course_series_penalty=10,
+                                course_series={
+                                    "part_count": 20,
+                                    "total_duration_seconds": 93600,
+                                    "status": "recorded_course",
+                                    "confidence": "high",
+                                    "rationale": "Recorded course lessons.",
+                                },
                                 portrait_video_penalty=5,
                                 video_dimensions={"width": 360, "height": 640},
                             )
@@ -346,6 +354,16 @@ class DashboardFeedbackTests(unittest.TestCase):
             expect(
                 page.locator("#details-dialog").get_by_role(
                     "row", name="Video dimensions 360 × 640", exact=True
+                )
+            ).to_be_visible()
+            expect(
+                page.locator("#details-dialog").get_by_role(
+                    "row", name="Course series deduction −10.00 points", exact=True
+                )
+            ).to_be_visible()
+            expect(
+                page.locator("#details-dialog").get_by_role(
+                    "row", name="Series length 20 parts · 26.00 hours", exact=True
                 )
             ).to_be_visible()
             expect(

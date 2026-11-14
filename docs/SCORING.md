@@ -29,11 +29,21 @@ For new assessments without a usable transcript, subtract ten points from qualit
 The same deduction applies to the learned quality component during ranking.
 After the learned final score, subtract 20 × clamp((300 − t) / 240, 0, 1), where t is seconds.
 This deduction is 15 at two minutes, 10 at three, 5 at four, and 0 at five minutes.
-New rounds use ranking policy 4, with a maximum short-video deduction of 20 points.
+New rounds use ranking policy 5, with a maximum short-video deduction of 20 points.
 Saved policy-2 rounds retain the previous ten-point maximum. Policy-1 rounds retain no duration deduction.
 Policy 4 also subtracts five final-score points for portrait videos with verified height greater than width.
 The engine adds this deduction to the short-video deduction after learned scoring.
 A square or landscape video receives zero portrait deduction. Unknown dimensions also give zero deduction.
+Policy 5 also subtracts ten final-score points for a recorded Bilibili course series under one BV ID.
+The archive must contain at least two parts, and their verified total duration must exceed 18,000 seconds.
+Exactly five hours gives zero course-series deduction.
+The content-analysis batch classifies recorded course lessons from the assessment summary and series metadata.
+Apply the deduction only to a recorded-course classification with medium or high confidence.
+An unknown classification gives zero deduction and a warning in the round report.
+Other multipart content gives zero deduction.
+YouTube playlists and Bilibili collections across separate BV IDs are outside this rule.
+The engine adds all final-score deductions after learned scoring, then clamps the result at zero.
+Saved policies 1–4 retain their previous deductions.
 Eligibility uses evidence quality before these final-score deductions.
 Policy 3 applies the twenty-point short-video rule.
 Clamp the adjusted score at zero.
@@ -269,7 +279,16 @@ Published historical lists retain their saved scores.
 Later runs use the current model.
 
 Provisional previews use the round's saved ranking policy and validated interest mappings.
-The short-video deduction applies once when the saved policy requires it.
+For policy 5, let $L$ be the final score after learned calibration.
+The published score is
+
+$$
+S=\max(0,L-P_{\mathrm{short}}-P_{\mathrm{portrait}}-P_{\mathrm{course}}).
+$$
+
+The course deduction is $P_{\mathrm{course}}=10$ when both course-series conditions hold and classification confidence is medium or high.
+Otherwise, $P_{\mathrm{course}}=0$.
+Each deduction applies once when the saved policy requires it.
 Previews create no recommendation history.
 
 ## 6. Structured feedback

@@ -27,11 +27,13 @@ class InterestAlignmentTests(unittest.TestCase):
         self.store.close()
         self.directory.cleanup()
 
-    def create_run(self, records, *, interests=None, overrides=None):
+    def create_run(
+        self, records, *, interests=None, overrides=None, platform="youtube"
+    ):
         interests = interests or ["crime", "math"]
         items, evidence = [], {}
         for index, topic, broad, domains in records:
-            item = candidate(index)
+            item = candidate(index, platform)
             item.update(
                 title=topic,
                 domains=domains,
@@ -62,7 +64,7 @@ class InterestAlignmentTests(unittest.TestCase):
             "alignment_model_calls": 0,
             "planning_model_calls": 0,
         }
-        run_id = self.store.create("youtube", settings, state)
+        run_id = self.store.create(platform, settings, state)
         return self.store.get(run_id)
 
     def prepare(self, run, runner, remaining=lambda: 30):
@@ -499,6 +501,205 @@ class InterestAlignmentTests(unittest.TestCase):
                 else:
                     self.assertNotIn("interest_alignment", selected)
                     self.assertTrue(published["state"]["alignment_warnings"])
+
+    def test_course_classification_shares_the_batch_and_reuses_verified_records(self):
+        from broader_vids.recommendations.ranking import (
+            CURRENT_RANKING_POLICY,
+            rank_slate,
+        )
+
+        run = self.create_run(
+            [
+                (1, "Distributed systems lessons", "Computer science", []),
+                (2, "Independent explanations", "Computer science", []),
+                (3, "Standalone documentary", "Art", []),
+            ],
+            platform="bilibili",
+            overrides={"ranking_policy_version": CURRENT_RANKING_POLICY},
+        )
+        for item in run["state"]["shortlist"][:2]:
+            item["engagement"].update(
+                identity_verified=True,
+                scope="archive",
+                source="public_video_metadata",
+                canonical_id=item["canonical_id"],
+                declared_part_count=2,
+                pages=[
+                    {"page": 1, "cid": 101, "duration": 10000},
+                    {"page": 2, "cid": 102, "duration": 10000},
+                ],
+            )
+            item["engagement_score"] = {"score": 50}
+        calls = []
+
+        def runner(prompt, schema, *_args):
+            calls.append(prompt)
+            request = json.loads(prompt.split("\n", 1)[1])
+            self.assertIn(
+                "recorded_course",
+                json.loads(schema.read_text())["properties"]["course_recordings"][
+                    "items"
+                ]["properties"]["status"]["enum"],
+            )
+            output = self.response_for(prompt)
+            output["course_recordings"] = []
+            self.assertEqual(len(request["videos"]), 3)
+            self.assertEqual(
+                json.loads(schema.read_text())["properties"]["course_recordings"][
+                    "maxItems"
+                ],
+                2,
+            )
+            for index, video in enumerate(
+                video for video in request["videos"] if "course_series" in video
+            ):
+                self.assertEqual(
+                    video["course_series"]["total_duration_seconds"], 20000
+                )
+                output["course_recordings"].append(
+                    {
+                        "canonical_id": video["canonical_id"],
+                        "status": "recorded_course" if index == 0 else "other",
+                        "confidence": "high",
+                        "rationale": "The assessed presentation supports this format.",
+                    }
+                )
+            return output, {}
+
+        self.prepare(run, runner)
+        self.prepare(run, runner)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(run["state"]["alignment_model_calls"], 1)
+        items = aligned_items(run, run["state"]["shortlist"])
+        for item in items:
+            item.setdefault("engagement_score", {"score": 50})
+        ranked = rank_slate(
+            items,
+            run["state"]["evidence"],
+            run["settings"]["profile"],
+            {
+                "quality": 1,
+                "interest": 0,
+                "engagement": 0,
+                "recency": 0,
+                "diversity": 0,
+            },
+            ranking_policy_version=CURRENT_RANKING_POLICY,
+        )
+        self.assertEqual([item["score"] for item in ranked], [75, 75, 65])
+        self.assertEqual(ranked[-1]["ranking_adjustments"]["course_series_penalty"], 10)
+        self.assertNotIn("course_series_warnings", run["state"])
+        first = run["state"]["shortlist"][0]
+        record = run["state"]["interest_alignment"]["records"][first["canonical_id"]]
+        record["course_recording"].update(status="unknown", confidence="low")
+        self.prepare(run, runner)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            run["state"]["course_series_warnings"][0]["canonical_id"],
+            first["canonical_id"],
+        )
+        before = fingerprint(
+            first, run["state"]["evidence"][first["canonical_id"]], run["settings"]
+        )
+        first["engagement"]["pages"][1]["duration"] = 8000
+        self.assertNotEqual(
+            fingerprint(
+                first, run["state"]["evidence"][first["canonical_id"]], run["settings"]
+            ),
+            before,
+        )
+        self.assertNotIn("interest_alignment", aligned_items(run, [first])[0])
+        self.assertEqual(
+            list((self.store.root / "recommendations" / run["id"]).glob("alignment-*")),
+            [],
+        )
+
+    def test_partial_course_and_interest_results_survive_independent_retry_exhaustion(
+        self,
+    ):
+        for invalid_kind in ("course", "interest"):
+            with self.subTest(invalid_kind=invalid_kind):
+                run = self.create_run(
+                    [(1, "Art crime", "Art crime", ["crime"])],
+                    platform="bilibili",
+                    overrides={"ranking_policy_version": 5},
+                )
+                item = run["state"]["shortlist"][0]
+                item["engagement"].update(
+                    identity_verified=True,
+                    scope="archive",
+                    source="public_video_metadata",
+                    pages=[
+                        {"page": 1, "cid": 101, "duration": 10000},
+                        {"page": 2, "cid": 102, "duration": 10000},
+                    ],
+                )
+                calls = []
+
+                def runner(prompt, schema, *_args):
+                    calls.append(prompt)
+                    result = self.response_for(prompt)
+                    request = json.loads(prompt.split("\n", 1)[1])
+                    properties = json.loads(schema.read_text())["properties"]
+                    if invalid_kind == "course":
+                        if len(calls) > 1:
+                            self.assertTrue(
+                                all(
+                                    video.get("match_interests") is False
+                                    for video in request["videos"]
+                                )
+                            )
+                            result["videos"] = []
+                        result["course_recordings"] = [
+                            {"canonical_id": item["canonical_id"], "status": "invalid"}
+                        ]
+                    else:
+                        for record in result["videos"]:
+                            record["matches"] = ["invented interest"]
+                        if len(calls) == 1:
+                            result["course_recordings"] = [
+                                {
+                                    "canonical_id": item["canonical_id"],
+                                    "status": "recorded_course",
+                                    "confidence": "high",
+                                    "rationale": "Recorded lessons.",
+                                }
+                            ]
+                        else:
+                            self.assertNotIn("course_recordings", properties)
+                            self.assertTrue(
+                                all(
+                                    "course_series" not in video
+                                    for video in request["videos"]
+                                )
+                            )
+                    return result, {}
+
+                self.prepare(run, runner)
+                self.assertEqual(len(calls), 4)
+                saved = run["state"]["interest_alignment"]["records"][
+                    item["canonical_id"]
+                ]
+                if invalid_kind == "course":
+                    self.assertEqual(saved["matches"], ["crime"])
+                    self.assertNotIn("course_recording", saved)
+                    self.assertNotIn("alignment_warnings", run["state"])
+                    self.assertTrue(run["state"]["course_series_warnings"])
+                else:
+                    self.assertEqual(
+                        saved["course_recording"]["status"], "recorded_course"
+                    )
+                    self.assertNotIn("matches", saved)
+                    self.assertNotIn("course_series_warnings", run["state"])
+                    self.assertTrue(run["state"]["alignment_warnings"])
+                self.assertEqual(
+                    list(
+                        (self.store.root / "recommendations" / run["id"]).glob(
+                            "alignment-*"
+                        )
+                    ),
+                    [],
+                )
 
     def test_expired_deadline_does_not_call_runner_or_leave_temp_files(self):
         run = self.create_run([(1, "Art crime", "Art crime", ["crime"])])

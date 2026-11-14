@@ -6,13 +6,14 @@ from broader_vids.recommendations.engagement import rate_scores
 from broader_vids.exploration.domains import normalized
 from broader_vids.recommendations.originality import provenance
 from broader_vids.creators import excluded
+from broader_vids.recommendations.series import long_series
 from broader_vids.recommendations.screening import (
     CURRENT_SCREENING_POLICY,
     DEFAULT_INSPECTION_LIMIT,
 )
 
 
-CURRENT_RANKING_POLICY = 4
+CURRENT_RANKING_POLICY = 5
 
 
 def domains(item):
@@ -165,11 +166,11 @@ def rank_slate(
         raise ValueError(
             "Unsupported scoring policy; start a new recommendation round."
         )
-    if ranking_policy_version not in (1, 2, 3, CURRENT_RANKING_POLICY):
+    if ranking_policy_version not in (1, 2, 3, 4, CURRENT_RANKING_POLICY):
         raise ValueError(
             "Unsupported ranking policy; start a new recommendation round."
         )
-    duration_penalty_cap = {1: 0, 2: 10, 3: 20, CURRENT_RANKING_POLICY: 20}[
+    duration_penalty_cap = {1: 0, 2: 10, 3: 20, 4: 20, CURRENT_RANKING_POLICY: 20}[
         ranking_policy_version
     ]
     now, recent = now or datetime.now(timezone.utc), recent or Counter()
@@ -194,6 +195,38 @@ def rank_slate(
             width, height = observation.get("width"), observation.get("height")
             if all(type(value) is int and value > 0 for value in (width, height)):
                 dimensions[item["canonical_id"]] = {"width": width, "height": height}
+    courses = {}
+    if ranking_policy_version >= 5:
+        for item in pool:
+            series = long_series(item)
+            if not series:
+                continue
+            classification = item.get("interest_alignment", {}).get(
+                "course_recording", {}
+            )
+            courses[item["canonical_id"]] = {
+                **{
+                    key: series[key]
+                    for key in (
+                        "source",
+                        "video_id",
+                        "part_count",
+                        "total_duration_seconds",
+                    )
+                },
+                "status": classification.get("status", "unknown"),
+                "confidence": classification.get("confidence", "low"),
+                "rationale": classification.get(
+                    "rationale", "Recorded-course classification is unavailable."
+                ),
+            }
+    course_penalties = {
+        key: 10
+        if details["status"] == "recorded_course"
+        and details["confidence"] in ("medium", "high")
+        else 0
+        for key, details in courses.items()
+    }
     from broader_vids.recommendations.diversity import signature, overlap_count
 
     signatures = (
@@ -268,7 +301,16 @@ def rank_slate(
                 duration_penalty = round(
                     duration_penalty_cap * max(0, min(1, (300 - duration) / 240)), 4
                 )
-                total = round(max(0, total - duration_penalty - portrait_penalty), 4)
+                total = round(
+                    max(
+                        0,
+                        total
+                        - duration_penalty
+                        - portrait_penalty
+                        - course_penalties.get(item["canonical_id"], 0),
+                    ),
+                    4,
+                )
             scored.append(
                 (
                     total,
@@ -314,6 +356,18 @@ def rank_slate(
                                     ),
                                 }
                                 if ranking_policy_version >= 4
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "course_series_penalty": course_penalties.get(
+                                        chosen["canonical_id"], 0
+                                    ),
+                                    "course_series": courses.get(
+                                        chosen["canonical_id"]
+                                    ),
+                                }
+                                if ranking_policy_version >= 5
                                 else {}
                             ),
                             "final_score": total,

@@ -119,6 +119,8 @@ Report fewer than 100 eligible entries as incomplete without starting quality as
 A complete final list contains ten videos per platform.
 Report a partial result as partial.
 Show all requested platform lists before the final candidate-failure summary.
+Report any `course_series_warnings` after the lists.
+These warnings mean recorded-course classification was uncertain, so the course-series deduction was zero.
 Use each report's `candidate_failures` to identify skipped videos and downloads recovered by retries.
 Include video links, actual attempt counts, and brief reasons. Do not claim four attempts when a saved limit stopped retries earlier.
 Check `download_outcome` before describing a download as failed. A completed download can still have an unsupported assessment.

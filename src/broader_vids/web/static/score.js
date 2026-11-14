@@ -56,6 +56,27 @@ export function scoreDetails(item, weights) {
           : "Unavailable") +
         "</td></tr>";
     }
+    if (typeof adjustment.course_series_penalty === "number") {
+      const course = adjustment.course_series;
+      html +=
+        '<tr><th scope="row">Course series deduction</th><td>−' +
+        num(adjustment.course_series_penalty) +
+        " points</td></tr>";
+      if (course) {
+        html +=
+          '<tr><th scope="row">Series length</th><td>' +
+          esc(course.part_count) +
+          " parts · " +
+          num(course.total_duration_seconds / 3600) +
+          ' hours</td></tr><tr><th scope="row">Course classification</th><td>' +
+          esc(course.status.replaceAll("_", " ")) +
+          " · " +
+          esc(course.confidence) +
+          " confidence. " +
+          esc(course.rationale) +
+          "</td></tr>";
+      }
+    }
     html +=
       '<tr><th scope="row">Final score</th><td>' +
       num(adjustment.final_score) +
