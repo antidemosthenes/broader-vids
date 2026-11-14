@@ -283,6 +283,13 @@ def write_recommendation_report(store, identifier):
                 "",
             ]
         )
+    if report.get("course_series_warnings"):
+        lines.extend(
+            [
+                f"Recorded-course classification remains uncertain for {len(report['course_series_warnings'])} long multipart videos. Their course-series deduction is zero.",
+                "",
+            ]
+        )
     displayed = report["selected"] or report.get("preview", [])
     repeated = sum(
         item.get("selection_diversity", {}).get("relaxed", False) for item in displayed

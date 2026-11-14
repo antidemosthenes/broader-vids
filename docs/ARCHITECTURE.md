@@ -350,9 +350,18 @@ Rounds with alignment version 1 retain their original instructions and cache ide
 Older builds reject new alignment-version-2 rounds during recovery.
 The mapping cache identity includes policy 2 when applicable.
 A policy change can require text-only mapping without repeating visual assessment.
-New rounds freeze ranking policy 4 for short-video and portrait deductions.
+New rounds freeze ranking policy 5 for short-video, portrait, and recorded-course deductions.
 Recovery uses the ranking policy saved in each round.
-Adjustment records use format 2 with portrait deduction and verified dimensions for policy 4.
+Adjustment records retain format 2. Policy 4 adds portrait deduction and verified dimensions.
+Policy 5 adds the course-series deduction and its verified metadata and classification.
+`recommendations/series.py` checks complete Bilibili multipart metadata under one BV ID.
+It rejects missing durations, duplicate parts, mismatched identities, and incomplete part counts.
+The existing text-only alignment batch classifies recorded courses after quality assessment.
+Its cache identity includes the eligible series metadata. Quality evidence remains separate.
+The batch requests course records only for eligible multipart archives.
+Interest matches and course classifications have separate validation. Retries preserve valid results from either task.
+Classification uses the same worker limits, retries, temporary-directory cleanup, and token accounting as content alignment.
+Saved policies 1–4 retain their previous ranking behavior.
 New media verification reads decoded FFmpeg output dimensions after automatic rotation.
 Quality-cache results carry saved dimensions into ranking, including after full-media cleanup.
 A retained, verified frame supplies the orientation for older cached dimensions.

@@ -14,6 +14,7 @@ from broader_vids.recommendations.engagement import (
     parse_youtube,
     rate_scores,
 )
+from broader_vids.recommendations.series import long_series
 from broader_vids.http import AccessPaused, BudgetExhausted
 from broader_vids.preferences import (
     pending_videos,
@@ -73,6 +74,82 @@ def quality(identifier):
 
 
 class EngagementTests(unittest.TestCase):
+    def test_long_series_requires_complete_verified_archive_parts(self):
+        item = candidate(4, "bilibili")
+        item["engagement"] = {
+            "identity_verified": True,
+            "scope": "archive",
+            "source": "public_video_metadata",
+            "canonical_id": item["canonical_id"],
+            "declared_part_count": 3,
+            "title": "Course",
+            "description": "d" * 900,
+            "pages": [
+                {
+                    "page": page,
+                    "cid": 100 + page,
+                    "duration": 6001,
+                    "part": f"Part {page}",
+                }
+                for page in range(1, 4)
+            ],
+        }
+        result = long_series(item)
+        self.assertEqual(result["source"], "bilibili_parts")
+        self.assertEqual(result["total_duration_seconds"], 18003)
+        self.assertEqual(result["part_titles"], ["Part 1", "Part 2", "Part 3"])
+        self.assertEqual(len(result["description"]), 800)
+
+        item["engagement"]["pages"][0]["duration"] = 5998
+        self.assertIsNone(long_series(item))
+        item["engagement"]["pages"][0]["duration"] = 6001
+        item["engagement"]["pages"].pop()
+        self.assertIsNone(long_series(item))
+
+    def test_long_series_rejects_duplicate_parts_ids_and_untrusted_scope(self):
+        item = candidate(4, "bilibili")
+        snapshot = {
+            "identity_verified": True,
+            "scope": "archive",
+            "source": "public_video_metadata",
+            "canonical_id": item["canonical_id"],
+            "pages": [
+                {"page": 1, "cid": 100, "duration": 9001},
+                {"page": 2, "cid": 100, "duration": 9001},
+            ],
+        }
+        item["engagement"] = snapshot
+        self.assertIsNone(long_series(item))
+        snapshot["pages"][1]["cid"] = 101
+        snapshot["pages"][1]["page"] = 3
+        self.assertIsNone(long_series(item))
+        snapshot["pages"][1]["page"] = 2
+        snapshot["scope"] = "video"
+        self.assertIsNone(long_series(item))
+        snapshot["scope"] = "archive"
+        snapshot["canonical_id"] = "bilibili:BV1111111111:p1"
+        self.assertIsNone(long_series(item))
+        snapshot["canonical_id"] = item["canonical_id"]
+        item["part_index"] = 3
+        self.assertIsNone(long_series(item))
+        item["part_index"] = 1
+        item["canonical_id"] = item["canonical_id"].replace(":p1", ":p2")
+        self.assertIsNone(long_series(item))
+
+    def test_long_series_accepts_legacy_full_pages_without_declared_count(self):
+        item = candidate(4, "bilibili")
+        item["engagement"] = {
+            "identity_verified": True,
+            "scope": "archive",
+            "source": "public_video_metadata",
+            "canonical_id": item["canonical_id"],
+            "pages": [
+                {"page": 1, "cid": 100, "duration": 9001},
+                {"page": 2, "cid": 101, "duration": 9001},
+            ],
+        }
+        self.assertEqual(long_series(item)["part_count"], 2)
+
     def test_shrinkage_missing_and_platform_specific_metrics(self):
         small, large, missing = candidate(1), candidate(2), candidate(3)
         small["engagement"] = {"views": 10, "likes": 1}
@@ -95,8 +172,9 @@ class EngagementTests(unittest.TestCase):
             "code": 0,
             "data": {
                 "bvid": "BV1111111111",
+                "videos": 2,
                 "stat": {"view": 100, "like": 4, "coin": 2, "favorite": 3},
-                "pages": [{"page": 2, "cid": 123, "duration": 100}],
+                "pages": [{"page": 2, "cid": 123, "duration": 100, "part": "Second"}],
             },
         }
         result = parse_bilibili(value, "BV1111111111")
@@ -104,6 +182,8 @@ class EngagementTests(unittest.TestCase):
             (result["likes"], result["coins"], result["favorites"], result["scope"]),
             (4, 2, 3, "archive"),
         )
+        self.assertEqual(result["declared_part_count"], 2)
+        self.assertEqual(result["pages"][0]["part"], "Second")
         with self.assertRaises(AccessPaused):
             parse_bilibili(value, "BV1222222222")
         player = {

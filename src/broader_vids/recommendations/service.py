@@ -912,7 +912,7 @@ def _validate_current_round(run):
         )
     if settings.get("rotation_version", 1) not in (1, 2) or settings.get(
         "ranking_policy_version", 1
-    ) not in (1, 2, 3, CURRENT_RANKING_POLICY):
+    ) not in (1, 2, 3, 4, CURRENT_RANKING_POLICY):
         raise ValueError(
             "This recommendation uses unsupported exploration or ranking settings; start a new round."
         )

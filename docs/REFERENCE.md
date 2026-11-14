@@ -445,9 +445,13 @@ A central suspected-crime investigation can match crime while its allegations re
 Mapping confidence describes relevance, not factual proof. A brief incidental mention need not produce a match.
 This policy does not rewrite published lists, quality evidence, or saved ratings.
 
-New ranking policy 4 adds a five-point final-score deduction for verified portrait videos.
+Ranking policy 4 adds a five-point final-score deduction for verified portrait videos.
 Portrait means height greater than width. Unknown dimensions give zero portrait deduction.
-Open Score details to inspect the dimensions, portrait deduction, short-video deduction, and final score.
+New rounds use ranking policy 5. It also applies the Bilibili course-series rule.
+For multipart videos under one BV ID, it subtracts ten final-score points when content analysis confirms a recorded course.
+The archive must contain at least two parts. Their verified total duration must exceed five hours.
+Unknown course classifications receive zero deduction and appear in the round report.
+Open Score details to inspect the dimensions, deductions, course-series evidence, and final score.
 
 ## Review and rate videos
 
@@ -629,6 +633,7 @@ It shows input tokens, output tokens, cached input, and each step's share of rep
 
 Broad-interest alignment appears as its own model-usage stage.
 The stage reports alignment calls separately from quality assessment.
+It also includes recorded-course classification when a long Bilibili multipart archive needs that check.
 Reported tokens equal input plus output. Input totals include cached input.
 Local search, screening, evidence preparation, and scoring do not use model tokens.
 Quality assessment combines caption and frame input in the same model call.
@@ -1021,7 +1026,10 @@ It requests the system browser and returns the exact URL.
 If the system cannot start the browser, the command returns `manual_open_required` and keeps the server available.
 Open the returned URL in your system browser if an embedded browser stays blank.
 `--no-browser` returns its URL without opening the system browser.
-The dashboard skill presents that URL in chat.
+The dashboard skill verifies status in a separate command before it presents the URL in chat.
+On Windows, startup requests an independent process so the dashboard can outlive its launcher.
+If the host denies this request, approve a persistent local dashboard through the host's permission prompt and retry.
+A denied request returns an error before the command reports a running server.
 A busy preferred port causes the server to select a free port.
 Stop authenticates the registered server before requesting shutdown.
 It does not stop a process based only on a PID or port.
