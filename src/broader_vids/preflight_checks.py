@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 from broader_vids.cli.environment import environment_report
-from broader_vids.evidence.browser import bilibili_browser
+from broader_vids.evidence.browser import bilibili_browser, browser_json
 from broader_vids.processes import run_bounded
 
 
@@ -62,10 +62,11 @@ def bilibili_check(root, token):
     try:
         with bilibili_browser(root, lock_token=token) as context:
             try:
-                response = context.request.get(
-                    "https://api.bilibili.com/x/web-interface/nav", timeout=5000
+                _, value = browser_json(
+                    context,
+                    "https://api.bilibili.com/x/web-interface/nav",
+                    timeout=5000,
                 )
-                value = response.json() if response.ok else None
             except Exception:
                 return result(
                     "unverified",

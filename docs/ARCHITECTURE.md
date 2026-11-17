@@ -261,6 +261,7 @@ The dashboard polls its status without blocking navigation or rating drafts.
 After verification, a file journal and database receipt coordinate session activation.
 Recovery restores the previous files before a database commit or removes the old session after a commit.
 Completed and cancelled workers remove their temporary profiles and staged blacklist database.
+Account verification and blacklist requests release each Playwright response body after JSON parsing, including parsing failures.
 Failed cleanup retains the journal and blocks browser use until recovery succeeds.
 New and resumed recommendation commands record automated-check time.
 That time counts toward an explicit total allowance when one exists.
@@ -312,6 +313,9 @@ A successful import returns the saved profile and updates the editor without ano
 The profile stores disabled built-in tags separately from manual tags.
 Preference imports preserve these local exclusion choices.
 Tag saves update rules without fitting a learning model.
+Saved rounds compare interests rather than the profile revision.
+Tag edits do not invalidate saved planning, previews, or publication.
+Each round retains its saved tag rules. New rounds use later edits.
 The dashboard serializes tag writes per platform and rejects older tag snapshots.
 An interest save preserves a draft when only exclusion metadata changed.
 Profile revisions prevent one window from replacing a newer interest edit.

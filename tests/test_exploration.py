@@ -18,7 +18,7 @@ from broader_vids.exploration.domains import (
     select_existing,
 )
 from broader_vids.exploration.proposals import validate_response
-from broader_vids.preferences import get_profile, set_profile
+from broader_vids.preferences import get_profile, set_profile, update_tag_rule
 from broader_vids.http import BudgetExhausted
 from broader_vids.recommendations.ranking import related
 from broader_vids.recommendations.service import (
@@ -115,13 +115,20 @@ class ExplorationTests(unittest.TestCase):
             assessment_model="fixture-model",
             reasoning_effort="low",
         )
+
+        def model_with_tag_edit(*args):
+            result = self.model(*args)
+            update_tag_rule(self.store, "bilibili", "future tag rule")
+            return result
+
         FixtureHttp.fail_once = True
         try:
             first = execute_discovery(
-                self.store, identifier, FixtureHttp, model_runner=self.model
+                self.store, identifier, FixtureHttp, model_runner=model_with_tag_edit
             )
             self.assertEqual(first["status"], "paused")
             snapshot = first["state"]["plan"]
+            update_tag_rule(self.store, "bilibili", "another future tag rule")
             second = execute_discovery(
                 self.store, identifier, FixtureHttp, model_runner=self.model
             )

@@ -1,4 +1,10 @@
-import { state, record, draftKey } from "./state.js";
+import {
+  state,
+  record,
+  draftKey,
+  ratingGroups,
+  missingRatings,
+} from "./state.js";
 import { el, button, link, platformName } from "./ui.js";
 
 export function createReview(item, actions) {
@@ -14,14 +20,10 @@ export function createReview(item, actions) {
         ? "Selected for your recommendation list."
         : "An extra example for your feedback."),
   );
-  root.append(title, creatorName, reason);
+  const progress = el("p", "note rating-progress");
+  root.append(title, creatorName, reason, progress);
   const forms = [];
-  for (const [dimension, label] of [
-    ["topic_interest", "Specific topic"],
-    ["depth", "Depth for this video"],
-    ["quality_level", "Video quality"],
-    ["domain_interest", "Broader subject"],
-  ]) {
+  for (const [dimension, label] of ratingGroups) {
     const form = el("form", "rating-form");
     const fieldset = el("fieldset", "rating-group");
     fieldset.append(el("legend", "", label));
@@ -46,9 +48,7 @@ export function createReview(item, actions) {
       target.maxLength = 120;
       target.setAttribute("list", suggestions.id);
       target.placeholder =
-        dimension === "domain_interest"
-          ? "Optional broader subject"
-          : "Specific topic";
+        dimension === "domain_interest" ? "Broader subject" : "Specific topic";
       targetLabel.append(target);
       fieldset.append(targetLabel, suggestions);
     }
@@ -206,6 +206,11 @@ export function createReview(item, actions) {
         data.creator?.name ||
         data.creator?.creator_id ||
         platformName(item.platform);
+      const missing = missingRatings(data.details);
+      progress.hidden = missing.length === 0;
+      progress.textContent = missing.length
+        ? `Missing ratings for ${missing.join(", ")}.`
+        : "";
       forms.forEach((form) => form.update());
       const busy = state.busy.has(
         `creator:${data.creator?.platform}:${data.creator?.creator_id}`,

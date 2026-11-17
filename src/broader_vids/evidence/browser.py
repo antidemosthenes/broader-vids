@@ -92,6 +92,14 @@ def bilibili_browser(
                 context.close()
 
 
+def browser_json(context, url, *, timeout):
+    response = context.request.get(url, timeout=timeout)
+    try:
+        return response.ok, response.json() if response.ok else None
+    finally:
+        response.dispose()
+
+
 def confirm_bilibili_login(root):
     directory = Path(root) / "access" / "bilibili"
     if not (directory / "browser.lock").is_file():
@@ -135,13 +143,12 @@ def login_bilibili(root, timeout=600):
                     )
                     continue
                 try:
-                    response = context.request.get(
-                        "https://api.bilibili.com/x/web-interface/nav", timeout=15000
+                    ok, value = browser_json(
+                        context,
+                        "https://api.bilibili.com/x/web-interface/nav",
+                        timeout=15000,
                     )
-                    verified = (
-                        response.ok
-                        and response.json().get("data", {}).get("isLogin") is True
-                    )
+                    verified = ok and value.get("data", {}).get("isLogin") is True
                 except Exception:
                     verified = False
                 if verified:

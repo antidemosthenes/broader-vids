@@ -30,6 +30,7 @@ from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
 from broader_vids.preferences import (
     get_profile,
+    interests_match,
     pending_videos,
     platform_lock,
     video_states,
@@ -205,11 +206,7 @@ def _publish(
             run["elapsed"] = initial_elapsed + time.monotonic() - started
             store.save(run)
 
-    current_profile = get_profile(store)
-    if (
-        not current_profile
-        or current_profile["revision"] != run["settings"]["profile"]["revision"]
-    ):
+    if not interests_match(store, run["settings"]["profile"]):
         raise ValueError(
             "The profile changed; start a new run to rescore with the revised profile."
         )
@@ -275,7 +272,7 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
             "id": learning["id"],
             "version": learning["version"],
         }
-    if get_profile(store)["revision"] != run["settings"]["profile"]["revision"]:
+    if not interests_match(store, run["settings"]["profile"]):
         raise ValueError(
             "The profile changed; start a new run to rescore with the revised profile."
         )
@@ -505,7 +502,7 @@ def execute_recommendation(
         run.update(status="running", reason="")
         save()
         try:
-            if get_profile(store)["revision"] != settings["profile"]["revision"]:
+            if not interests_match(store, settings["profile"]):
                 raise ValueError(
                     "The profile changed; start a new run to use the current interests."
                 )

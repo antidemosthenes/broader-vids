@@ -43,6 +43,9 @@ class Response:
     def json(self):
         return {"code": 0, "data": self.data}
 
+    def dispose(self):
+        self.data = None
+
 
 class Browser:
     def __init__(self, pages, *, account="99", total=None, version=1):
