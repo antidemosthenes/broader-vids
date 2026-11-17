@@ -5,7 +5,7 @@ from broader_vids.evidence.media import public_error
 from broader_vids.learning.inference import work_scope
 from broader_vids.learning.service import ensure_model
 from broader_vids.recommendations.learning_snapshot import round_learning
-from broader_vids.preferences import get_profile, video_states
+from broader_vids.preferences import interests_match, video_states
 from broader_vids.recommendations.quality import cached_quality
 from broader_vids.recommendations.ranking import rank_slate
 from broader_vids.storage import utc_now
@@ -23,7 +23,7 @@ def update_preview(store, run, seconds=5):
 
     try:
         with work_scope(check):
-            if get_profile(store)["revision"] != settings["profile"]["revision"]:
+            if not interests_match(store, settings["profile"]):
                 raise ValueError("Interests changed after this round began.")
             observations = {}
             for key, record in state["evidence"].items():

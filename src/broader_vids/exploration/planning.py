@@ -22,7 +22,7 @@ from broader_vids.exploration.proposals import (
     validate_response,
 )
 from broader_vids.http import BudgetExhausted
-from broader_vids.preferences import get_profile
+from broader_vids.preferences import interests_match
 from broader_vids.storage import utc_now
 
 
@@ -89,7 +89,7 @@ def prepare_plan(
     state = run["state"]["exploration"]
     if state.get("policy_version") != 2:
         raise ValueError("Unsupported exploration policy; start a new discovery round.")
-    if state["profile"]["revision"] != get_profile(store)["revision"]:
+    if not interests_match(store, state["profile"]):
         raise EvidencePending("Interests changed; create a new exploration round.")
     if state["ready"]:
         return
@@ -183,7 +183,7 @@ def prepare_plan(
                 min(120, remaining()),
             )
             attempt["token_usage"] = usage
-            if get_profile(store)["revision"] != state["profile"]["revision"]:
+            if not interests_match(store, state["profile"]):
                 raise EvidencePending(
                     "Interests changed during topic generation; create a new round."
                 )

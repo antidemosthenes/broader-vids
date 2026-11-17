@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from broader_vids.evidence.account_switch import (
     job_dir,
@@ -15,6 +15,30 @@ from broader_vids.evidence.service import atomic_json
 
 
 class AccountLoginTests(unittest.TestCase):
+    def test_browser_json_releases_success_failed_and_malformed_response_bodies(self):
+        from broader_vids.evidence.browser import browser_json
+
+        context = Mock()
+        response = context.request.get.return_value
+        for ok, malformed in ((True, False), (False, False), (True, True)):
+            with self.subTest(ok=ok, malformed=malformed):
+                response.reset_mock()
+                response.ok = ok
+                response.json.return_value = {"code": 0}
+                response.json.side_effect = (
+                    ValueError("Malformed JSON") if malformed else None
+                )
+                if malformed:
+                    with self.assertRaisesRegex(ValueError, "Malformed JSON"):
+                        browser_json(context, "https://fixture.invalid", timeout=1000)
+                else:
+                    self.assertEqual(
+                        browser_json(context, "https://fixture.invalid", timeout=1000),
+                        (ok, {"code": 0} if ok else None),
+                    )
+                    self.assertEqual(response.json.call_count, int(ok))
+                response.dispose.assert_called_once_with()
+
     def test_failed_status_publish_preserves_previous_login_status(self):
         from broader_vids.evidence.browser import login_bilibili
 
@@ -37,7 +61,7 @@ class AccountLoginTests(unittest.TestCase):
                     confirmation.write_text("confirm", encoding="utf-8")
 
             response = SimpleNamespace(
-                ok=True, json=lambda: {"data": {"isLogin": True}}
+                ok=True, json=lambda: {"data": {"isLogin": True}}, dispose=Mock()
             )
             context = SimpleNamespace(
                 pages=[Page()],
@@ -75,7 +99,7 @@ class AccountLoginTests(unittest.TestCase):
 
     def test_authentication_requires_valid_signed_in_identity(self):
         context = SimpleNamespace(request=SimpleNamespace(get=lambda *a, **k: response))
-        response = SimpleNamespace(ok=True, json=lambda: payload)
+        response = SimpleNamespace(ok=True, json=lambda: payload, dispose=Mock())
         for payload in (
             {"code": True},
             {"code": 0, "data": {}},

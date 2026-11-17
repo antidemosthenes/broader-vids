@@ -169,17 +169,24 @@ def dashboard(root, operation="open", *, port=8765, open_browser=True):
             if request(session, "/api/shutdown", stop=True) != {"stopping": True}:
                 raise ValueError("The dashboard did not accept its stop request.")
             deadline = time.monotonic() + 5
-            while active(session) and time.monotonic() < deadline:
-                time.sleep(0.05)
+            if os.name == "nt":
+                from broader_vids.windows_job import wait_process_exit
+
+                exited = wait_process_exit(session["pid"], 5)
+            else:
+                while active(session) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                exited = not active(session)
             child = _children.get(session["instance_id"])
             if child:
                 try:
-                    child.wait(timeout=5)
+                    child.wait(timeout=max(0, deadline - time.monotonic()))
                     _children.pop(session["instance_id"], None)
+                    exited = True
                 except subprocess.TimeoutExpired:
-                    pass
+                    exited = False
             return {
-                "status": "stopping" if active(session) else "stopped",
+                "status": "stopped" if exited and not active(session) else "stopping",
                 "data_directory": str(root),
             }
         if not running:

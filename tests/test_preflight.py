@@ -66,6 +66,19 @@ class PreflightTests(unittest.TestCase):
                 )
         return key
 
+    def dashboard(self, platform, *keys, preview=False):
+        items = []
+        for key in keys:
+            row = self.store.db.execute(
+                "SELECT payload FROM video_state WHERE canonical_id=?", (key,)
+            ).fetchone()
+            items.append(json.loads(row[0]))
+        self.store.create(
+            platform,
+            {"kind": "recommendation"},
+            {"selected": [] if preview else items, "preview": items if preview else []},
+        )
+
     def rating(self, key, dimension):
         with self.store.db:
             action = self.store.db.execute(
@@ -219,26 +232,58 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(get_profile(self.store)["interests"], ["mathematics"])
         self.assertEqual(self.store.list_runs(), [])
 
-    def test_missing_feedback_counts_history_duplicates_partials_and_clears(self):
+    def test_missing_feedback_lists_current_dashboard_duplicates_partials_and_clears(
+        self,
+    ):
         self.ready("both")
         youtube = self.video("youtube:0000000001A")
         bili = self.video("bilibili:BV1Z6H56oEcQ:p1")
         self.video(youtube)
         self.video("youtube:0000000002A", exposed=False)
+        self.dashboard("youtube", youtube)
+        self.dashboard("bilibili", bili)
         user_action(self.store, youtube, "watched")
         for dimension in DIMENSIONS[:-1]:
             self.rating(youtube, dimension)
         report = self.check()
         self.assertEqual(report["status"], "feedback_required")
         self.assertEqual(report["feedback"]["total"], 2)
+        self.assertEqual(
+            report["feedback"]["dimension_labels"],
+            {
+                "topic_interest": "Specific topic",
+                "domain_interest": "Broader subject",
+                "depth": "Depth for this video",
+                "quality_level": "Video quality",
+            },
+        )
         self.assertEqual(report["feedback"]["platforms"]["youtube"]["partial"], 1)
         self.assertEqual(report["feedback"]["platforms"]["bilibili"]["no_ratings"], 1)
+        youtube_summary = report["feedback"]["platforms"]["youtube"]
+        self.assertEqual(len(youtube_summary["videos"]), 1)
+        self.assertEqual(
+            youtube_summary["videos"][0],
+            {
+                "canonical_id": youtube,
+                "title": youtube,
+                "url": "https://www.youtube.com/watch?v=0000000001A",
+                "missing_dimensions": ["quality_level"],
+            },
+        )
+        bili_summary = report["feedback"]["platforms"]["bilibili"]
+        self.assertEqual(
+            bili_summary["videos"][0]["missing_dimensions"], list(DIMENSIONS)
+        )
         user_action(self.store, bili, "dismiss")
         self.assertEqual(feedback_summary(self.store, "both")["total"], 1)
         user_action(self.store, bili, "restore")
         self.assertEqual(feedback_summary(self.store, "both")["total"], 2)
         self.rating(youtube, "quality_level")
         self.assertEqual(feedback_summary(self.store, "youtube")["total"], 0)
+        self.assertEqual(
+            feedback_summary(self.store, "youtube")["platforms"]["youtube"]["videos"],
+            [],
+        )
         with self.store.db:
             self.store.db.execute(
                 "DELETE FROM feedback_details WHERE canonical_id=? AND dimension='depth'",
@@ -255,10 +300,88 @@ class PreflightTests(unittest.TestCase):
         )
         self.assertEqual(self.check("youtube")["status"], "feedback_required")
 
+    def test_feedback_summary_replaces_old_dashboard_items_and_old_ratings(self):
+        self.ready()
+        previous = self.video("youtube:0000000001A")
+        self.dashboard("youtube", previous)
+        for dimension in DIMENSIONS:
+            self.rating(previous, dimension)
+        earlier_unrated = self.video("youtube:0000000003A")
+        current = self.video("youtube:0000000002A")
+        self.dashboard("youtube", current)
+
+        summary = feedback_summary(self.store, "youtube")
+        self.assertEqual(summary["total"], 1)
+        self.assertEqual(
+            [
+                video["canonical_id"]
+                for video in summary["platforms"]["youtube"]["videos"]
+            ],
+            [current],
+        )
+        self.assertEqual(
+            summary["platforms"]["youtube"]["videos"][0]["missing_dimensions"],
+            list(DIMENSIONS),
+        )
+        for dimension in DIMENSIONS:
+            self.rating(current, dimension)
+        self.assertEqual(feedback_summary(self.store, "youtube")["total"], 0)
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM feedback_details WHERE canonical_id=?",
+                (previous,),
+            ).fetchone()[0],
+            4,
+        )
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM recommendation_exposures WHERE canonical_id=?",
+                (earlier_unrated,),
+            ).fetchone()[0],
+            1,
+        )
+
+    def test_feedback_summary_uses_provisional_preview_and_handles_empty_dashboard(
+        self,
+    ):
+        self.ready()
+        key = "youtube:0000000001A"
+        item = {
+            "canonical_id": key,
+            "title": " ",
+            "url": "https://not-youtube.example/video",
+        }
+        self.store.create(
+            "youtube",
+            {"kind": "recommendation"},
+            {"selected": [], "preview": [item]},
+        )
+
+        summary = feedback_summary(self.store, "youtube")
+        self.assertEqual(summary["total"], 1)
+        self.assertEqual(
+            summary["platforms"]["youtube"]["videos"],
+            [
+                {
+                    "canonical_id": key,
+                    "title": key,
+                    "url": None,
+                    "missing_dimensions": list(DIMENSIONS),
+                }
+            ],
+        )
+
+        with self.store.db:
+            self.store.db.execute("DELETE FROM runs")
+        empty = feedback_summary(self.store, "youtube")
+        self.assertEqual(empty["total"], 0)
+        self.assertEqual(empty["platforms"]["youtube"]["videos"], [])
+
     def test_cli_blocked_attempts_and_feedback_choice_create_no_new_work(self):
         self.assertEqual(self.invoke("recommend")[1]["status"], "setup_required")
         self.ready()
-        self.video("youtube:0000000001A")
+        current = self.video("youtube:0000000001A")
+        self.dashboard("youtube", current)
         before = self.store.list_runs()
         code, report = self.invoke(
             "recommend", "--model", "fixture-model", "--effort", "low"
@@ -295,7 +418,8 @@ class PreflightTests(unittest.TestCase):
         self,
     ):
         self.ready("youtube")
-        self.video("bilibili:BV1Z6H56oEcQ:p1")
+        current = self.video("bilibili:BV1Z6H56oEcQ:p1")
+        self.dashboard("bilibili", current)
         with patch("broader_vids.recommendations.batch.execute_batch") as execute:
             code, report = self.invoke(
                 "recommend",

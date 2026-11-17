@@ -1,3 +1,15 @@
+export const ratingGroups = [
+  ["topic_interest", "Specific topic"],
+  ["depth", "Depth for this video"],
+  ["quality_level", "Video quality"],
+  ["domain_interest", "Broader subject"],
+];
+
+export const missingRatings = (details = {}) =>
+  ratingGroups
+    .filter(([dimension]) => !details[dimension])
+    .map(([, label]) => label);
+
 export const state = {
   view: "recommendations",
   platform: "youtube",

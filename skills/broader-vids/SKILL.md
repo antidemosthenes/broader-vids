@@ -58,8 +58,12 @@ Optional warnings do not block recommendations.
 Routine checks do not repeat the first-time introduction.
 
 For `feedback_required`, show platform counts and distinguish unrated videos from partially rated videos.
+List every video in each platform's `feedback.platforms[platform].videos` array by title and returned URL.
+For each video, translate its `missing_dimensions` with `feedback.dimension_labels` and state the missing rating groups.
 Any blank rating dimension makes a video incomplete.
-The count includes all prior, non-dismissed recommendations for the requested platforms.
+The reminder covers only the recommendation list currently shown in the dashboard for each requested platform.
+An empty dashboard list has no reminder. A new current list replaces the earlier list as the reminder target.
+Dismissed videos do not count. Earlier pending videos outside the current list do not count.
 Calibration-only videos do not count.
 Offer **Open dashboard and stop** or **Continue this round**.
 For the dashboard choice, open the dashboard and end this recommendation request.

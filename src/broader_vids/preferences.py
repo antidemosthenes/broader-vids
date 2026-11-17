@@ -28,6 +28,11 @@ def get_profile(store):
     return {"revision": row["revision"], **json.loads(row["payload"])} if row else None
 
 
+def interests_match(store, saved_profile):
+    current = get_profile(store)
+    return current is not None and current["interests"] == saved_profile["interests"]
+
+
 class ProfileConflict(ValueError):
     pass
 

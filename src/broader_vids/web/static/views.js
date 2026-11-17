@@ -1,4 +1,10 @@
-import { state, record, selectedId } from "./state.js";
+import {
+  state,
+  record,
+  selectedId,
+  ratingGroups,
+  missingRatings,
+} from "./state.js";
 import { el, button, link, number, dateLabel, platformName } from "./ui.js";
 
 export function createVideoRow(item, index, actions) {
@@ -60,11 +66,22 @@ export function createVideoRow(item, index, actions) {
       duration.textContent = seconds
         ? `${Math.round(seconds / 60)} min`
         : "Duration unavailable";
+      const missing = missingRatings(data.details),
+        rated = ratingGroups.length - missing.length;
       status.textContent = data.dismissed
         ? "Dismissed"
-        : Object.keys(data.details || {}).length
-          ? "Reviewed"
-          : "";
+        : missing.length
+          ? `${rated}/${ratingGroups.length} rated`
+          : "Reviewed";
+      status.title = data.dismissed
+        ? "Excluded from the feedback reminder."
+        : missing.length
+          ? `Missing ratings for ${missing.join(", ")}.`
+          : "All four ratings saved.";
+      rate.setAttribute(
+        "aria-description",
+        `${status.textContent}. ${status.title}`,
+      );
       watched.textContent = data.watched ? "Watched ✓" : "Mark watched";
       watched.setAttribute("aria-pressed", String(!!data.watched));
       dismiss.textContent = data.dismissed ? "Restore" : "Dismiss";
@@ -274,7 +291,7 @@ export function createExclusions(actions) {
         .toLocaleLowerCase()
         .includes(query),
     );
-    count.textContent = `${filtered.length} ${kind}`;
+    count.textContent = `${filtered.length} ${filtered.length === 1 ? kind.slice(0, -1) : kind}`;
     const next = JSON.stringify(filtered);
     if (next === signature) {
       rowUpdates.forEach((update) => update());

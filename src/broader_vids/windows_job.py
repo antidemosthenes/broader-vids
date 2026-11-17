@@ -56,6 +56,10 @@ def kernel():
             [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR],
             wintypes.HANDLE,
         ),
+        "OpenProcess": (
+            [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD],
+            wintypes.HANDLE,
+        ),
         "AssignProcessToJobObject": ([wintypes.HANDLE, wintypes.HANDLE], wintypes.BOOL),
         "SetInformationJobObject": (
             [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD],
@@ -153,3 +157,14 @@ def await_start(name):
             raise TimeoutError("The parent did not release its owned worker.")
     finally:
         api.CloseHandle(event)
+
+
+def wait_process_exit(pid, timeout):
+    api = kernel()
+    process = api.OpenProcess(SYNCHRONIZE, False, pid)
+    if not process:
+        return ctypes.get_last_error() == 87
+    try:
+        return api.WaitForSingleObject(process, max(0, int(timeout * 1000))) == 0
+    finally:
+        api.CloseHandle(process)

@@ -13,7 +13,7 @@ from broader_vids.exploration.planning import (
     observe_query,
     prepare_plan,
 )
-from broader_vids.preferences import get_profile
+from broader_vids.preferences import get_profile, interests_match
 from broader_vids.creators import policy_summary
 from broader_vids.worker_context import (
     host_options,
@@ -355,10 +355,8 @@ def execute_discovery(
         run.update(status="running", reason="")
         try:
             http.check()
-            if (
-                "exploration" in state
-                and state["exploration"]["profile"]["revision"]
-                != get_profile(store)["revision"]
+            if "exploration" in state and not interests_match(
+                store, state["exploration"]["profile"]
             ):
                 raise EvidencePending(
                     "Interests changed; create a new exploration round."

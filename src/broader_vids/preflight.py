@@ -9,12 +9,19 @@ import uuid
 
 from broader_vids.onboarding import status as onboarding_status, PLATFORMS
 from broader_vids.time_budget import effective_limit
-from broader_vids.preferences import get_profile
+from broader_vids.preferences import current_recommendation_id, get_profile
 from broader_vids.processes import run_bounded
 from broader_vids.worker_context import resolve_worker_settings
+from broader_vids.identity import identify
 
 
 DIMENSIONS = ("topic_interest", "domain_interest", "depth", "quality_level")
+DIMENSION_LABELS = {
+    "topic_interest": "Specific topic",
+    "domain_interest": "Broader subject",
+    "depth": "Depth for this video",
+    "quality_level": "Video quality",
+}
 
 
 def feedback_summary(store, platform):
@@ -25,33 +32,88 @@ def feedback_summary(store, platform):
             "no_ratings": 0,
             "partial": 0,
             "missing_dimensions": {dimension: 0 for dimension in DIMENSIONS},
+            "videos": [],
         }
         for name in platforms
     }
-    query = (
-        """WITH exposed AS (SELECT DISTINCT canonical_id FROM recommendation_exposures)
-        SELECT v.platform, v.canonical_id, GROUP_CONCAT(f.dimension) AS dimensions
-        FROM exposed e JOIN video_state v USING(canonical_id)
-        LEFT JOIN feedback_details f USING(canonical_id)
-        WHERE v.dismissed=0 AND v.platform IN ("""
-        + ",".join("?" for _ in platforms)
-        + ") GROUP BY v.platform,v.canonical_id"
-    )
-    for row in store.db.execute(query, platforms):
-        if row["platform"] not in result:
+    displayed = {}
+    for name in platforms:
+        run_id = current_recommendation_id(store, name)
+        if not run_id:
+            continue
+        items = store.db.execute(
+            """SELECT json_extract(item.value,'$.canonical_id') AS canonical_id,
+            json_extract(item.value,'$.title') AS title,
+            json_extract(item.value,'$.url') AS url
+            FROM runs r, json_each(r.state, CASE
+                WHEN COALESCE(json_array_length(r.state,'$.selected'),0)>0
+                THEN '$.selected' ELSE '$.preview' END) item
+            WHERE r.id=? ORDER BY item.key""",
+            (run_id,),
+        )
+        for item in items:
+            key = item["canonical_id"]
+            if isinstance(key, str) and key:
+                displayed.setdefault((name, key), dict(item))
+    rows = {}
+    if displayed:
+        values = ",".join("(?,?)" for _ in displayed)
+        parameters = [value for key in displayed for value in key]
+        query = f"""WITH displayed(platform,canonical_id) AS (VALUES {values})
+            SELECT d.platform,d.canonical_id,
+            json_extract(v.payload,'$.title') AS saved_title,
+            json_extract(v.payload,'$.url') AS saved_url,
+            GROUP_CONCAT(f.dimension) AS dimensions
+            FROM displayed d LEFT JOIN video_state v USING(canonical_id)
+            LEFT JOIN feedback_details f USING(canonical_id)
+            WHERE COALESCE(v.dismissed,0)=0
+            GROUP BY d.platform,d.canonical_id"""
+        rows = {
+            (row["platform"], row["canonical_id"]): row
+            for row in store.db.execute(query, parameters)
+        }
+    for (name, key), metadata in displayed.items():
+        row = rows.get((name, key))
+        if row is None:
             continue
         saved = set((row["dimensions"] or "").split(","))
-        missing = set(DIMENSIONS) - saved
+        missing = [dimension for dimension in DIMENSIONS if dimension not in saved]
         if not missing:
             continue
-        item = result[row["platform"]]
+        item = result[name]
         item["total"] += 1
         item["no_ratings" if not saved.intersection(DIMENSIONS) else "partial"] += 1
         for dimension in missing:
             item["missing_dimensions"][dimension] += 1
+        title = metadata.get("title")
+        if not isinstance(title, str) or not title.strip():
+            title = row["saved_title"]
+        if not isinstance(title, str) or not title.strip():
+            title = row["canonical_id"]
+        title = title.strip()[:500]
+        url = metadata.get("url")
+        if not isinstance(url, str):
+            url = row["saved_url"]
+        try:
+            identity = identify(url) if isinstance(url, str) else None
+            if not identity or identity["canonical_id"] != row["canonical_id"]:
+                url = None
+            else:
+                url = identity["url"]
+        except (TypeError, ValueError):
+            url = None
+        item["videos"].append(
+            {
+                "canonical_id": row["canonical_id"],
+                "title": title,
+                "url": url,
+                "missing_dimensions": missing,
+            }
+        )
     return {
         "total": sum(item["total"] for item in result.values()),
         "platforms": result,
+        "dimension_labels": DIMENSION_LABELS.copy(),
     }
 
 

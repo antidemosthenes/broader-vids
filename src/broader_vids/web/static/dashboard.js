@@ -1,5 +1,6 @@
 import {
   state,
+  ratingGroups,
   contextKey,
   selectedId,
   entries,
@@ -130,12 +131,7 @@ async function refresh() {
       state.inspectorScrolls.delete(id);
       state.notes.delete(`video:${id}`);
       state.notes.delete(`creator:${id}`);
-      for (const dimension of [
-        "topic_interest",
-        "domain_interest",
-        "depth",
-        "quality_level",
-      ])
+      for (const [dimension] of ratingGroups)
         state.notes.delete(`${id}|${dimension}`);
     }
     state.data = data;

@@ -12,6 +12,36 @@ from broader_vids.processes import ProcessCleanupError, run_bounded
 
 
 class ProcessTests(unittest.TestCase):
+    def test_detached_process_wait_is_bounded_and_closes_its_handle(self):
+        from unittest.mock import Mock, patch
+        from broader_vids.windows_job import SYNCHRONIZE, wait_process_exit
+
+        api = Mock()
+        with patch("broader_vids.windows_job.kernel", return_value=api):
+            for result, exited in ((0, True), (258, False), (0xFFFFFFFF, False)):
+                with self.subTest(wait_result=result):
+                    api.reset_mock()
+                    api.OpenProcess.return_value = 42
+                    api.WaitForSingleObject.return_value = result
+                    self.assertEqual(wait_process_exit(123, 0.25), exited)
+                    api.OpenProcess.assert_called_once_with(SYNCHRONIZE, False, 123)
+                    api.WaitForSingleObject.assert_called_once_with(42, 250)
+                    api.CloseHandle.assert_called_once_with(42)
+            api.OpenProcess.return_value = None
+            for error, exited in ((87, True), (5, False)):
+                with (
+                    self.subTest(open_error=error),
+                    patch(
+                        "broader_vids.windows_job.ctypes.get_last_error",
+                        return_value=error,
+                        create=True,
+                    ),
+                ):
+                    api.reset_mock()
+                    self.assertEqual(wait_process_exit(123, 0.25), exited)
+                    api.WaitForSingleObject.assert_not_called()
+                    api.CloseHandle.assert_not_called()
+
     def test_timeout_retains_bounded_worker_diagnostics(self):
         with self.assertRaises(subprocess.TimeoutExpired) as caught:
             run_bounded(

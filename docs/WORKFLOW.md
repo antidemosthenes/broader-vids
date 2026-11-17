@@ -45,11 +45,15 @@ Reset keeps tools and Bilibili sign-in while removing learned data and histories
 Clean removes the complete managed data directory while keeping the plugin installed.
 Both destructive actions start with a preview and require an explicit request before application.
 
-Before a new round, the engine counts incomplete feedback across earlier recommendations for the requested platforms.
+Before a new round, the engine checks the current dashboard recommendation list for each requested platform.
+An empty list has no feedback reminder. A new current list replaces the earlier list as the reminder target.
+The reminder lists each incomplete video and names its missing rating groups.
 It counts each canonical video once and excludes dismissed videos and calibration-only examples.
 Any blank topic, subject, depth, or quality rating makes a video incomplete.
 Watched status does not change this count.
 The report separates unrated videos from partially rated videos.
+The dashboard shows a saved count such as **2/4 rated** for partial feedback.
+**Reviewed** means all four rating groups have saved feedback. The review panel lists missing groups.
 Choose **Open dashboard and stop** or **Continue this round**.
 The dashboard choice ends the request until you invoke recommendations again.
 Continuing leaves blank ratings unchanged and permits only this new round.
@@ -426,6 +430,7 @@ It identifies manual rules, imported Bilibili bans, and built-in rules.
 Remove manual rules there when needed.
 The built-in 视频翻译 tag has a Remove button. Add the tag again to restore that exclusion.
 Tag removals remain saved after a restart or preference import.
+Tag edits apply to new rounds. Active and resumed rounds retain their saved tag rules.
 Unblock imported creators on Bilibili, then sync the blacklist.
 
 Bilibili sign-in and each new Bilibili round attempt a complete blacklist sync.

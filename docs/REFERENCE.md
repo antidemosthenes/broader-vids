@@ -327,9 +327,17 @@ A busy browser or recommendation operation requires a later retry.
 Do not remove another operation's lock.
 
 Any blank rating dimension makes a recommended video incomplete.
-Counts include all previous recommendation exposures for the requested platforms, with duplicate videos counted once.
+Counts cover only the recommendation list currently shown in the dashboard for each requested platform.
+Each video counts once. An empty dashboard list has no reminder.
+When a new list becomes current, the reminder follows that list. Older ratings and history remain saved.
 Dismissed videos and calibration-only examples do not count.
 The report separates videos without ratings from partially rated videos.
+Each platform's `videos` array provides the title, URL, and missing dimension IDs for every incomplete video.
+The `dimension_labels` map provides the visible rating-group names.
+The assistant lists these missing groups beside each video in the reminder.
+In the dashboard, **Reviewed** means all four groups have saved feedback.
+A partial count such as **2/4 rated** shows incomplete feedback. The review panel names the missing groups.
+Unsaved edits do not change the saved count.
 Choose **Open dashboard and stop** to review feedback.
 Request recommendations again after review.
 Alternatively, explicitly choose **Continue this round**.
@@ -1033,6 +1041,8 @@ A denied request returns an error before the command reports a running server.
 A busy preferred port causes the server to select a free port.
 Stop authenticates the registered server before requesting shutdown.
 It does not stop a process based only on a PID or port.
+On Windows, Stop waits up to five seconds for process exit before reporting `stopped`.
+It returns `stopping` if process exit remains unverified.
 Private control records and bounded logs reside in the profile's `.dashboard/` directory.
 The foreground `serve` command remains available for terminal use.
 

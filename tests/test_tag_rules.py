@@ -14,6 +14,7 @@ from broader_vids.learning.transfer import export_preferences, import_preference
 from broader_vids.preferences import get_profile, set_profile, update_tag_rule
 from broader_vids.recommendations.originality import provenance
 from broader_vids.recommendations.parallel import assess_parallel
+from broader_vids.recommendations.preview import update_preview
 from broader_vids.recommendations.ranking import screen, rank_slate
 from broader_vids.recommendations.service import (
     create_recommendation,
@@ -141,6 +142,8 @@ class TagRuleTests(unittest.TestCase):
             run = store.get(identifier)
             run["state"].update(phase="assess", shortlist=[item], buffer=[item])
             store.save(run)
+            update_tag_rule(store, "bilibili", "视频翻译")
+            self.assertTrue(provenance(item, get_profile(store))["excluded"])
             with patch(
                 "broader_vids.recommendations.service.cached_quality",
                 side_effect=lambda store, key: quality(key),
@@ -152,6 +155,12 @@ class TagRuleTests(unittest.TestCase):
                     assess=Mock(side_effect=AssertionError("Unexpected model call")),
                 )
             self.assertEqual(len(result["state"]["selected"]), 1, result["reason"])
+            with patch(
+                "broader_vids.recommendations.preview.cached_quality",
+                side_effect=lambda store, key: quality(key),
+            ):
+                update_preview(store, result)
+            self.assertEqual(len(result["state"]["preview"]), 1)
 
     def test_terminal_can_remove_and_readd_the_builtin_rule(self):
         with (

@@ -239,6 +239,15 @@ class DashboardFeedbackTests(unittest.TestCase):
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             inspector = open_first(page)
+            badge = page.locator(".video-row").first.locator(".row-review-state")
+            expect(badge).to_have_text("0/4 rated")
+            expect(
+                page.locator(".video-row").first.get_by_role(
+                    "button", name="Rate", exact=True
+                )
+            ).to_have_accessible_description(
+                "0/4 rated. Missing ratings for Specific topic, Depth for this video, Video quality, Broader subject."
+            )
             depth = inspector.get_by_role(
                 "group", name="Depth for this video", exact=True
             )
@@ -264,7 +273,15 @@ class DashboardFeedbackTests(unittest.TestCase):
                 ).input_value(),
                 "advanced",
             )
+            expect(badge).to_have_text("0/4 rated")
             saved(page, depth)
+            expect(badge).to_have_text("1/4 rated")
+            expect(inspector.locator(".rating-progress")).to_contain_text(
+                "Specific topic"
+            )
+            expect(inspector.locator(".rating-progress")).not_to_contain_text(
+                "Depth for this video"
+            )
             page.wait_for_function(
                 "() => document.querySelector('#inspector-body select').value === 'advanced'"
             )
@@ -272,6 +289,7 @@ class DashboardFeedbackTests(unittest.TestCase):
                 topic.get_by_role("radio", name="Low", exact=True).is_checked()
             )
             saved(page, topic)
+            expect(badge).to_have_text("2/4 rated")
             page.get_by_role("navigation").get_by_role(
                 "button", name="Calibration", exact=True
             ).click()
@@ -326,6 +344,23 @@ class DashboardFeedbackTests(unittest.TestCase):
                     ).fetchone()[0]
                 )
                 self.assertEqual(saved_item["title"], "Development video 1")
+            badge = page.locator(".video-row").first.locator(".row-review-state")
+            expect(badge).to_have_text("1/4 rated")
+            for label in ("Video quality", "Broader subject"):
+                group = inspector.get_by_role("group", name=label, exact=True)
+                group.get_by_role("radio", name="High", exact=True).check()
+                saved(page, group)
+            expect(badge).to_have_text("3/4 rated")
+            topic.get_by_role("radio", name="Low", exact=True).check()
+            saved(page, topic)
+            expect(badge).to_have_text("Reviewed")
+            expect(inspector.locator(".rating-progress")).to_be_hidden()
+            quality = inspector.get_by_role("group", name="Video quality", exact=True)
+            quality.get_by_role("button", name="Clear", exact=True).click()
+            expect(badge).to_have_text("3/4 rated")
+            expect(inspector.locator(".rating-progress")).to_contain_text(
+                "Video quality"
+            )
             self.assertFalse(errors, errors)
 
     def test_mobile_dialog_details_keyboard_and_layout(self):

@@ -9,7 +9,7 @@ import uuid
 
 from broader_vids.blacklist import SYNC_LOCK, sync_blacklist
 from broader_vids.creators import creator_id
-from broader_vids.evidence.browser import bilibili_browser, browser_lease
+from broader_vids.evidence.browser import bilibili_browser, browser_json, browser_lease
 from broader_vids.evidence.service import atomic_json
 from broader_vids.preferences import platform_lock
 from broader_vids.processes import run_bounded
@@ -72,10 +72,9 @@ def remove_private(root, target):
 
 
 def verified_account(context):
-    response = context.request.get(
-        "https://api.bilibili.com/x/web-interface/nav", timeout=10000
+    _, value = browser_json(
+        context, "https://api.bilibili.com/x/web-interface/nav", timeout=10000
     )
-    value = response.json() if response.ok else None
     if (
         not isinstance(value, dict)
         or type(value.get("code")) is not int

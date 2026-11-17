@@ -4,7 +4,7 @@ import json
 import time
 
 from broader_vids.creators import creator_id, status
-from broader_vids.evidence.browser import bilibili_browser
+from broader_vids.evidence.browser import bilibili_browser, browser_json
 from broader_vids.storage import utc_now
 
 
@@ -59,10 +59,9 @@ def sync_blacklist(
                 requests += 1
                 receipt = store.begin_request(run_id, url) if run_id else None
                 try:
-                    response = browser.request.get(
-                        url, timeout=max(1, min(15000, remaining * 1000))
+                    ok, value = browser_json(
+                        browser, url, timeout=max(1, min(15000, remaining * 1000))
                     )
-                    value = response.json() if response.ok else None
                 except Exception:
                     if receipt:
                         store.end_request(
@@ -72,7 +71,7 @@ def sync_blacklist(
                         "Blacklist request failed or access was denied."
                     ) from None
                 if receipt:
-                    store.end_request(receipt, "ok" if response.ok else "failed")
+                    store.end_request(receipt, "ok" if ok else "failed")
                 if (
                     not isinstance(value, dict)
                     or type(value.get("code")) is not int
