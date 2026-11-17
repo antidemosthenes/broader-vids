@@ -179,7 +179,10 @@ class DashboardRuntimeTests(unittest.TestCase):
                 finally:
                     api.TerminateJobObject(job, 1)
                     api.CloseHandle(job)
-                    dashboard(directory, "stop")
+                    self.assertEqual(dashboard(directory, "stop")["status"], "stopped")
+                    log = Path(directory) / ".dashboard/startup.log"
+                    if log.exists():
+                        log.rename(log.with_suffix(".closed"))
 
     def test_corrupt_registry_and_missing_server_are_recoverable(self):
         with tempfile.TemporaryDirectory() as directory:
