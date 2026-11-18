@@ -18,26 +18,55 @@
       </div>
       <nav aria-label="Main navigation">
         <button data-view="recommendations" aria-current="page">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2" fill="currentColor"/></svg>Recommendations</button
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="7" />
+            <circle cx="10" cy="10" r="2" fill="currentColor" /></svg
+          >Recommendations</button
         ><button data-view="exclusions">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m5 15 10-10"/></svg>Exclusions</button
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="7" />
+            <path d="m5 15 10-10" /></svg
+          >Exclusions</button
         ><button data-view="calibration">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2.5 7.5 7.5-7.5 7.5L2.5 10Z"/></svg>Calibration
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="m10 2.5 7.5 7.5-7.5 7.5L2.5 10Z" /></svg
+          >Calibration
         </button>
         <hr />
         <button id="preferences-open" data-view="preferences" disabled>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h7m4 0h3M3 14h2m4 0h8"/><circle cx="12" cy="6" r="2"/><circle cx="7" cy="14" r="2"/></svg>Preferences
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3 6h7m4 0h3M3 14h2m4 0h8" />
+            <circle cx="12" cy="6" r="2" />
+            <circle cx="7" cy="14" r="2" /></svg
+          >Preferences
         </button>
         <button id="token-usage-open" aria-haspopup="dialog">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16V9m6 7V4m6 12v-9"/></svg>Token usage
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M4 16V9m6 7V4m6 12v-9" /></svg
+          >Token usage
         </button>
       </nav>
       <div class="navigation-tools">
-        <button id="help-open" aria-label="Help" class="button" aria-haspopup="dialog">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M8 8a2 2 0 1 1 3.1 1.7c-.8.5-1.1.8-1.1 1.8m0 2v.1"/></svg><span>Help</span>
+        <button
+          id="help-open"
+          aria-label="Help"
+          class="button"
+          aria-haspopup="dialog"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="7" />
+            <path d="M8 8a2 2 0 1 1 3.1 1.7c-.8.5-1.1.8-1.1 1.8m0 2v.1" /></svg
+          ><span>Help</span>
         </button>
-        <button id="stop-open" aria-label="Stop server" class="button" aria-haspopup="dialog">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v7M6 5.2a7 7 0 1 0 8 0"/></svg><span>Stop server</span>
+        <button
+          id="stop-open"
+          aria-label="Stop server"
+          class="button"
+          aria-haspopup="dialog"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M10 3v7M6 5.2a7 7 0 1 0 8 0" /></svg
+          ><span>Stop server</span>
         </button>
       </div>
     </aside>
@@ -317,15 +346,23 @@
         <div id="token-usage-content"></div>
       </div>
     </dialog>
-    <dialog id="stop-dialog" aria-labelledby="stop-title" aria-describedby="stop-description">
+    <dialog
+      id="stop-dialog"
+      aria-labelledby="stop-title"
+      aria-describedby="stop-description"
+    >
       <form class="stop-confirmation" method="post" action="/dashboard/stop">
         <h2 id="stop-title">Stop the dashboard server?</h2>
         <p id="stop-description">
           Unsaved edits will be lost. You can reopen the dashboard from chat.
         </p>
         <div class="stop-actions">
-          <button type="button" id="stop-cancel" class="button" autofocus>Cancel</button>
-          <button type="submit" class="button" name="token" value="__TOKEN__">Stop server</button>
+          <button type="button" id="stop-cancel" class="button" autofocus>
+            Cancel
+          </button>
+          <button type="submit" class="button" name="token" value="__TOKEN__">
+            Stop server
+          </button>
         </div>
       </form>
     </dialog>

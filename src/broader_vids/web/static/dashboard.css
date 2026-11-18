@@ -243,7 +243,9 @@ h3 {
     inline-size: 2.5rem;
     overflow: hidden;
     white-space: nowrap;
-    transition: inline-size 180ms ease-out, background-color 120ms ease;
+    transition:
+      inline-size 180ms ease-out,
+      background-color 120ms ease;
   }
   .navigation-tools .button span {
     opacity: 0;
