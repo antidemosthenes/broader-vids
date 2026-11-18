@@ -1041,7 +1041,10 @@ A denied request returns an error before the command reports a running server.
 A busy preferred port causes the server to select a free port.
 Stop authenticates the registered server before requesting shutdown.
 It does not stop a process based only on a PID or port.
-On Windows, Stop waits up to five seconds for process exit before reporting `stopped`.
+To stop the server from the dashboard, select **Stop server** and confirm.
+Open the dashboard from chat to start the server again.
+
+On Windows, the terminal Stop command waits up to five seconds for process exit before reporting `stopped`.
 It returns `stopping` if process exit remains unverified.
 Private control records and bounded logs reside in the profile's `.dashboard/` directory.
 The foreground `serve` command remains available for terminal use.
