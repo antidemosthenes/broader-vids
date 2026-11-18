@@ -424,11 +424,40 @@ def make_server(root, port=8765, *, control=None):
                     store.close()
             return self.send(404, '{"error":"Not found"}')
 
+        def stop(self, body, mime="application/json"):
+            self.close_connection = True
+            try:
+                self.send(200, body, mime)
+            finally:
+                self.server.shutdown()
+
         def do_POST(self):
             origins = {
                 f"http://127.0.0.1:{self.server.server_port}",
                 f"http://localhost:{self.server.server_port}",
             }
+            if self.path == "/dashboard/stop":
+                expected = f"token={token}".encode("ascii")
+                if (
+                    not self.valid_host()
+                    or self.headers.get("Origin") not in origins
+                    or self.headers.get("Transfer-Encoding")
+                    or self.headers.get_all("Content-Length") != [str(len(expected))]
+                    or not secrets.compare_digest(
+                        self.rfile.read(len(expected)), expected
+                    )
+                ):
+                    return self.send(403, '{"error":"Invalid dashboard stop request"}')
+                return self.stop(
+                    '<!doctype html><html lang="en"><meta charset="utf-8">'
+                    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                    '<meta name="color-scheme" content="light dark">'
+                    "<title>Broader Vids dashboard</title><main>"
+                    "<h1>Dashboard server is shutting down</h1>"
+                    "<p>You can close this tab. To restart the server, ask Broader Vids "
+                    "to open your dashboard.</p></main></html>",
+                    "text/html",
+                )
             if self.path == "/api/shutdown" and control:
                 if (
                     not self.valid_host()
@@ -441,9 +470,7 @@ def make_server(root, port=8765, *, control=None):
                     return self.send(
                         403, '{"error":"Invalid dashboard control token or origin"}'
                     )
-                self.send(200, '{"stopping":true}')
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-                return
+                return self.stop('{"stopping":true}')
             if (
                 not self.valid_host()
                 or self.headers.get("X-Broader-Vids-Token") != token

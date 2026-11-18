@@ -482,6 +482,8 @@ for (const prefix of ["review", "mobile"]) {
   $(`#${prefix}-next`).onclick = () => move(1);
 }
 $("#details-close").onclick = () => details.close();
+$("#stop-open").onclick = () => $("#stop-dialog").showModal();
+$("#stop-cancel").onclick = () => $("#stop-dialog").close();
 $("#help-open").onclick = () => $("#help-dialog").showModal();
 $("#help-close").onclick = () => $("#help-dialog").close();
 function leavePreferences() {
