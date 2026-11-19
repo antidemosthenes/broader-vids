@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from unittest.mock import patch
 
+from broader_vids import notifications
 from broader_vids.web.server import make_server
 from broader_vids.recommendations.engagement import (
     parse_bilibili,
@@ -214,6 +215,7 @@ class EngagementTests(unittest.TestCase):
 
 class RecommendationTests(unittest.TestCase):
     def test_paused_round_exposes_a_preview_without_publishing_history(self):
+        notifications.configure(self.store, True, "unit-test")
         source = self.source()
 
         def interrupted(store, run, save, *args, **kwargs):
@@ -228,6 +230,7 @@ class RecommendationTests(unittest.TestCase):
         from broader_vids.evidence.media import EvidencePending
 
         with (
+            patch.object(notifications, "_send", return_value="failed") as send,
             patch(
                 "broader_vids.recommendations.service.collect_snapshot",
                 side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
@@ -249,6 +252,8 @@ class RecommendationTests(unittest.TestCase):
                 reasoning_effort="low",
             )
             run = execute_recommendation(self.store, rid)
+        send.assert_not_called()
+        self.assertEqual(notifications.settings(self.store)["deliveries"], [])
         self.assertEqual(run["status"], "paused")
         self.assertEqual(run["state"]["selected"], [])
         self.assertEqual(len(run["state"]["preview"]), 4)
@@ -494,7 +499,18 @@ class RecommendationTests(unittest.TestCase):
 
     def test_cached_full_workflow_and_next_round_carryover(self):
         source = self.source()
+        notifications.configure(self.store, True, "unit-test")
+
+        def accept_message(topic, title, body, **transport):
+            self.assertEqual(topic, "unit-test")
+            self.assertFalse(self.store.db.in_transaction)
+            with self.store.lease(platform_lock("youtube")), self.store.lease(first):
+                self.assertEqual(self.store.get(first)["state"]["phase"], "published")
+            return "sent"
+
         with (
+            patch.object(notifications, "_send", notifications._worker),
+            patch.object(notifications, "_post", side_effect=accept_message) as send,
             patch(
                 "broader_vids.recommendations.service.collect_snapshot",
                 side_effect=lambda h, i: {**i["engagement"], "observed_at": utc_now()},
@@ -520,6 +536,11 @@ class RecommendationTests(unittest.TestCase):
                 execute_recommendation(self.store, first)["state"]["selected"],
                 run["state"]["selected"],
             )
+            send.assert_called_once()
+            self.assertEqual(
+                notifications.settings(self.store)["deliveries"][0]["status"], "sent"
+            )
+            notifications.configure(self.store, False, None)
             user_action(
                 self.store, run["state"]["selected"][0]["canonical_id"], "watched"
             )
@@ -972,13 +993,23 @@ class RecommendationTests(unittest.TestCase):
         self.store.save(run)
         with self.assertRaisesRegex(ValueError, "incomplete"):
             publish_recommendation(self.store, identifier)
-        with patch(
-            "broader_vids.recommendations.service.cached_quality",
-            side_effect=lambda s, i: quality(i),
+        notifications.configure(self.store, True, "unit-test")
+        with (
+            patch.object(notifications, "_send", notifications._worker),
+            patch.object(notifications, "_post", return_value="failed") as send,
+            patch(
+                "broader_vids.recommendations.service.cached_quality",
+                side_effect=lambda s, i: quality(i),
+            ),
         ):
             result = publish_recommendation(
                 self.store, identifier, allow_incomplete=True
             )
+        send.assert_called_once()
+        self.assertIn("partial", send.call_args.args[1].lower())
+        self.assertEqual(
+            notifications.settings(self.store)["deliveries"][0]["status"], "failed"
+        )
         self.assertEqual(result["status"], "partial")
         self.assertEqual(len(result["state"]["selected"]), 10)
         self.assertFalse(result["state"]["assessment_complete"])

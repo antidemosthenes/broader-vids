@@ -76,6 +76,10 @@ def parser():
     configure.add_argument(
         "--platform", choices=("youtube", "bilibili", "both"), required=True
     )
+    notifications = onboarding_commands.add_parser(
+        "notifications", help="Record the answer to the optional setup question"
+    )
+    notifications.add_argument("answer", choices=("yes", "no"))
     complete = onboarding_commands.add_parser("complete")
     complete.add_argument("--asr-model", choices=("tiny", "base", "small"))
     complete.add_argument(

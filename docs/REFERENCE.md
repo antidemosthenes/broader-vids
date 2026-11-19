@@ -224,7 +224,7 @@ These commands are separate from `cleanup`, which removes disposable evidence an
 
 | Action | Removes | Preserves |
 | --- | --- | --- |
-| Reset | Preferences, learned weights, ratings, creator and tag rules, histories, results, evidence, and recovery files | Installed runtime, transcription models, Bilibili sign-in, selected directory, and unknown files |
+| Reset | Preferences, learned weights, ratings, creator and tag rules, histories, results, evidence, notification settings and history, and recovery files | Installed runtime, transcription models, Bilibili sign-in, selected directory, and unknown files |
 | Clean | Complete managed data directory, including tools and local sign-in | Installed plugin, exports outside the directory, and shared UV or npm caches |
 
 Built-in screening rules remain part of the installed code.
@@ -292,7 +292,11 @@ Blocked completion still returns structured diagnostics and a nonzero exit code.
 
 `onboarding questions` returns the shared question titles, input types, and choice values for the chat host.
 It does not change preferences, configure platforms, open a browser, or run access checks.
-The setup skill uses those definitions with an available user-question tool and waits for each answer.
+The setup skill uses those definitions with an available user-question tool.
+The optional `notifications` question applies to first-time setup.
+`onboarding notifications yes` or `onboarding notifications no` records the answer so setup can resume without repeating the question.
+Completion treats an unanswered notification question as No.
+For a Yes answer, the setup skill opens the local dashboard. Enable delivery in the dashboard form.
 Free-text questions collect interests, an import-file path, or sign-in troubleshooting details.
 A host without suitable question controls uses text questions.
 Configure the platform before completion.
@@ -1049,6 +1053,17 @@ It returns `stopping` if process exit remains unverified.
 Private control records and bounded logs reside in the profile's `.dashboard/` directory.
 The foreground `serve` command remains available for terminal use.
 
+### Configure and retry ntfy notifications
+
+Open **Dashboard → Preferences → Notifications**. The form accepts a public topic name or its exact `https://ntfy.sh/<topic>` URL. Keep the topic in the local form. Anyone who knows the topic can read its messages. Protected topics and self-hosted servers are outside scope.
+
+A settings change makes no request to ntfy.sh. Enabling delivery applies to future published lists. Turning delivery off or changing the topic cancels queued parts. A request already in progress can still reach the previous topic. **Clear saved topic** removes it and disables delivery.
+
+The engine sends a plain-text HTTPS POST after it publishes each nonempty final or partial platform list. The message title identifies the platform and the UTC publication date. Partial lists carry a partial label. Long lists use numbered parts of at most 4096 UTF-8 bytes each.
+
+**Recent deliveries** shows the three latest deliveries for each platform. The system discards older queued message parts and keeps small delivery receipts to prevent duplicate sends.
+Each delivery attempt stops starting new parts after ten seconds. When delivery is on, select **Retry** for a pending, failed, or unconfirmed delivery. Broader Vids skips confirmed parts. Retrying an unconfirmed part may send a duplicate. The device notification feature works independently of host Stop hooks.
+
 ### Prepare a release
 
 The release preparation command creates and checks local release artifacts:
@@ -1074,7 +1089,11 @@ The workflow checks the source repository, main branch, push event, and exact te
 A newer main commit can supersede an earlier queued release.
 Automatic runs reuse the successful Windows and Ubuntu checks. A manual dispatch runs those checks again.
 
-Releases run in sequence. The next patch follows the latest stable npm version.
+Releases run in sequence. The next public series starts at `1.0.0`.
+The workflow increases the last number by one. When it reaches 10, it resets to 0 and increases the middle number.
+When the middle number reaches 10, it resets to 0 and increases the first number.
+For example, `1.0.9` advances to `1.1.0`, and `1.9.9` advances to `2.0.0`.
+These numbers follow the release sequence.
 An existing Git tag reserves its version, even when npm publication did not finish.
 A different source receives a later version. A retry of the same source can reuse its tag.
 A higher version declared in the source acts as a minimum for the release version.
@@ -1102,6 +1121,12 @@ Check the public version before retrying. Rerun failed jobs to reuse a matching 
 It creates a GitHub release with the archives, manifest, and checksums after npm publication succeeds.
 It retains workflow artifacts for seven days.
 
+After publication, the workflow merges the exact release commit into `dev`.
+A normal push preserves existing `dev` commits. A merge conflict or rejected push fails only this follow-up job.
+If another push updates `dev` during the job, rerun the failed job.
+For a merge conflict, merge the release commit into `dev` and resolve the conflict before retrying.
+After the remote branch updates, run `git pull --ff-only origin dev` from a local `dev` checkout.
+
 Retries resolve a tagged version commit back to its tested merge source.
 They reuse a release when its recorded source commit matches that source.
 An existing tag must have the expected parent and exact release tree.
@@ -1125,7 +1150,7 @@ Complete these account settings before the first automatic release:
 2. Create an environment named `npm-release`.
 3. Restrict deployment to the `main` branch.
 4. Omit required reviewers and wait timers when releases must proceed automatically.
-5. Allow the release workflow to push version commits to main and create `v*` tags.
+5. Allow the release workflow to push version commits to main, create `v*` tags, and update `dev` after publishing.
 6. In npm, open **broader-vids → Settings → Trusted Publisher**.
 7. Select **GitHub Actions** and enter the following values.
 

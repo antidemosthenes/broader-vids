@@ -11,6 +11,7 @@ from broader_vids.time_budget import (
     report_limit,
 )
 from collections import Counter
+from contextlib import contextmanager
 import copy
 import json
 import time
@@ -28,6 +29,7 @@ from broader_vids.recommendations.collection_policy import default_collection_po
 from broader_vids.evidence.service import create_evidence, prepare_evidence
 from broader_vids.evidence.media import EvidencePending, public_error
 from broader_vids.http import AccessPaused, BudgetExhausted, PublicHttp
+from broader_vids import notifications
 from broader_vids.preferences import (
     get_profile,
     interests_match,
@@ -365,6 +367,16 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
                 run["id"],
             ),
         )
+        notifications.enqueue(store, run)
+
+
+@contextmanager
+def _publication_scope(store, identifier, platform):
+    with store.lease(platform_lock(platform)), store.lease(identifier):
+        run = store.get(identifier)
+        yield run
+    if run["state"]["phase"] == "published":
+        notifications.deliver_after_publication(store, identifier)
 
 
 def publish_recommendation(
@@ -374,8 +386,7 @@ def publish_recommendation(
     if run["settings"].get("kind") != "recommendation":
         raise ValueError("Not a recommendation run.")
     _validate_current_round(run)
-    with store.lease(platform_lock(run["platform"])), store.lease(identifier):
-        run = store.get(identifier)
+    with _publication_scope(store, identifier, run["platform"]) as run:
         if run["state"]["phase"] == "published":
             return run
         if run["state"]["phase"] not in {"assess", "alignment"}:
@@ -442,8 +453,7 @@ def execute_recommendation(
         raise ValueError(
             f"Continue batch {initial['settings']['batch_id']} to preserve its shared budget."
         )
-    with store.lease(platform_lock(initial["platform"])), store.lease(identifier):
-        run = store.get(identifier)
+    with _publication_scope(store, identifier, initial["platform"]) as run:
         state, settings = run["state"], run["settings"]
         _validate_current_round(run)
         recover_elapsed(run)

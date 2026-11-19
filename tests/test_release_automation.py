@@ -23,23 +23,32 @@ import release_ci
 
 
 class ReleaseAutomationTests(unittest.TestCase):
-    def test_patch_allocation_and_source_retries(self):
+    def test_version_allocation_rollover_and_source_retries(self):
         source = "a" * 40
-        latest = {"version": "0.1.9"}
+        for declared, public, expected in (
+            ("0.1.19", "0.1.19", "1.0.0"),
+            ("1.0.0", "0.9.99", "1.0.0"),
+            ("1.0.0", "1.0.0", "1.0.1"),
+            ("1.0.0", "1.0.9", "1.1.0"),
+            ("1.0.0", "1.9.9", "2.0.0"),
+            ("3.0.0", "1.9.9", "3.0.0"),
+        ):
+            with self.subTest(declared=declared, public=public):
+                self.assertEqual(
+                    release_ci.choose_version(declared, {"version": public}, source),
+                    {"version": expected, "reused": False},
+                )
+
+        latest = {"version": "1.0.1", "broaderVidsRelease": {"sourceCommit": source}}
         self.assertEqual(
-            release_ci.choose_version("0.1.0", latest, source),
-            {"version": "0.1.10", "reused": False},
+            release_ci.choose_version("1.0.0", latest, source),
+            {"version": "1.0.1", "reused": True},
         )
-        self.assertEqual(
-            release_ci.choose_version("0.2.0", latest, source)["version"], "0.2.0"
-        )
-        latest["broaderVidsRelease"] = {"sourceCommit": source}
-        self.assertTrue(release_ci.choose_version("0.1.0", latest, source)["reused"])
         for declared, public, sha in (
-            ("0.2.0", latest, source),
-            ("0.1.0", None, source),
-            ("0.1.0", {"version": "0.0.0-stage"}, source),
-            ("0.1.0", latest, "bad"),
+            ("2.0.0", latest, source),
+            ("1.0.0", None, source),
+            ("1.0.0", {"version": "0.0.0-stage"}, source),
+            ("1.0.0", latest, "bad"),
         ):
             with (
                 self.subTest(declared=declared, public=public),
@@ -50,27 +59,42 @@ class ReleaseAutomationTests(unittest.TestCase):
     def test_tagged_unpublished_versions_are_reserved_and_same_source_retries_reuse_them(
         self,
     ):
-        source = "a" * 40
-        for original, public, tags, expected in (
-            ("b" * 40, {"version": "0.1.0"}, "v0.1.0\nv0.1.1", "0.1.2"),
-            (source, {"version": "0.1.0"}, "v0.1.0\nv0.1.1", "0.1.1"),
-            ("b" * 40, {"version": "0.1.0"}, "v0.1.1\nv0.1.5\nv1.0.0-beta.1", "0.1.6"),
+        source, other = "a" * 40, "b" * 40
+        for public, tagged_sources, expected, reused in (
+            ({"version": "0.1.19"}, {"v0.1.19": other}, "1.0.0", False),
+            ({"version": "0.1.19"}, {"v1.0.0": other}, "1.0.1", False),
+            ({"version": "0.1.19"}, {"v1.0.0": other, "v1.0.1": source}, "1.0.1", True),
             (
-                "b" * 40,
-                {"version": "0.1.1", "broaderVidsRelease": {"sourceCommit": source}},
-                "v0.1.1",
+                {"version": "1.0.0"},
+                {"v1.0.9": other, "v2.0.0-beta.1": other},
+                "1.1.0",
+                False,
+            ),
+            ({"version": "1.0.0"}, {"v1.9.9": other}, "2.0.0", False),
+            (
+                {"version": "1.0.1", "broaderVidsRelease": {"sourceCommit": source}},
+                {"v1.0.1": other},
                 None,
+                False,
             ),
         ):
+
+            def git(*args):
+                if args[0] == "tag":
+                    return "\n".join(tagged_sources)
+                return tagged_sources[
+                    args[1].removeprefix("refs/tags/").removesuffix("^{commit}")
+                ]
+
             with (
-                self.subTest(original=original, public=public, tags=tags),
-                patch.object(release_ci, "check", return_value={"version": "0.1.1"}),
+                self.subTest(public=public, tags=tagged_sources),
+                patch.object(release_ci, "check", return_value={"version": "0.1.19"}),
                 patch.object(release_ci, "registry", return_value=public),
-                patch.object(release_ci, "git_value", side_effect=[tags, "c" * 40]),
+                patch.object(release_ci, "git_value", side_effect=git),
                 patch.object(
                     release_ci,
                     "source_commit",
-                    return_value={"source_sha": original, "recovery": True},
+                    side_effect=lambda commit: {"source_sha": commit, "recovery": True},
                 ),
             ):
                 if expected is None:
@@ -79,7 +103,101 @@ class ReleaseAutomationTests(unittest.TestCase):
                 else:
                     result = release_ci.plan(source)
                     self.assertEqual(result["version"], expected)
-                    self.assertEqual(result["reused"], original == source)
+                    self.assertEqual(result["tag"], "v" + expected)
+                    self.assertEqual(result["reused"], reused)
+
+    def test_completed_release_sync_preserves_dev_and_fails_on_conflict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, origin = root / "repo", root / "origin"
+            repo.mkdir()
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-C", str(repo), *args],
+                    text=True,
+                    stderr=subprocess.PIPE,
+                ).strip()
+
+            def commit_version(value):
+                (repo / "version.txt").write_text(value, encoding="utf-8")
+                git("add", "version.txt")
+                git("commit", "-m", value)
+                return git("rev-parse", "HEAD")
+
+            def remote_dev():
+                return git("ls-remote", "origin", "refs/heads/dev").split()[0]
+
+            git("init", "--initial-branch=main")
+            git("config", "user.name", "Test Release")
+            git("config", "user.email", "test@example.org")
+            git("init", "--bare", str(origin))
+            git("remote", "add", "origin", str(origin))
+            base = commit_version("0.1.19")
+            git("branch", "dev", base)
+            git("push", "origin", "dev")
+            first = commit_version("1.0.0")
+            with patch.object(release_ci, "ROOT", repo):
+                self.assertEqual(release_ci.sync_dev(first)["status"], "updated")
+                self.assertEqual(remote_dev(), first)
+                self.assertEqual(release_ci.sync_dev(first)["status"], "up-to-date")
+                second = commit_version("1.0.1")
+                git("switch", "--detach", first)
+                (repo / "work.txt").write_text("dev work", encoding="utf-8")
+                git("add", "work.txt")
+                git("commit", "-m", "Develop")
+                dev_work = git("rev-parse", "HEAD")
+                git("push", "origin", "HEAD:refs/heads/dev")
+
+                self.assertEqual(release_ci.sync_dev(second)["status"], "updated")
+                merged = remote_dev()
+                self.assertEqual(
+                    git("rev-list", "--parents", "-n", "1", merged).split(),
+                    [merged, dev_work, second],
+                )
+                self.assertEqual(git("show", f"{merged}:version.txt"), "1.0.1")
+                self.assertEqual(git("show", f"{merged}:work.txt"), "dev work")
+
+                git("switch", "--detach", second)
+                third = commit_version("1.0.2")
+                git("switch", "--detach", merged)
+                (repo / "concurrent.txt").write_text("later work", encoding="utf-8")
+                git("add", "concurrent.txt")
+                git("commit", "-m", "Concurrent dev update")
+                concurrent = git("rev-parse", "HEAD")
+                run = subprocess.run
+
+                def advance_dev_before_push(command, *args, **kwargs):
+                    if command[-3:] == ["push", "origin", "HEAD:refs/heads/dev"]:
+                        git("push", "origin", f"{concurrent}:refs/heads/dev")
+                    return run(command, *args, **kwargs)
+
+                with (
+                    patch.object(
+                        release_ci.subprocess,
+                        "run",
+                        side_effect=advance_dev_before_push,
+                    ),
+                    self.assertRaisesRegex(ValueError, "concurrent push"),
+                ):
+                    release_ci.sync_dev(third)
+                self.assertEqual(remote_dev(), concurrent)
+
+                git("switch", "--detach", concurrent)
+                divergent = commit_version("dev-only change")
+                git("push", "origin", "HEAD:refs/heads/dev")
+                with self.assertRaisesRegex(ValueError, "Resolve the merge"):
+                    release_ci.sync_dev(third)
+                self.assertEqual(remote_dev(), divergent)
+
+    def test_dev_sync_job_requires_a_completed_github_release(self):
+        workflow = yaml.safe_load(
+            (release_ci.ROOT / ".github/workflows/release.yml").read_text()
+        )
+        job = workflow["jobs"]["sync-dev"]
+        self.assertEqual(job["needs"], ["prepare", "github-release"])
+        self.assertIn("needs.github-release.result == 'success'", job["if"])
+        self.assertEqual(job["steps"][0]["with"]["fetch-depth"], 0)
 
     def test_publication_jobs_survive_skipped_ancestor_but_require_success_and_no_cancellation(
         self,

@@ -76,7 +76,7 @@ broader-vids/
     *.whl                      Generated engine package, excluded from Git
   scripts/
     release.py                 Build, verify, and synchronize release artifacts
-    release_ci.py              Patch planning, publication checks, and GitHub assets
+    release_ci.py              Version planning, publication checks, GitHub assets, and dev synchronization
     versioning.py              Validated release metadata synchronization
     test.py                    Isolated parallel regression runner
     verify_package.py          Distribution checks
@@ -229,8 +229,8 @@ See [data directory selection](REFERENCE.md#choose-a-data-directory).
 | Stored data | Purpose |
 | --- | --- |
 | `.broader-vids-profile.json` | Profile ownership marker for safe lifecycle operations |
-| `onboarding.json` | Versioned default platform and setup completion, separate from learned parameters |
-| `broader-vids.sqlite3` | Jobs, request records, profile, video state, feedback, models, and calibration |
+| `onboarding.json` | Default platform, setup completion, and optional prompt answer |
+| `broader-vids.sqlite3` | Jobs, request records, profile, video state, feedback, models, calibration, and notifications |
 | `evidence/` | Captions, frames, scorecards, retained hashes, and unfinished media |
 | `recommendations/` | Local Markdown digests and JSON reports |
 | `feedback/` | Local content descriptor records |
@@ -248,6 +248,7 @@ The `runtime cleanup` command provides a preview and an explicit apply operation
 Onboarding uses an atomic versioned file protected by a separate configuration lease.
 It does not change SQLite schema 12 or the learning revision.
 Preference transfer excludes the onboarding file.
+The setup answer only controls whether setup asks again. The dashboard stores authorization to send separately.
 
 Verified Bilibili login status also uses atomic file replacement.
 A failed replacement preserves the previous status file.
@@ -404,6 +405,16 @@ Paused assessment and alignment stages can retain a provisional preview without 
 Previews use the saved ranking policy and validated interest mappings.
 Their video-state lookup reads only inspection candidates.
 Batch heartbeats and live elapsed calculations keep progress reports current.
+
+## Notification delivery
+
+The dashboard stores ntfy settings and delivery status in the selected profile's database. Preference transfer excludes these data. Existing profiles start with delivery off.
+
+If the user enables delivery, publication queues message parts for each nonempty platform list. This includes published partial lists. The publication transaction commits the queue with the list. Provisional previews never queue messages.
+
+After publication commits, the delivery step sends plain text over HTTPS to the saved public ntfy.sh topic. The step runs independently of host Stop hooks. Each part contains at most 4096 UTF-8 bytes. Parts preserve recommendation order and include each video's rank, title, and canonical link.
+
+The dashboard shows delivery status and can retry failed or unconfirmed parts. Each retry skips parts with a confirmed send. Disabling delivery or changing the topic cancels remaining unsent parts. Delivery failures leave the published list and its chat output available.
 
 ## Evidence lifetime
 

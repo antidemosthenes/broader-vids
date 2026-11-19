@@ -222,7 +222,7 @@ It includes videos in the current list.
 Do not call it a reserve unless the data shows additional recommendations beyond published entries.
 Use the packaged [dashboard skill](../broader-vids-dashboard/SKILL.md) when the user wants browser review controls.
 `dashboard open --no-browser` returns the verified local URL without blocking the command.
-The local dashboard does not publish content to the internet.
+Dashboard ratings and exclusions stay local. When enabled, ntfy delivery sends the rank, title, and link for each published recommendation.
 
 Accept separate topic, subject, depth, and quality judgments through `rate`.
 Check the target label before applying a scoped judgment.

@@ -198,6 +198,7 @@ def main(argv=None):
                     status,
                     configure,
                     complete,
+                    record_notification_answer,
                     setup_questions,
                 )
 
@@ -207,6 +208,8 @@ def main(argv=None):
                     emit(setup_questions(store))
                 elif args.operation == "configure":
                     emit(configure(store, args.platform))
+                elif args.operation == "notifications":
+                    emit(record_notification_answer(store, args.answer))
                 else:
                     report = complete(
                         store,

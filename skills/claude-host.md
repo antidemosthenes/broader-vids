@@ -23,6 +23,9 @@ Successful setup removes obsolete managed runtimes and wheel copies. Report any 
 
 Use `onboarding questions`, `onboarding status`, `profile show`, and `onboarding configure` as required by the engine. Preview starter preferences or imports before applying them. Open Bilibili sign-in only when needed. Wait for the user to report sign-in completion, then check access.
 
+Follow [Offer optional notifications](broader-vids-setup/SKILL.md#offer-optional-notifications) after platform access checks.
+Use this guide's dashboard instructions if the user chooses Yes.
+
 Complete onboarding with `onboarding complete --format chat --model MODEL --effort EFFORT`. Include the exact active Claude model and effort. If the engine reports a required failure, repair it and repeat completion. Do not report success while an answer or required check is pending.
 
 For a successful explicit setup request, return the full guide produced by `onboarding complete --format chat`. When setup interrupts a recommendation request, continue that request after setup succeeds.
@@ -46,7 +49,7 @@ Verify status after one retry. Report the failure if startup remains blocked.
 Do not start another server when one is already active.
 Stop only the verified Broader Vids dashboard for the selected profile.
 
-The dashboard manages ratings, exclusions, interests, imports, and token reports. Do not create ratings or change preferences without the user's instruction. Dashboard access does not require a recommendation round.
+The dashboard manages ratings, exclusions, interests, imports, notifications, and token reports. Do not create ratings or change preferences without the user's instruction. Dashboard access does not require a recommendation round.
 
 ## Reset
 

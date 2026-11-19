@@ -97,6 +97,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             dialog.locator("#preferences-status").filter(
                 has_text="Preferences imported."
             ).wait_for()
+            expect(dialog.get_by_label("Your interests", exact=True)).to_be_focused()
             with closing(Store(directory)) as store:
                 self.assertEqual(preserved(store), before)
             page.keyboard.press("Escape")
@@ -288,8 +289,10 @@ class PreferenceDashboardTests(unittest.TestCase):
                 self.assertEqual(get_profile(store)["interests"], ["music", "travel"])
                 self.assertEqual(preserved(store), before)
             field.fill("music\ntravel\nphysics")
-            settings.get_by_role("button", name="Save", exact=True).click()
+            save = settings.get_by_role("button", name="Save", exact=True)
+            save.press("Enter")
             settings.locator("#interests-status").filter(has_text="Saved.").wait_for()
+            expect(save).to_be_focused()
             with closing(Store(directory)) as store:
                 self.assertEqual(current_baseline(store), baseline)
                 self.assertEqual(
@@ -365,7 +368,9 @@ class PreferenceDashboardTests(unittest.TestCase):
                 "Preferences changed since you chose this file. Check the summary, then select Import preferences again.",
                 exact=True,
             ).wait_for()
-            self.assertEqual(field.evaluate("e=>e.files.length"), 1)
+            expect(dialog.locator("#preferences-filename")).to_have_text(
+                "preferences.json"
+            )
             page.route(
                 "**/api/preferences/import",
                 lambda route: route.fulfill(
@@ -375,7 +380,9 @@ class PreferenceDashboardTests(unittest.TestCase):
             apply.click()
             dialog.get_by_text("Fixture import rejected", exact=True).wait_for()
             self.assertTrue(apply.is_enabled())
-            self.assertEqual(field.evaluate("e=>e.files.length"), 1)
+            expect(dialog.locator("#preferences-filename")).to_have_text(
+                "preferences.json"
+            )
 
     def test_closing_transfer_releases_selected_file_without_losing_rating_drafts(self):
         with dashboard_fixture() as (page, directory):
