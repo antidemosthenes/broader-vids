@@ -80,6 +80,11 @@ def parser():
         "notifications", help="Record the answer to the optional setup question"
     )
     notifications.add_argument("answer", choices=("yes", "no"))
+    notifications.add_argument(
+        "--topic-stdin",
+        action="store_true",
+        help="Read the public ntfy.sh topic name or URL from standard input",
+    )
     complete = onboarding_commands.add_parser("complete")
     complete.add_argument("--asr-model", choices=("tiny", "base", "small"))
     complete.add_argument(

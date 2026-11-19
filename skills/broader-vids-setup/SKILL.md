@@ -71,7 +71,7 @@ Use the questions in this order:
 3. `preference_source` for a new profile or an explicit change: Use calibrated starter preferences, Start fresh and enter interests, or Import my preference file.
 4. `interests` for a fresh start, or `import_path` for an import. Ask for the full file path in a text box. The starter preset requires no file path.
 5. Ask `bilibili_signin` after opening a sign-in window when the user selects Bilibili.
-6. Offer `notifications` if the engine returns this optional question after platform access checks.
+6. Offer `notifications` after platform access checks. Ask `notifications_topic` only if the user chooses Yes.
 
 Keep paths and interests as literal data when calling the launcher.
 Never execute user input as shell code.
@@ -191,22 +191,15 @@ Run `onboarding questions` again so you can see which questions still apply.
 Ask `notifications` once if the response includes it.
 Present **No, finish setup** as the default.
 Accept an explicit request to skip notifications or finish setup as **No, finish setup**.
-Record the selected value with `onboarding notifications no` or `onboarding notifications yes`.
+Record No with `onboarding notifications no`.
+For **Yes, enter a topic**, use the `notifications_topic` text question.
+Explain that anyone with the public topic address can read its messages.
+Run `onboarding notifications yes --topic-stdin` with the address on one line of standard input.
+Pass the address as literal data. Keep it out of command arguments and replies.
+This saves the topic and enables delivery for future rounds.
+If the launcher rejects the topic, offer another entry or let the user skip.
 The recorded answer prevents another prompt if setup resumes.
-If the user leaves setup before answering, the question remains available.
-
-For **Yes, open dashboard**, open the local dashboard for the same profile.
-Use the dashboard instructions for the current host.
-Direct the user to **Preferences → Notifications**.
-Ask the user to enter their public ntfy.sh topic only in that local form.
-Never ask the user to send the topic in chat.
-Explain that saving and enabling delivery in the form authorizes future sends.
-Anyone who knows the topic can read its messages.
-This feature supports public ntfy.sh topics.
-Protected topics and self-hosted servers are outside its scope.
-The dashboard visit is optional, even after a Yes answer.
-Continue setup without waiting for the user to save a topic or enable delivery.
-If the dashboard cannot open, report the issue and continue setup.
+Users can also configure delivery in **Preferences → Notifications**.
 
 ## Complete setup
 

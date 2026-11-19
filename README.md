@@ -60,7 +60,7 @@ Follow [Update an installed plugin](docs/REFERENCE.md#update-an-installed-plugin
 
 Start a new conversation and invoke the setup skill. Choose YouTube, Bilibili, or both. Then choose starter preferences, enter interests, or import a preference file. Setup checks dependencies and access. It gives repair steps when a required check fails.
 
-Optional ntfy delivery sends published lists to your devices. Enable it under **Dashboard → Preferences → Notifications**. See [device notifications](docs/WORKFLOW.md#send-recommendations-to-your-devices).
+Optional ntfy delivery sends published lists to your devices. Enable it during setup or under **Dashboard → Preferences → Notifications**. See [device notifications](docs/WORKFLOW.md#send-recommendations-to-your-devices).
 
 Invoke the recommendation skill to request a round. Review recommendations in chat. Open the dashboard to mark videos as watched and rate topic, subject, depth, and quality. Ratings update local preference and quality models. Their learned weights affect later rounds. Creator and tag exclusions apply to the next new round.
 

@@ -16,6 +16,8 @@ export function createNotifications() {
   const form = find("form"),
     toggle = find("enabled"),
     topic = find("topic"),
+    activeAddress = find("active-address"),
+    topicUrl = find("topic-url"),
     save = find("save"),
     clear = find("clear"),
     reload = find("reload"),
@@ -34,7 +36,6 @@ export function createNotifications() {
     toggle.disabled = !saved || saving;
     topic.disabled = toggle.disabled;
     topic.required = toggle.checked && !hasTopic;
-    topic.placeholder = hasTopic ? "Saved topic" : "";
     find("topic-settings").hidden =
       !toggle.checked && !hasTopic && !topic.value;
     save.hidden =
@@ -93,6 +94,9 @@ export function createNotifications() {
     if (!saved || toggle.checked === saved.enabled)
       toggle.checked = value.enabled;
     saved = value;
+    const address = saved.enabled ? saved.topic_url || "" : "";
+    if (topicUrl.textContent !== address) topicUrl.textContent = address;
+    activeAddress.hidden = !address;
     controls();
     showDeliveries();
   }
@@ -196,7 +200,12 @@ export function createNotifications() {
       topic.focus();
       return;
     }
-    configure(toggle.checked, value || null, "Notifications saved.", true);
+    configure(
+      toggle.checked,
+      value || null,
+      toggle.checked ? "" : "Topic saved.",
+      true,
+    );
   };
   controls();
   return { refresh };

@@ -201,22 +201,32 @@
                   disabled
                 />
               </label>
+              <p
+                id="notifications-active-address"
+                class="notification-active-address"
+                hidden
+              >
+                Active ntfy address: <code id="notifications-topic-url"></code>
+              </p>
               <div
                 id="notifications-topic-settings"
                 class="notification-form"
                 hidden
               >
-                <label for="notifications-topic">ntfy topic</label>
                 <input
                   id="notifications-topic"
-                  type="password"
+                  type="text"
+                  inputmode="url"
                   maxlength="80"
                   autocomplete="off"
+                  autocapitalize="off"
                   spellcheck="false"
+                  aria-label="New ntfy topic or URL"
                   aria-describedby="notifications-format notifications-privacy"
                 />
                 <p id="notifications-format" class="note small-text">
-                  Enter a topic name or https://ntfy.sh/your-topic.
+                  Enter a new topic name or URL, such as
+                  https://ntfy.sh/your-topic.
                 </p>
                 <p id="notifications-privacy" class="note small-text">
                   Anyone who knows this public topic can read the
@@ -224,20 +234,20 @@
                 </p>
                 <div class="notification-actions">
                   <button
-                    id="notifications-clear"
-                    class="button quiet"
-                    type="button"
-                    hidden
-                  >
-                    Clear saved topic
-                  </button>
-                  <button
                     id="notifications-save"
                     class="button primary"
                     type="submit"
                     hidden
                   >
                     Save notifications
+                  </button>
+                  <button
+                    id="notifications-clear"
+                    class="button"
+                    type="button"
+                    hidden
+                  >
+                    Clear topic
                   </button>
                 </div>
               </div>

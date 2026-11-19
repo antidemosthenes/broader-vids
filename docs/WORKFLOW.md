@@ -382,15 +382,11 @@ It can retain unfinished work instead of producing twenty complete recommendatio
 
 ### Send recommendations to your devices
 
-First-time setup offers optional ntfy delivery. It starts off. Choose **Yes, open dashboard** to open the local dashboard. You can finish setup before you enable delivery.
+First-time setup offers optional ntfy delivery. Choose **Yes, enter a topic** to enable it during setup. Enter a public ntfy.sh topic name or URL. Subscribe to the same topic in the ntfy app on each device.
 
-1. Open **Dashboard → Preferences → Notifications**.
-2. Turn on **Send new recommendations to ntfy**.
-3. Enter a hard-to-guess public ntfy.sh topic in the local form.
-4. Select **Save notifications** to authorize future delivery.
-5. Subscribe to the same topic in the ntfy app on each device.
+Use **Dashboard → Preferences → Notifications** to view the active address, change the topic, or turn delivery off. You can also enable delivery there after setup.
 
-Anyone who knows the topic can read its messages. Keep the topic out of chat. This feature supports public ntfy.sh topics. Protected topics and self-hosted servers are outside its scope. Saving or disabling delivery makes no request to ntfy.sh.
+Anyone who knows the public topic address can read its messages. Choose a hard-to-guess topic. Saving or disabling delivery makes no request to ntfy.sh.
 
 Broader Vids sends each nonempty platform list after it publishes the list. This includes final and published partial lists. Provisional previews stay local. Messages contain each video's rank, title, and link. Long lists use multiple messages.
 

@@ -47,6 +47,10 @@ def _normalize_topic(value):
     raise ValueError("Use an ntfy.sh topic name or its exact HTTPS topic URL.")
 
 
+def topic_url(value):
+    return f"{_TOPIC_URL}{_normalize_topic(value)}"
+
+
 def _configuration(store):
     if store.db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ntfy_settings'"

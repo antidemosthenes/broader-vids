@@ -294,10 +294,10 @@ Blocked completion still returns structured diagnostics and a nonzero exit code.
 It does not change preferences, configure platforms, open a browser, or run access checks.
 The setup skill uses those definitions with an available user-question tool.
 The optional `notifications` question applies to first-time setup.
-`onboarding notifications yes` or `onboarding notifications no` records the answer so setup can resume without repeating the question.
-Completion treats an unanswered notification question as No.
-For a Yes answer, the setup skill opens the local dashboard. Enable delivery in the dashboard form.
-Free-text questions collect interests, an import-file path, or sign-in troubleshooting details.
+For a Yes answer, the setup skill collects the topic with `notifications_topic`.
+`onboarding notifications yes --topic-stdin` reads one line from standard input. It saves the topic and enables delivery.
+`onboarding notifications no` declines delivery during setup. If the question is unanswered, completion uses the saved delivery setting.
+Free-text questions also collect interests, an import-file path, or sign-in troubleshooting details.
 A host without suitable question controls uses text questions.
 Configure the platform before completion.
 Import preferences or set interests before completion.
@@ -1055,7 +1055,7 @@ The foreground `serve` command remains available for terminal use.
 
 ### Configure and retry ntfy notifications
 
-Open **Dashboard → Preferences → Notifications**. The form accepts a public topic name or its exact `https://ntfy.sh/<topic>` URL. Keep the topic in the local form. Anyone who knows the topic can read its messages. Protected topics and self-hosted servers are outside scope.
+Open **Dashboard → Preferences → Notifications**. The form accepts a public topic name or its exact `https://ntfy.sh/<topic>` URL. The panel shows the active topic address when delivery is on. Anyone who knows the topic can read its messages. Protected topics and self-hosted servers are outside scope.
 
 A settings change makes no request to ntfy.sh. Enabling delivery applies to future published lists. Turning delivery off or changing the topic cancels queued parts. A request already in progress can still reach the previous topic. **Clear saved topic** removes it and disables delivery.
 

@@ -209,7 +209,16 @@ def main(argv=None):
                 elif args.operation == "configure":
                     emit(configure(store, args.platform))
                 elif args.operation == "notifications":
-                    emit(record_notification_answer(store, args.answer))
+                    if (args.answer == "yes") != args.topic_stdin:
+                        raise ValueError(
+                            "Use --topic-stdin with a Yes answer to set up notifications."
+                        )
+                    topic = (
+                        sys.stdin.readline(128).rstrip("\r\n")
+                        if args.topic_stdin
+                        else None
+                    )
+                    emit(record_notification_answer(store, args.answer, topic=topic))
                 else:
                     report = complete(
                         store,
