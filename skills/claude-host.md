@@ -24,7 +24,6 @@ Successful setup removes obsolete managed runtimes and wheel copies. Report any 
 Use `onboarding questions`, `onboarding status`, `profile show`, and `onboarding configure` as required by the engine. Preview starter preferences or imports before applying them. Open Bilibili sign-in only when needed. Wait for the user to report sign-in completion, then check access.
 
 Follow [Offer optional notifications](broader-vids-setup/SKILL.md#offer-optional-notifications) after platform access checks.
-Use this guide's dashboard instructions if the user chooses Yes.
 
 Complete onboarding with `onboarding complete --format chat --model MODEL --effort EFFORT`. Include the exact active Claude model and effort. If the engine reports a required failure, repair it and repeat completion. Do not report success while an answer or required check is pending.
 

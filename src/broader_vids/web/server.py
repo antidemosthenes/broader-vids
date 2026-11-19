@@ -438,6 +438,10 @@ def make_server(root, port=8765, *, control=None):
                 "has_topic": bool(result["topic"]),
                 "deliveries": result["deliveries"],
             }
+            if result["enabled"] and result["topic"]:
+                from broader_vids.notifications import topic_url
+
+                response["topic_url"] = topic_url(result["topic"])
             return self.send(200, json.dumps(response, ensure_ascii=False))
 
         def do_POST(self):

@@ -322,9 +322,10 @@ function render() {
         ? "Exclusions"
         : "Calibration";
   $("#page-title").textContent = title;
-  $("#page-subtitle").textContent = isPreferences
-    ? "Your interests and learned preferences."
-    : isRules
+  const subtitle = $("#page-subtitle");
+  subtitle.hidden = isPreferences;
+  if (!isPreferences)
+    subtitle.textContent = isRules
       ? "Choose the sources you want to see."
       : state.view === "calibration"
         ? "Optional examples to refine your preferences."

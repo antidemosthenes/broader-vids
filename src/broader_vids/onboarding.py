@@ -5,6 +5,7 @@ import json
 import re
 
 from broader_vids.evidence.service import atomic_json
+from broader_vids import notifications
 from broader_vids.preferences import get_profile
 from broader_vids.storage import utc_now
 
@@ -110,8 +111,12 @@ def setup_questions(store):
                 {
                     "notifications": choice(
                         "Send published recommendations to your devices with ntfy?",
-                        [("no", "No, finish setup"), ("yes", "Yes, open dashboard")],
-                    )
+                        [("no", "No, finish setup"), ("yes", "Yes, enter a topic")],
+                    ),
+                    "notifications_topic": {
+                        "input": "text",
+                        "title": "Enter your public ntfy.sh topic name or URL.",
+                    },
                 }
                 if _show_notifications_prompt(previous, profile)
                 else {}
@@ -152,9 +157,11 @@ def configure(store, platform):
     return value
 
 
-def record_notification_answer(store, answer):
+def record_notification_answer(store, answer, *, topic=None):
     if answer not in ("yes", "no"):
         raise ValueError("Choose yes or no for the setup question about notifications.")
+    if (answer == "yes") != (topic is not None):
+        raise ValueError("Use --topic-stdin with a Yes answer to set up notifications.")
     with store.lease(LOCK):
         previous = status(store.root)
         if previous.get("notifications_prompt") == answer:
@@ -163,6 +170,10 @@ def record_notification_answer(store, answer):
             raise ValueError(
                 "This profile has no pending setup question about notifications."
             )
+        if answer == "yes":
+            notifications.configure(store, True, topic)
+        elif notifications.settings(store)["enabled"]:
+            notifications.configure(store, False, None)
         value = {**previous, "notifications_prompt": answer}
         atomic_json(store.root / "onboarding.json", value)
     return value
@@ -208,7 +219,9 @@ def complete(
             )
         value = {**previous, "completed_at": utc_now()}
         if value.get("notifications_prompt") == "pending":
-            value["notifications_prompt"] = "no"
+            value["notifications_prompt"] = (
+                "yes" if notifications.settings(store)["enabled"] else "no"
+            )
         atomic_json(store.root / "onboarding.json", value)
     return {
         **report,

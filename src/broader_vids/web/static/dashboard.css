@@ -1513,20 +1513,19 @@ main:has(> .preferences-page:not([hidden])) > .app-header {
   padding-bottom: 1rem;
 }
 .preferences-layout {
+  display: grid;
+  gap: 1rem;
   max-width: var(--preferences-width);
   margin-inline: auto;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface);
 }
 .preference-panel {
   min-width: 0;
   padding: 1rem clamp(1rem, 3vw, 1.5rem);
   display: grid;
   gap: 0.55rem;
-}
-.preference-panel + .preference-panel {
-  border-top: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
 }
 .preference-panel > h2 {
   font-size: var(--text-section);
@@ -1597,8 +1596,21 @@ main:has(> .preferences-page:not([hidden])) > .app-header {
   border-radius: 8px;
   background: var(--bg);
 }
+.notification-active-address {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-control);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.notification-active-address code {
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
 .notification-actions {
   display: flex;
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
 }
@@ -1629,10 +1641,11 @@ main:has(> .preferences-page:not([hidden])) > .app-header {
   display: grid;
   gap: 0.6rem;
   min-width: 0;
-  padding-block: 0.55rem;
 }
-.preference-transfer-item + .preference-transfer-item {
-  border-top: 1px solid var(--line);
+.preferences-transfer {
+  display: grid;
+  gap: 1rem;
+  padding-block-start: 1.25rem;
 }
 .preference-transfer-row {
   display: flex;
@@ -1641,6 +1654,13 @@ main:has(> .preferences-page:not([hidden])) > .app-header {
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   font-size: var(--text-control);
+}
+.preference-transfer-row > div {
+  flex: 1 1 7rem;
+  min-width: 0;
+}
+.preference-transfer-row .button {
+  flex-shrink: 0;
 }
 .preference-transfer-row h3 {
   font-size: var(--text-control);

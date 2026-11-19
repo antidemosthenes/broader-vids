@@ -45,8 +45,8 @@ Never stop another process based only on its port or an old PID.
 Recommendations, exclusions, and optional calibration have separate views.
 Use Preferences to edit broader interests and import or export learned weights.
 Use Preferences → Notifications to manage optional ntfy delivery.
-Direct the user to enter their public topic in the local form.
-Never ask for the topic in chat.
+The panel displays the active topic address when delivery is on.
+Use the local form when the user wants to change the topic from the dashboard.
 The user can review failed or unconfirmed deliveries in that form.
 Imported interests appear in the same editor. Save any later edits before exporting.
 Interest edits keep ratings and calibration. Finish active recommendation work before saving.

@@ -408,7 +408,7 @@ Batch heartbeats and live elapsed calculations keep progress reports current.
 
 ## Notification delivery
 
-The dashboard stores ntfy settings and delivery status in the selected profile's database. Preference transfer excludes these data. Existing profiles start with delivery off.
+Setup and the dashboard save ntfy settings in the selected profile's database. Setup reads the topic from standard input and returns only the setup status. The dashboard shows the active address through its authenticated settings response. Preference transfer excludes ntfy settings and delivery status.
 
 If the user enables delivery, publication queues message parts for each nonempty platform list. This includes published partial lists. The publication transaction commits the queue with the list. Provisional previews never queue messages.
 

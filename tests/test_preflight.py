@@ -11,8 +11,14 @@ from unittest.mock import patch, Mock
 from broader_vids.cli import main
 from broader_vids.cli.arguments import parser
 from broader_vids.cli.startup import prepare_recommendation, startup_lock
+from broader_vids import notifications
 from broader_vids.notifications import settings as notification_settings
-from broader_vids.onboarding import configure, complete, status
+from broader_vids.onboarding import (
+    configure,
+    complete,
+    record_notification_answer,
+    status,
+)
 from broader_vids.preferences import get_profile, set_profile, user_action
 from broader_vids.preflight import (
     preflight,
@@ -143,10 +149,11 @@ class PreflightTests(unittest.TestCase):
                 "title": "Send published recommendations to your devices with ntfy?",
                 "options": [
                     {"value": "no", "label": "No, finish setup"},
-                    {"value": "yes", "label": "Yes, open dashboard"},
+                    {"value": "yes", "label": "Yes, enter a topic"},
                 ],
             },
         )
+        self.assertEqual(questions["notifications_topic"]["input"], "text")
         self.assertEqual(questions["import_path"]["input"], "text")
         self.assertEqual(questions["interests"]["input"], "text")
         self.assertEqual(
@@ -183,16 +190,76 @@ class PreflightTests(unittest.TestCase):
         _, questions = self.invoke("onboarding", "questions")
         self.assertIn("notifications", questions["questions"])
 
-        code, report = self.invoke("onboarding", "notifications", "yes")
+        with patch("sys.stdin", io.StringIO("https://ntfy.sh/fixture-setup-topic\r\n")):
+            code, report = self.invoke(
+                "onboarding", "notifications", "yes", "--topic-stdin"
+            )
         self.assertEqual(code, 0)
         self.assertEqual(report["notifications_prompt"], "yes")
+        self.assertNotIn("fixture-setup-topic", json.dumps(report))
         self.assertIsNone(report["completed_at"])
         configure(self.store, "both")
         _, questions = self.invoke("onboarding", "questions")
         self.assertNotIn("notifications", questions["questions"])
+        self.assertNotIn("notifications_topic", questions["questions"])
         self.assertEqual(status(self.store.root)["notifications_prompt"], "yes")
-        self.assertFalse(notification_settings(self.store)["enabled"])
+        settings = notification_settings(self.store)
+        self.assertTrue(settings["enabled"])
+        self.assertEqual(settings["topic"], "fixture-setup-topic")
         self.probe.assert_not_called()
+
+    def test_invalid_notification_topic_leaves_setup_pending(self):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM user_profile")
+        configure(self.store, "youtube")
+        for invalid in ("", "https://example.test/fixture-invalid-topic", "x" * 200):
+            with (
+                self.subTest(invalid=invalid),
+                patch("sys.stdin", io.StringIO(invalid)),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()) as errors,
+            ):
+                code = main(
+                    [
+                        "--data-dir",
+                        self.directory.name,
+                        "onboarding",
+                        "notifications",
+                        "yes",
+                        "--topic-stdin",
+                    ]
+                )
+                self.assertNotEqual(code, 0)
+                self.assertNotIn("fixture-invalid-topic", errors.getvalue())
+                self.assertEqual(
+                    status(self.store.root)["notifications_prompt"], "pending"
+                )
+                self.assertFalse(notification_settings(self.store)["enabled"])
+        notifications.configure(self.store, True, "configured-before-answer")
+        code, report = self.invoke("onboarding", "notifications", "no")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["notifications_prompt"], "no")
+        self.assertFalse(notification_settings(self.store)["enabled"])
+
+    def test_completion_recovers_saved_topic_after_interrupted_answer(self):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM user_profile")
+        configure(self.store, "youtube")
+        set_profile(self.store, ["mathematics"])
+        with (
+            patch(
+                "broader_vids.onboarding.atomic_json",
+                side_effect=OSError("Interrupted write"),
+            ),
+            self.assertRaises(OSError),
+        ):
+            record_notification_answer(self.store, "yes", topic="fixture-setup-topic")
+        self.assertEqual(status(self.store.root)["notifications_prompt"], "pending")
+
+        report = complete(self.store, model="fixture-model", effort="low")
+
+        self.assertEqual(report["onboarding"]["notifications_prompt"], "yes")
+        self.assertTrue(notification_settings(self.store)["enabled"])
 
     def test_completion_skips_unanswered_notifications(self):
         with self.store.db:

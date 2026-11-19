@@ -65,12 +65,24 @@ class NotificationsApiTests(unittest.TestCase):
                     self.assertEqual(status, 200)
                     self.assertEqual(
                         json.loads(data),
-                        {"enabled": True, "has_topic": True, "deliveries": []},
+                        {
+                            "enabled": True,
+                            "has_topic": True,
+                            "deliveries": [],
+                            "topic_url": f"https://ntfy.sh/{topic}",
+                        },
                     )
                     with closing(Store(directory)) as store:
                         self.assertEqual(notifications.settings(store)["topic"], topic)
+                    status, data = request(
+                        endpoint,
+                        {"enabled": False, "topic": None},
+                        authenticated,
+                    )
+                    self.assertEqual(status, 200)
+                    self.assertNotIn("topic_url", json.loads(data))
+                    self.assertNotIn(topic, data)
                     for path, body in (
-                        (endpoint, {}),
                         ("/api/state", None),
                         ("/api/preferences/export", {}),
                     ):
@@ -102,7 +114,9 @@ class NotificationsDashboardTests(unittest.TestCase):
             toggle = panel.get_by_role(
                 "switch", name="Send new recommendations to ntfy"
             )
-            field = panel.get_by_label("ntfy topic", exact=True)
+            field = panel.get_by_label("New ntfy topic or URL", exact=True)
+            active_address = panel.locator("#notifications-active-address")
+            topic_url = panel.locator("#notifications-topic-url")
             save = panel.get_by_role("button", name="Save notifications")
             expect(toggle).to_be_enabled()
             expect(toggle).not_to_be_checked()
@@ -124,14 +138,16 @@ class NotificationsDashboardTests(unittest.TestCase):
             destination = "fixture-private-topic"
             field.fill(destination)
             save.click()
-            expect(panel.get_by_role("status")).to_have_text("Notifications saved.")
+            expect(panel.locator("#notifications-status")).to_be_hidden()
             expect(toggle).to_be_checked()
             expect(toggle).to_be_focused()
             expect(field).to_have_value("")
-            expect(field).to_have_attribute("type", "password")
-            expect(field).to_have_attribute("placeholder", "Saved topic")
+            expect(field).to_have_attribute("type", "text")
+            self.assertIsNone(field.get_attribute("placeholder"))
+            expect(active_address).to_be_visible()
+            expect(topic_url).to_have_text(f"https://ntfy.sh/{destination}")
             send.assert_not_called()
-            self.assertNotIn(destination, page.content())
+            expect(field).to_have_value("")
 
             with closing(Store(directory)) as store:
                 run_id = store.create(
@@ -150,10 +166,17 @@ class NotificationsDashboardTests(unittest.TestCase):
                     notifications.enqueue(store, store.get(run_id))
                 notifications.deliver(store, run_id)
             self.assertEqual(send.call_count, 1)
+            topic_url.evaluate(
+                "(address) => window.getSelection().selectAllChildren(address)"
+            )
             page.evaluate('() => document.dispatchEvent(new Event("visibilitychange"))')
             recent = panel.get_by_role("region", name="Recent deliveries")
             retry = recent.get_by_role("button", name=re.compile(r"^Retry YouTube"))
             expect(recent.get_by_text("Delivery failed", exact=True)).to_be_visible()
+            self.assertEqual(
+                page.evaluate("window.getSelection().toString()"),
+                f"https://ntfy.sh/{destination}",
+            )
             retry.click()
             expect(
                 recent.get_by_text("Delivery unconfirmed", exact=True)
@@ -171,10 +194,12 @@ class NotificationsDashboardTests(unittest.TestCase):
             expect(panel.get_by_role("status")).to_have_text(
                 "Notifications turned off."
             )
+            expect(active_address).to_be_hidden()
+            expect(topic_url).to_have_text("")
             with closing(Store(directory)) as store:
                 self.assertFalse(notifications.settings(store)["enabled"])
                 self.assertEqual(notifications.settings(store)["topic"], destination)
-            panel.get_by_role("button", name="Clear saved topic").click()
+            panel.get_by_role("button", name="Clear topic").click()
             expect(panel.get_by_role("status")).to_have_text("Saved topic cleared.")
             expect(field).to_be_hidden()
             expect(toggle).to_be_focused()
