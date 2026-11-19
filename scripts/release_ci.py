@@ -16,6 +16,7 @@ from release import ROOT, REGISTRY, check, filenames, verify as verify_artifacts
 
 REPO = "antidemosthenes/broader-vids"
 API = "https://api.github.com/repos/" + REPO
+_FIRST_PUBLIC_VERSION = (1, 0, 0)
 
 
 def version_tuple(version):
@@ -104,6 +105,15 @@ def readiness(source_sha, main_sha):
     return {"eligible": True}
 
 
+def _next_release_version(version):
+    major, minor, patch = version
+    if major == 0:
+        return _FIRST_PUBLIC_VERSION
+    carry, patch = divmod(patch + 1, 10)
+    carry, minor = divmod(minor + carry, 10)
+    return major + carry, minor, patch
+
+
 def choose_version(declared, latest, source_sha):
     base = version_tuple(declared)
     if not re.fullmatch(r"[a-f0-9]{40}", source_sha):
@@ -121,7 +131,7 @@ def choose_version(declared, latest, source_sha):
                 "Published source metadata conflicts with the declared version."
             )
         return {"version": latest["version"], "reused": True}
-    target = max(base, (public[0], public[1], public[2] + 1))
+    target = max(base, _next_release_version(public))
     return {"version": ".".join(map(str, target)), "reused": False}
 
 
@@ -134,22 +144,78 @@ def plan(source_sha):
             tags[tag] = version_tuple(tag[1:])
         except ValueError:
             continue
-    tag = "v" + result["version"]
-    if tag in tags:
+    target = version_tuple(result["version"])
+    if result["reused"]:
+        tag = "v" + result["version"]
+        candidates = [tag] if tag in tags else []
+    else:
+        candidates = [
+            tag
+            for tag in sorted(tags, key=tags.get, reverse=True)
+            if tags[tag] >= target
+        ]
+    for tag in candidates:
         tagged = source_commit(git_value("rev-parse", "refs/tags/" + tag + "^{commit}"))
         if tagged["recovery"] and tagged["source_sha"] == source_sha:
-            result["reused"] = True
-        elif result["reused"]:
+            return {
+                "version": tag[1:],
+                "reused": True,
+                "tag": tag,
+                "source_sha": source_sha,
+            }
+        if result["reused"]:
             raise ValueError(
                 "The published source conflicts with the immutable release tag."
             )
-        else:
-            highest = max(tags.values())
-            result = {
-                "version": f"{highest[0]}.{highest[1]}.{highest[2] + 1}",
-                "reused": False,
-            }
+    if not result["reused"] and tags:
+        target = max(target, _next_release_version(max(tags.values())))
+        result["version"] = ".".join(map(str, target))
     return {**result, "tag": "v" + result["version"], "source_sha": source_sha}
+
+
+def sync_dev(release_sha):
+    if not re.fullmatch(r"[a-f0-9]{40}", release_sha):
+        raise ValueError(
+            "The release commit must contain forty lowercase hexadecimal characters."
+        )
+
+    def git(*arguments):
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), *arguments],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        sys.stderr.write(result.stdout)
+        result.check_returncode()
+
+    git("fetch", "--no-tags", "origin", "refs/heads/dev")
+    dev_tip = git_value("rev-parse", "FETCH_HEAD")
+    if git_value("merge-base", release_sha, dev_tip) == release_sha:
+        return {"status": "up-to-date", "branch": "dev"}
+    git("switch", "--detach", dev_tip)
+    try:
+        git(
+            "-c",
+            "user.name=github-actions[bot]",
+            "-c",
+            "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+            "merge",
+            "--ff",
+            "--no-edit",
+            release_sha,
+        )
+    except subprocess.CalledProcessError as error:
+        raise ValueError(
+            "Could not merge the released commit into dev. Resolve the merge before retrying."
+        ) from error
+    try:
+        git("push", "origin", "HEAD:refs/heads/dev")
+    except subprocess.CalledProcessError as error:
+        raise ValueError(
+            "Could not update dev. Check for a concurrent push or a branch rule, then retry."
+        ) from error
+    return {"status": "updated", "branch": "dev"}
 
 
 def integrity(archive):
@@ -322,6 +388,8 @@ def main():
     selected = commands.add_parser("github-release")
     selected.add_argument("--version", required=True)
     selected.add_argument("--artifacts-dir", type=Path, default=ROOT / "dist")
+    selected = commands.add_parser("sync-dev")
+    selected.add_argument("--release-sha", required=True)
     args = parser.parse_args()
     if args.operation == "source":
         result = source_commit(args.commit)
@@ -329,6 +397,8 @@ def main():
         result = readiness(args.source_sha, args.main_sha)
     elif args.operation == "plan":
         result = plan(args.source_sha)
+    elif args.operation == "sync-dev":
+        result = sync_dev(args.release_sha)
     elif args.operation == "github-release":
         result = github_release(args.version, args.artifacts_dir)
     else:

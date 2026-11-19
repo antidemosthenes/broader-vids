@@ -23,7 +23,7 @@ Keep preserves the saved preferences and sources. It skips source selection.
 Change lets you choose the starter preset, manual interests, or an import.
 Then choose YouTube, Bilibili, or both as your sources.
 The host shows question controls when available. A text-only host asks the same questions in chat.
-Setup waits for each submitted answer before dependent work.
+Setup waits for each required answer before dependent work.
 After opening Bilibili sign-in, setup asks whether you signed in, need help, or are still signing in.
 Required tools and selected platform access must pass before setup completes.
 Transcription and ffprobe remain optional.
@@ -41,7 +41,7 @@ Open Preferences to edit the current broader interests shared by YouTube and Bil
 The editor shows saved interests before you choose any import file.
 Interest changes preserve calibration and history.
 Finish active recommendation work before saving, then start a new round.
-Reset keeps tools and Bilibili sign-in while removing learned data and histories.
+Reset removes learned data, histories, and notification settings. It keeps tools and Bilibili sign-in.
 Clean removes the complete managed data directory while keeping the plugin installed.
 Both destructive actions start with a preview and require an explicit request before application.
 
@@ -379,6 +379,22 @@ Check any access failures and incomplete assessments.
 The default batch has no overall time limit.
 Individual operations retain timeouts. Request, media, and model-call limits still apply.
 It can retain unfinished work instead of producing twenty complete recommendations.
+
+### Send recommendations to your devices
+
+First-time setup offers optional ntfy delivery. It starts off. Choose **Yes, open dashboard** to open the local dashboard. You can finish setup before you enable delivery.
+
+1. Open **Dashboard → Preferences → Notifications**.
+2. Turn on **Send new recommendations to ntfy**.
+3. Enter a hard-to-guess public ntfy.sh topic in the local form.
+4. Select **Save notifications** to authorize future delivery.
+5. Subscribe to the same topic in the ntfy app on each device.
+
+Anyone who knows the topic can read its messages. Keep the topic out of chat. This feature supports public ntfy.sh topics. Protected topics and self-hosted servers are outside its scope. Saving or disabling delivery makes no request to ntfy.sh.
+
+Broader Vids sends each nonempty platform list after it publishes the list. This includes final and published partial lists. Provisional previews stay local. Messages contain each video's rank, title, and link. Long lists use multiple messages.
+
+Chat results and the dashboard remain available if delivery fails. Open **Notifications** to check **Recent deliveries** or retry a failed or unconfirmed send. Retrying an unconfirmed send may produce a duplicate.
 
 ## 6. Give separate feedback
 

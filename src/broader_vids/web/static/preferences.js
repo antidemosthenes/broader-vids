@@ -1,6 +1,8 @@
 import { get, request } from "./api.js";
+import { createNotifications } from "./notifications.js";
 
 export function createPreferences({ busy, changed, getProfile }) {
+  const notifications = createNotifications();
   const find = (id) => document.getElementById(`preferences-${id}`);
   const input = document.getElementById("interests-input"),
     interestStatus = document.getElementById("interests-status"),
@@ -30,10 +32,10 @@ export function createPreferences({ busy, changed, getProfile }) {
     changed(value);
     controls();
   }
-  function resetTransfer(clearFile = true) {
+  function resetTransfer() {
     text = preview = undefined;
-    if (clearFile) file.value = "";
-    find("filename").textContent = "No file selected";
+    file.value = "";
+    find("filename").textContent = "";
     find("preview").hidden = true;
     find("summary").replaceChildren();
     status.textContent = "";
@@ -73,12 +75,13 @@ export function createPreferences({ busy, changed, getProfile }) {
   }
   async function operation(target, message, task) {
     if (active) return;
+    let nextFocus = document.activeElement;
     active = true;
     busy(true);
     target.textContent = message;
     controls();
     try {
-      await task();
+      nextFocus = (await task()) || nextFocus;
     } catch (error) {
       target.textContent = error.message;
     } finally {
@@ -86,6 +89,12 @@ export function createPreferences({ busy, changed, getProfile }) {
       if (!visible) resetTransfer();
       controls();
       busy(false);
+      if (
+        visible &&
+        document.activeElement === document.body &&
+        find("page").contains(nextFocus)
+      )
+        nextFocus.focus();
     }
   }
   function loadInterests() {
@@ -136,26 +145,21 @@ export function createPreferences({ busy, changed, getProfile }) {
         "Saved. New recommendation rounds will use these interests.";
     });
   };
-  find("choose").onclick = () => {
-    file.value = "";
-    file.click();
-  };
+  find("choose").onclick = () => file.click();
   file.onchange = () => {
     if (active) return;
     const selected = file.files[0];
-    resetTransfer(false);
-    if (!selected) {
-      status.textContent = "";
-      return;
-    }
+    resetTransfer();
+    if (!selected) return;
     find("filename").textContent = selected.name;
     operation(status, "Checking preference file…", async () => {
       if (selected.size > 8 * 1024 * 1024)
         throw Error("The preference file must not exceed 8 MiB.");
-      text = (await selected.text()).replace(/^\uFEFF/, "");
+      const contents = (await selected.text()).replace(/^\uFEFF/, "");
       showPreview(
-        await request("/api/preferences/preview", { file_text: text }),
+        await request("/api/preferences/preview", { file_text: contents }),
       );
+      text = contents;
       status.textContent =
         "File is compatible. Check the summary before importing.";
     });
@@ -188,10 +192,7 @@ export function createPreferences({ busy, changed, getProfile }) {
         creatorNoun = creatorExclusions === 1 ? "exclusion" : "exclusions";
       const creatorResult = `Manual creator lists replaced with ${creatorExclusions.toLocaleString()} ${creatorNoun} (${(creatorsByPlatform.youtube ?? 0).toLocaleString()} YouTube, ${(creatorsByPlatform.bilibili ?? 0).toLocaleString()} Bilibili).`;
       status.textContent = `Preferences imported. Restored watched status for ${result.watched_videos.toLocaleString()} video IDs. ${creatorResult} Recovery file: ${result.backup_path}`;
-      if (visible) {
-        find("page").scrollTop = 0;
-        input.focus({ preventScroll: true });
-      }
+      return input;
     });
   };
   find("export").onclick = () => {
@@ -217,9 +218,13 @@ export function createPreferences({ busy, changed, getProfile }) {
   };
   controls();
   return {
+    refresh() {
+      if (visible) notifications.refresh();
+    },
     open() {
       if (visible) return;
       visible = true;
+      notifications.refresh();
       if (!dirty) {
         const saved = getProfile?.();
         if (saved) applyProfile(saved);

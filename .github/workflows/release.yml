@@ -145,7 +145,7 @@ jobs:
         if: steps.current.outputs.ready == 'true'
         with:
           node-version: "24"
-      - name: Select the public patch version
+      - name: Select the public release version
         if: steps.current.outputs.ready == 'true'
         id: plan
         env:
@@ -294,3 +294,21 @@ jobs:
           uv sync --locked
           uv run --no-sync scripts/release.py verify --artifacts-dir dist
           uv run --no-sync scripts/release_ci.py github-release --version "$RELEASE_VERSION" --artifacts-dir dist
+
+  sync-dev:
+    needs: [prepare, github-release]
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      needs.github-release.result == 'success' && needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - name: Merge the completed release into dev
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: python3 scripts/release_ci.py sync-dev --release-sha "$RELEASE_SHA"

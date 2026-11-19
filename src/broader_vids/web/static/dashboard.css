@@ -958,19 +958,6 @@ dialog::backdrop {
   background: color-mix(in srgb, currentColor 12%, var(--raised));
   border-color: color-mix(in srgb, currentColor 32%, var(--raised));
 }
-.preference-file {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  margin: 18px 0;
-  font-size: var(--text-body);
-}
-.preference-file span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  flex: 1 1 160px;
-}
 .transfer-actions {
   display: flex;
   justify-content: flex-end;
@@ -1480,7 +1467,7 @@ dialog::backdrop {
 
 .interests-copy {
   display: grid;
-  gap: 14px;
+  gap: 8px;
 }
 .interests-copy label {
   font-size: var(--text-control);
@@ -1488,8 +1475,8 @@ dialog::backdrop {
 }
 .interests-copy textarea {
   width: 100%;
-  min-height: 12rem;
-  max-height: 36vh;
+  min-height: 5.75rem;
+  max-height: max(6rem, min(12rem, 36vh));
   resize: vertical;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1506,34 +1493,40 @@ dialog::backdrop {
 .interests-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
 }
 
+main:has(> .preferences-page:not([hidden])) {
+  --preferences-width: 52rem;
+}
+main:has(> .preferences-page:not([hidden])) > .app-header {
+  width: min(100%, var(--preferences-width));
+  margin-inline: auto;
+}
 .preferences-page {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 0 2px 20px;
+  padding-bottom: 1rem;
 }
 .preferences-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-.preference-panel {
-  min-width: 0;
-  padding: 24px;
+  max-width: var(--preferences-width);
+  margin-inline: auto;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
+}
+.preference-panel {
+  min-width: 0;
+  padding: 1rem clamp(1rem, 3vw, 1.5rem);
   display: grid;
-  gap: 16px;
+  gap: 0.55rem;
+}
+.preference-panel + .preference-panel {
+  border-top: 1px solid var(--line);
 }
 .preference-panel > h2 {
   font-size: var(--text-section);
@@ -1541,13 +1534,124 @@ dialog::backdrop {
 .preference-panel > p {
   font-size: var(--text-body);
 }
-.preferences-transfer {
+.notification-form {
   display: grid;
-  gap: 24px;
-  min-width: 0;
+  gap: 10px;
+  font-size: var(--text-control);
 }
-.preference-panel .preference-file {
+.notification-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2.75rem;
+  gap: 12px;
+  font-weight: 600;
+}
+.notification-toggle input {
+  appearance: none;
+  flex: none;
+  display: grid;
+  align-items: center;
+  width: 2.75rem;
+  height: 1.55rem;
   margin: 0;
+  padding: 0 0.16rem;
+  border: 1px solid transparent;
+  border-radius: 1rem;
+  background: var(--muted);
+  cursor: pointer;
+}
+.notification-toggle input::before {
+  content: "";
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--surface);
+}
+.notification-toggle input:checked {
+  justify-items: end;
+  background: var(--accent);
+}
+.notification-toggle input:active:not(:disabled)::before {
+  scale: 0.9;
+}
+.notification-toggle input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+@media (forced-colors: active) {
+  .notification-toggle input {
+    appearance: auto;
+    width: 1.4rem;
+    height: 1.4rem;
+  }
+  .notification-toggle input::before {
+    display: none;
+  }
+}
+#notifications-topic {
+  width: 100%;
+  min-height: 2.65rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.notification-history {
+  display: grid;
+  gap: 8px;
+  font-size: var(--text-control);
+}
+.notification-history ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.notification-delivery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.notification-delivery .button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+}
+.preference-transfer-item {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 0;
+  padding-block: 0.55rem;
+}
+.preference-transfer-item + .preference-transfer-item {
+  border-top: 1px solid var(--line);
+}
+.preference-transfer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: var(--text-control);
+}
+.preference-transfer-row h3 {
+  font-size: var(--text-control);
+  font-weight: 650;
+}
+#preferences-filename {
+  overflow-wrap: anywhere;
+  font-size: var(--text-caption);
+}
+#preferences-filename:empty {
+  display: none;
 }
 .preference-panel .preference-summary {
   font-size: var(--text-caption);
@@ -1559,18 +1663,6 @@ dialog::backdrop {
   color: var(--danger-text);
   font-size: var(--text-control);
   margin-top: 12px;
-}
-[data-compact] .preferences-layout {
-  grid-template-columns: minmax(0, 1fr);
-}
-:root[data-mobile] {
-  .preference-panel {
-    padding: 20px;
-  }
-  .preferences-layout,
-  .preferences-transfer {
-    gap: 18px;
-  }
 }
 
 #round-notice {

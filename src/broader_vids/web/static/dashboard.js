@@ -85,7 +85,9 @@ function navigate(change) {
 let refreshing = false,
   refreshQueued = false;
 async function refresh() {
-  if (document.hidden || state.busy.size) return;
+  if (document.hidden) return;
+  preferences?.refresh();
+  if (state.busy.size) return;
   if (refreshing) {
     refreshQueued = true;
     return;

@@ -11,6 +11,7 @@ from unittest.mock import patch, Mock
 from broader_vids.cli import main
 from broader_vids.cli.arguments import parser
 from broader_vids.cli.startup import prepare_recommendation, startup_lock
+from broader_vids.notifications import settings as notification_settings
 from broader_vids.onboarding import configure, complete, status
 from broader_vids.preferences import get_profile, set_profile, user_action
 from broader_vids.preflight import (
@@ -135,6 +136,17 @@ class PreflightTests(unittest.TestCase):
             ["preset", "manual", "import"],
         )
         self.assertNotIn("existing_preferences", questions)
+        self.assertEqual(
+            questions["notifications"],
+            {
+                "input": "choice",
+                "title": "Send published recommendations to your devices with ntfy?",
+                "options": [
+                    {"value": "no", "label": "No, finish setup"},
+                    {"value": "yes", "label": "Yes, open dashboard"},
+                ],
+            },
+        )
         self.assertEqual(questions["import_path"]["input"], "text")
         self.assertEqual(questions["interests"]["input"], "text")
         self.assertEqual(
@@ -154,6 +166,7 @@ class PreflightTests(unittest.TestCase):
         code, report = self.invoke("onboarding", "questions")
         self.assertEqual(code, 0)
         self.assertEqual(report["saved_platform"], "both")
+        self.assertNotIn("notifications", report["questions"])
         self.assertEqual(
             report["questions"]["existing_preferences"]["options"][0],
             {"value": "keep", "label": "Keep saved preferences"},
@@ -161,6 +174,38 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual((self.store.root / "onboarding.json").read_bytes(), previous)
         self.assertEqual(get_profile(self.store), profile)
         self.probe.assert_not_called()
+
+    def test_notification_answer_survives_interrupted_setup_and_platform_change(self):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM user_profile")
+        configure(self.store, "youtube")
+        set_profile(self.store, ["mathematics"])
+        _, questions = self.invoke("onboarding", "questions")
+        self.assertIn("notifications", questions["questions"])
+
+        code, report = self.invoke("onboarding", "notifications", "yes")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["notifications_prompt"], "yes")
+        self.assertIsNone(report["completed_at"])
+        configure(self.store, "both")
+        _, questions = self.invoke("onboarding", "questions")
+        self.assertNotIn("notifications", questions["questions"])
+        self.assertEqual(status(self.store.root)["notifications_prompt"], "yes")
+        self.assertFalse(notification_settings(self.store)["enabled"])
+        self.probe.assert_not_called()
+
+    def test_completion_skips_unanswered_notifications(self):
+        with self.store.db:
+            self.store.db.execute("DELETE FROM user_profile")
+        configure(self.store, "youtube")
+        set_profile(self.store, ["mathematics"])
+
+        report = complete(self.store, model="fixture-model", effort="low")
+        self.assertEqual(report["self_check"], "passed")
+        self.assertEqual(report["onboarding"]["notifications_prompt"], "no")
+        configure(self.store, "both")
+        _, questions = self.invoke("onboarding", "questions")
+        self.assertNotIn("notifications", questions["questions"])
 
     def test_fresh_and_interrupted_setup_block_without_run_or_optional_install(self):
         profile = get_profile(self.store)

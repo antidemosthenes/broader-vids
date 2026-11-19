@@ -10,6 +10,7 @@ from broader_vids.time_budget import (
     report_limit,
 )
 from broader_vids.recommendations.budgets import DEFAULT_METADATA_REQUESTS
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import time
 import json
@@ -25,6 +26,7 @@ from broader_vids.recommendations.reports import (
     recommendation_report,
     write_recommendation_report,
 )
+from broader_vids import notifications
 from broader_vids.storage import Store
 from broader_vids.recommendations.timing import recover_elapsed, start_attempt
 from broader_vids.recommendations.timing import live_elapsed
@@ -95,22 +97,19 @@ def create_batch(
 
 def execute_batch(store, identifier, runner=execute_recommendation, *, progress=None):
     _validate_current_batch(store, store.get(identifier))
-    with store.lease(identifier):
+    with ExitStack() as recovered, store.lease(identifier):
         run = store.get(identifier)
         _validate_current_batch(store, run)
         if run["settings"].get("kind") != "recommendation_batch":
             raise ValueError("Not a two-platform recommendation batch.")
         recover_elapsed(run)
-        if run["status"] == "completed":
-            store.save(run)
-            return run
         children = run["state"].get("children", {})
         if set(children) != {"youtube", "bilibili"} or len(set(children.values())) != 2:
             raise ValueError(
                 "The batch has incomplete or duplicated child membership; start a new batch."
             )
-        for platform, child in children.items():
-            saved = store.get(child)
+        saved_children = {p: store.get(child) for p, child in children.items()}
+        for platform, saved in saved_children.items():
             if (
                 saved["platform"] != platform
                 or saved["settings"].get("kind") != "recommendation"
@@ -119,6 +118,29 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
                 raise ValueError(
                     "The batch does not own both platform checkpoints; start a new batch."
                 )
+        if run["status"] == "completed" or all(
+            child["status"] == "completed" for child in saved_children.values()
+        ):
+            if run["status"] != "completed":
+                run["state"].pop("stop_cause", None)
+                run["state"]["results"] = {
+                    p: {
+                        "run_id": child["id"],
+                        "status": "completed",
+                        "reason": child["reason"],
+                    }
+                    for p, child in saved_children.items()
+                }
+                run.update(
+                    status="completed",
+                    reason="Both completed platform checkpoints were recovered without new work.",
+                )
+            for child in children.values():
+                recovered.callback(
+                    notifications.deliver_after_publication, store, child
+                )
+            store.save(run)
+            return run
         started, prior = time.monotonic(), run["elapsed"]
         runtime = None
 
@@ -138,24 +160,6 @@ def execute_batch(store, identifier, runner=execute_recommendation, *, progress=
                 )
             run["elapsed"] = prior + time.monotonic() - started
             store.save(run)
-
-        saved_children = {p: store.get(child) for p, child in children.items()}
-        if all(child["status"] == "completed" for child in saved_children.values()):
-            run["state"].pop("stop_cause", None)
-            run["state"]["results"] = {
-                p: {
-                    "run_id": child["id"],
-                    "status": "completed",
-                    "reason": child["reason"],
-                }
-                for p, child in saved_children.items()
-            }
-            run.update(
-                status="completed",
-                reason="Both completed platform checkpoints were recovered without new work.",
-            )
-            save()
-            return run
 
         if remaining() <= 20:
             run.update(

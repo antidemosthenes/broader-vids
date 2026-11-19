@@ -22,6 +22,7 @@ Do not substitute the ordinary terminal's default or another profile.
 Run `reset` without flags to preview the action.
 Show the absolute target, estimated size, removed items, retained items, unknown files, and blockers.
 Reset removes preferences, learned weights, ratings, exclusions, histories, results, evidence, and recovery files.
+Reset also removes notification settings and delivery history.
 Installed tools, transcription models, the selected directory, and Bilibili sign-in remain.
 Export files outside the selected directory remain intact.
 An implementation request or a question about this action does not authorize deletion of a real profile.

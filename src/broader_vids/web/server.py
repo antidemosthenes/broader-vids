@@ -399,6 +399,7 @@ def make_server(root, port=8765, *, control=None):
                 "/static/views.js": ("views.js", "text/javascript"),
                 "/static/score.js": ("score.js", "text/javascript"),
                 "/static/preferences.js": ("preferences.js", "text/javascript"),
+                "/static/notifications.js": ("notifications.js", "text/javascript"),
                 "/static/token-usage.js": ("token-usage.js", "text/javascript"),
                 "/static/bilibili-account.js": (
                     "bilibili-account.js",
@@ -430,6 +431,14 @@ def make_server(root, port=8765, *, control=None):
                 self.send(200, body, mime)
             finally:
                 self.server.shutdown()
+
+        def send_notifications(self, result):
+            response = {
+                "enabled": result["enabled"],
+                "has_topic": bool(result["topic"]),
+                "deliveries": result["deliveries"],
+            }
+            return self.send(200, json.dumps(response, ensure_ascii=False))
 
         def do_POST(self):
             origins = {
@@ -482,6 +491,8 @@ def make_server(root, port=8765, *, control=None):
             if self.path not in {
                 "/api/action",
                 "/api/interests",
+                "/api/notifications",
+                "/api/notifications/retry",
                 "/api/preferences/export",
                 "/api/preferences/preview",
                 "/api/preferences/import",
@@ -518,6 +529,33 @@ def make_server(root, port=8765, *, control=None):
                         else "Action body must be 1–8,192 bytes."
                     )
                 value = json.loads(self.rfile.read(length))
+                if self.path == "/api/notifications":
+                    from broader_vids.notifications import configure, settings
+
+                    if not isinstance(value, dict) or (
+                        value and set(value) != {"enabled", "topic"}
+                    ):
+                        raise ValueError("Supply notification settings.")
+                    store = Store(root)
+                    result = (
+                        configure(store, value["enabled"], value["topic"])
+                        if value
+                        else settings(store)
+                    )
+                    return self.send_notifications(result)
+                if self.path == "/api/notifications/retry":
+                    from broader_vids.notifications import deliver, settings
+
+                    if (
+                        not isinstance(value, dict)
+                        or set(value) != {"run_id"}
+                        or not isinstance(value["run_id"], str)
+                        or not value["run_id"]
+                    ):
+                        raise ValueError("Choose a recommendation round to retry.")
+                    store = Store(root)
+                    deliver(store, value["run_id"], retry=True)
+                    return self.send_notifications(settings(store))
                 if self.path == "/api/interests":
                     if (
                         not isinstance(value, dict)

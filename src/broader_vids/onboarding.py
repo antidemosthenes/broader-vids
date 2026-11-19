@@ -5,6 +5,7 @@ import json
 import re
 
 from broader_vids.evidence.service import atomic_json
+from broader_vids.preferences import get_profile
 from broader_vids.storage import utc_now
 
 
@@ -26,6 +27,7 @@ def status(root):
             or value["version"] != 1
             or value.get("default_platform") not in PLATFORMS
             or "completed_at" not in value
+            or value.get("notifications_prompt", "no") not in ("pending", "yes", "no")
             or (
                 value.get("completed_at") is not None
                 and not isinstance(value["completed_at"], str)
@@ -44,9 +46,17 @@ def status(root):
         ) from None
 
 
-def setup_questions(store):
-    from broader_vids.preferences import get_profile
+def _show_notifications_prompt(settings, profile):
+    return settings["completed_at"] is None and (
+        settings.get("notifications_prompt") == "pending"
+        or (
+            settings["default_platform"] is None
+            and not (profile or {}).get("interests")
+        )
+    )
 
+
+def setup_questions(store):
     previous = status(store.root)
     profile = get_profile(store)
 
@@ -96,6 +106,16 @@ def setup_questions(store):
                 "input": "text",
                 "title": "Enter your broad interests, separated by commas or lines.",
             },
+            **(
+                {
+                    "notifications": choice(
+                        "Send published recommendations to your devices with ntfy?",
+                        [("no", "No, finish setup"), ("yes", "Yes, open dashboard")],
+                    )
+                }
+                if _show_notifications_prompt(previous, profile)
+                else {}
+            ),
             "bilibili_signin": choice(
                 "Have you finished signing in to Bilibili? Keep the sign-in window open while you answer.",
                 [
@@ -118,12 +138,32 @@ def configure(store, platform):
     with store.lease(LOCK):
         previous = status(store.root)
         value = {
-            "version": 1,
+            **previous,
             "default_platform": platform,
             "completed_at": previous["completed_at"]
             if previous["default_platform"] == platform
             else None,
         }
+        if previous["default_platform"] is None and _show_notifications_prompt(
+            previous, get_profile(store)
+        ):
+            value["notifications_prompt"] = "pending"
+        atomic_json(store.root / "onboarding.json", value)
+    return value
+
+
+def record_notification_answer(store, answer):
+    if answer not in ("yes", "no"):
+        raise ValueError("Choose yes or no for the setup question about notifications.")
+    with store.lease(LOCK):
+        previous = status(store.root)
+        if previous.get("notifications_prompt") == answer:
+            return previous
+        if previous.get("notifications_prompt") != "pending":
+            raise ValueError(
+                "This profile has no pending setup question about notifications."
+            )
+        value = {**previous, "notifications_prompt": answer}
         atomic_json(store.root / "onboarding.json", value)
     return value
 
@@ -167,6 +207,8 @@ def complete(
                 "Onboarding changed during verification. Repeat onboarding complete."
             )
         value = {**previous, "completed_at": utc_now()}
+        if value.get("notifications_prompt") == "pending":
+            value["notifications_prompt"] = "no"
         atomic_json(store.root / "onboarding.json", value)
     return {
         **report,
@@ -219,7 +261,7 @@ def next_steps(*, asr_model=None, skill_namespace=None, host="codex"):
         )
     actions = {
         "dashboard": {
-            "description": "The local dashboard lets you edit interests, rate videos, manage exclusions, and use optional calibration. Open Preferences, then Import/Export to transfer interests, learned weights, watched video IDs, compact topic coverage, and manual creator exclusions. Other video history, tag rules, and account-specific blacklists stay on this device.",
+            "description": "The local dashboard lets you edit interests, rate videos, manage exclusions, and use optional calibration. Open Preferences, then Import/Export to transfer interests, learned weights, watched video IDs, compact topic coverage, and manual creator exclusions. Other video history, tag rules, and account-specific blacklists stay on this device. Open Preferences, then Notifications to manage optional ntfy delivery.",
             "request": "Use Broader Vids to open my dashboard.",
             "skill_name": "broader-vids-dashboard",
         },
@@ -229,7 +271,7 @@ def next_steps(*, asr_model=None, skill_namespace=None, host="codex"):
             "skill_name": "broader-vids",
         },
         "reset": {
-            "description": "Reset learned preferences, weights, ratings, exclusions, histories, results, evidence, and recovery files. Keep installed tools and Bilibili sign-in.",
+            "description": "Reset preferences, learned weights, ratings, exclusions, histories, results, evidence, notification settings, and recovery files. Keep installed tools and Bilibili sign-in.",
             "request": "Use Broader Vids to reset my preferences and histories for a fresh start.",
             "skill_name": "broader-vids-reset",
         },
