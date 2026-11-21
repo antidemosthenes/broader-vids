@@ -95,11 +95,22 @@
       <div id="workspace" class="workspace">
         <section id="list-pane" class="list-pane" aria-label="Video list">
           <div class="list-toolbar">
-            <span id="list-label"></span
-            ><button id="pending-toggle" class="button quiet small" hidden>
-              Earlier unwatched
-            </button>
+            <span id="list-label" tabindex="-1"></span>
+            <div class="list-actions">
+              <button id="pending-toggle" class="button quiet small" hidden>
+                Earlier unwatched
+              </button>
+              <button
+                id="send-ntfy"
+                class="button quiet small"
+                type="button"
+                hidden
+              >
+                Send to ntfy
+              </button>
+            </div>
           </div>
+          <p id="send-ntfy-status" class="note" role="status"></p>
           <p id="round-notice" class="note" role="status" hidden></p>
           <ol id="video-list" class="video-list"></ol>
           <div id="empty-list" class="empty-state" hidden></div>
@@ -167,11 +178,12 @@
                   class="button quiet"
                   type="button"
                 >
-                  Reload saved interests
+                  Reload saved
                 </button>
                 <button
                   id="interests-save"
                   class="button primary"
+                  aria-describedby="interests-title"
                   type="submit"
                 >
                   Save
@@ -236,18 +248,31 @@
                   <button
                     id="notifications-save"
                     class="button primary"
+                    aria-describedby="notifications-title"
                     type="submit"
                     hidden
                   >
-                    Save notifications
+                    Save
                   </button>
+                  <button
+                    id="notifications-test"
+                    class="button"
+                    type="button"
+                    aria-describedby="notifications-test-description"
+                    hidden
+                  >
+                    Test
+                  </button>
+                  <span id="notifications-test-description" hidden>
+                    Send a test message to the displayed active topic.
+                  </span>
                   <button
                     id="notifications-clear"
                     class="button"
                     type="button"
                     hidden
                   >
-                    Clear topic
+                    Clear
                   </button>
                 </div>
               </div>
@@ -257,7 +282,7 @@
                 type="button"
                 hidden
               >
-                Reload notifications
+                Reload
               </button>
               <p
                 id="notifications-status"
@@ -296,9 +321,7 @@
                     aria-label="Preference file"
                     hidden
                   />
-                  <button id="preferences-choose" class="button">
-                    Choose file
-                  </button>
+                  <button id="preferences-choose" class="button">Choose</button>
                 </div>
                 <p id="preferences-filename" class="muted"></p>
                 <div id="preferences-preview" hidden>
@@ -324,7 +347,7 @@
                       class="button primary"
                       disabled
                     >
-                      Import preferences
+                      Import
                     </button>
                   </div>
                 </div>
@@ -343,9 +366,7 @@
                       Save a copy of your current preferences.
                     </p>
                   </div>
-                  <button id="preferences-export" class="button">
-                    Export preferences
-                  </button>
+                  <button id="preferences-export" class="button">Export</button>
                 </div>
                 <p
                   id="preferences-export-warning"

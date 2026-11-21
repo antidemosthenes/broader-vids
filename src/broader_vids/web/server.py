@@ -1,6 +1,7 @@
 from broader_vids.recommendations.screening import inspection_limit
 from importlib.resources import files
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hmac
 import json
 import secrets
 import sqlite3
@@ -70,6 +71,7 @@ def score_details(store, item):
 
 
 def dashboard_state(store):
+    from broader_vids.notifications import active_topic
     from broader_vids.learning.feedback import details, context_from_features
     from broader_vids.learning.features import capture
     from broader_vids.learning.annotations import latest_annotations, apply_annotation
@@ -179,6 +181,7 @@ def dashboard_state(store):
         "profile": get_profile(store),
         "runs": runs,
         "pending_items": pending,
+        "notifications_active": bool(active_topic(store)),
         "videos": {
             k: {
                 "details": structured.get(k, {}),
@@ -258,8 +261,13 @@ class LocalServer(ThreadingHTTPServer):
 
 
 def make_server(root, port=8765, *, control=None):
-    token = secrets.token_urlsafe(32)
     from broader_vids.evidence.account_switch import AccountSwitch
+
+    token = secrets.token_urlsafe(32)
+    destination_key = secrets.token_bytes(32)
+
+    def destination_id(topic):
+        return hmac.digest(destination_key, topic.encode("ascii"), "sha256").hex()
 
     account_switch = AccountSwitch(root)
 
@@ -442,6 +450,7 @@ def make_server(root, port=8765, *, control=None):
                 from broader_vids.notifications import topic_url
 
                 response["topic_url"] = topic_url(result["topic"])
+                response["destination_id"] = destination_id(result["topic"])
             return self.send(200, json.dumps(response, ensure_ascii=False))
 
         def do_POST(self):
@@ -497,6 +506,8 @@ def make_server(root, port=8765, *, control=None):
                 "/api/interests",
                 "/api/notifications",
                 "/api/notifications/retry",
+                "/api/notifications/test",
+                "/api/notifications/send",
                 "/api/preferences/export",
                 "/api/preferences/preview",
                 "/api/preferences/import",
@@ -547,6 +558,40 @@ def make_server(root, port=8765, *, control=None):
                         else settings(store)
                     )
                     return self.send_notifications(result)
+                if self.path == "/api/notifications/test":
+                    from broader_vids.notifications import send_test
+
+                    if (
+                        not isinstance(value, dict)
+                        or set(value) != {"destination_id"}
+                        or not isinstance(value["destination_id"], str)
+                        or len(value["destination_id"]) != 64
+                        or not value["destination_id"].isascii()
+                    ):
+                        raise ValueError(
+                            "Load the active notification topic before testing."
+                        )
+                    expected = value["destination_id"]
+                    store = Store(root)
+                    result = send_test(
+                        store,
+                        topic_matches=lambda topic: secrets.compare_digest(
+                            expected, destination_id(topic)
+                        ),
+                    )
+                    return self.send(200, json.dumps(result))
+                if self.path == "/api/notifications/send":
+                    from broader_vids.notifications import send_current
+
+                    if (
+                        not isinstance(value, dict)
+                        or set(value) != {"platform", "run_id"}
+                        or not all(isinstance(field, str) for field in value.values())
+                    ):
+                        raise ValueError("Choose a platform and recommendation round.")
+                    store = Store(root)
+                    result = send_current(store, value["platform"], value["run_id"])
+                    return self.send(200, json.dumps(result))
                 if self.path == "/api/notifications/retry":
                     from broader_vids.notifications import deliver, settings
 

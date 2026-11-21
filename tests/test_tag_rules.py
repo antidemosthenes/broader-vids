@@ -216,7 +216,7 @@ class TagRuleDashboardTests(unittest.TestCase):
             row = tags()
             self.assertEqual(row.count(), 0)
             page.get_by_label("Tag to exclude on Bilibili").fill("视频翻译")
-            page.get_by_role("button", name="Add tag", exact=True).click()
+            page.get_by_role("button", name="Add", exact=True).click()
             row.get_by_role("button", name="Remove", exact=True).wait_for()
             self.assertTrue(row.get_by_text("Built-in", exact=True).is_visible())
             with closing(Store(directory)) as store:
@@ -274,12 +274,12 @@ class TagRuleDashboardTests(unittest.TestCase):
                     row.get_by_role("button", name="Remove", exact=True).click()
                 page.get_by_label("Tag to exclude on Bilibili").fill("Retained draft")
                 self.assertTrue(
-                    page.get_by_role("button", name="Add tag", exact=True).is_disabled()
+                    page.get_by_role("button", name="Add", exact=True).is_disabled()
                 )
                 page.get_by_role("tab", name="YouTube", exact=True).click()
                 page.get_by_role("tab", name="Tags", exact=True).click()
                 self.assertTrue(
-                    page.get_by_role("button", name="Add tag", exact=True).is_enabled()
+                    page.get_by_role("button", name="Add", exact=True).is_enabled()
                 )
                 page.get_by_role("tab", name="Bilibili", exact=True).click()
                 self.assertEqual(
@@ -294,7 +294,7 @@ class TagRuleDashboardTests(unittest.TestCase):
                     row.get_by_role("button", name="Remove", exact=True).is_enabled()
                 )
                 self.assertTrue(
-                    page.get_by_role("button", name="Add tag", exact=True).is_enabled()
+                    page.get_by_role("button", name="Add", exact=True).is_enabled()
                 )
                 with closing(Store(directory)) as store:
                     self.assertTrue(

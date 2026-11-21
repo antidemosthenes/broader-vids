@@ -91,6 +91,84 @@ class NotificationTests(unittest.TestCase):
         self.send.assert_not_called()
         self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 12)
 
+    def test_manual_send_reuses_published_parts_and_preserves_automatic_receipt(self):
+        notifications.configure(self.store, True, "fixture-topic")
+        items = [BILIBILI[0] | {"title": "火山" * 1300}] * 3
+        run = self.run_record(items, platform="bilibili", status="partial")
+        self.store.save(run)
+        with self.store.db:
+            notifications.enqueue(self.store, run)
+        notifications.deliver(self.store, run["id"])
+        automatic = [call.args for call in self.send.call_args_list]
+        receipt = self.delivery()
+        self.assertEqual(len(automatic), 3)
+
+        def worker(payload, timeout):
+            self.assertGreater(timeout, 0)
+            return notifications._manual_worker(*payload[1:])
+
+        self.send.reset_mock()
+        with (
+            patch.object(notifications, "_send_in_worker", side_effect=worker),
+            patch.object(
+                self.store, "get", side_effect=AssertionError("Loaded full round")
+            ),
+        ):
+            self.assertEqual(
+                notifications.send_current(self.store, "bilibili", run["id"]),
+                {"outcome": "sent", "accepted_parts": 3, "total_parts": 3},
+            )
+            self.assertEqual(
+                [call.args for call in self.send.call_args_list], automatic
+            )
+            self.send.reset_mock()
+            self.send.side_effect = ["sent", "uncertain"]
+            self.assertEqual(
+                notifications.send_current(self.store, "bilibili", run["id"]),
+                {"outcome": "uncertain", "accepted_parts": 1, "total_parts": 3},
+            )
+            self.assertEqual(self.send.call_count, 2)
+        self.assertEqual(self.delivery(), receipt)
+
+    def test_manual_send_requires_current_published_list_and_free_lock(self):
+        stale = self.run_record()
+        preview = self.run_record(phase="assess")
+        notifications.configure(self.store, True, "fixture-topic")
+        with (
+            notifications._delivery_lock(self.store, "youtube"),
+            notifications._delivery_lock(self.store, "test"),
+            patch.object(notifications, "_send_in_worker") as worker,
+        ):
+            self.assertEqual(
+                notifications.send_current(self.store, "youtube", preview["id"]),
+                {"outcome": "busy"},
+            )
+            self.assertEqual(
+                notifications.send_test(self.store, topic_matches=lambda _: True),
+                {"outcome": "busy"},
+            )
+            worker.assert_not_called()
+        self.assertEqual(
+            notifications.send_current(self.store, "youtube", stale["id"]),
+            {"outcome": "stale"},
+        )
+        self.assertEqual(
+            notifications.send_current(self.store, "youtube", preview["id"]),
+            {"outcome": "unavailable"},
+        )
+        self.assertEqual(
+            notifications._manual_worker(
+                str(self.store.root), "old-topic", "title", "body"
+            ),
+            "canceled",
+        )
+        notifications.configure(self.store, False, None)
+        self.assertEqual(
+            notifications.send_test(self.store, topic_matches=lambda _: True),
+            {"outcome": "inactive"},
+        )
+        self.send.assert_not_called()
+
     def test_configuration_is_profile_local_and_accepts_only_public_topic(self):
         for value in (
             "",

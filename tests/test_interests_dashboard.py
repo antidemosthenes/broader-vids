@@ -215,9 +215,7 @@ class InterestDashboardTests(unittest.TestCase):
                 "() => document.getElementById('interests-status').textContent.includes('another window')"
             )
             self.assertEqual(field.input_value(), "mathematics\nphysics")
-            dialog.get_by_role(
-                "button", name="Reload saved interests", exact=True
-            ).click()
+            dialog.get_by_role("button", name="Reload saved", exact=True).click()
             page.wait_for_function(
                 "() => !document.getElementById('interests-input').disabled"
             )

@@ -166,14 +166,14 @@ class CreatorDashboardTests(unittest.TestCase):
             page.get_by_role("tab", name="Tags", exact=True).click()
             tag = page.get_by_label("Tag to exclude on Bilibili", exact=True)
             tag.fill("易语言")
-            page.get_by_role("button", name="Add tag", exact=True).click()
+            page.get_by_role("button", name="Add", exact=True).click()
             page.wait_for_function(
                 "() => document.querySelector('.tag-form input').value === ''"
             )
             page.get_by_text("易语言", exact=True).wait_for()
             tag.fill("Keep this draft")
             page.route("**/api/action", reject)
-            page.get_by_role("button", name="Add tag", exact=True).click()
+            page.get_by_role("button", name="Add", exact=True).click()
             page.locator("#management").get_by_text(
                 "Fixture write rejected", exact=True
             ).wait_for()
