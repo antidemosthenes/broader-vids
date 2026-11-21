@@ -184,6 +184,110 @@ class NotificationsDashboardTests(unittest.TestCase):
             with closing(Store(directory)) as store:
                 self.assertEqual(notifications.settings(store)["deliveries"], [])
 
+    def test_test_status_tracks_the_displayed_topic(self):
+        for scenario in ("completed", "in_flight", "disabled", "same", "newer_action"):
+            with self.subTest(scenario=scenario):
+                started = threading.Event()
+                release = threading.Event()
+
+                def send(payload, timeout):
+                    started.set()
+                    if scenario != "completed" and not release.wait(8):
+                        raise AssertionError("The test did not release the sender.")
+                    return "failed" if scenario == "newer_action" else "sent"
+
+                with (
+                    dashboard_fixture() as (page, directory),
+                    closing(Store(directory)) as store,
+                    patch.object(
+                        notifications, "_send_in_worker", side_effect=send
+                    ) as worker,
+                ):
+                    notifications.configure(store, True, "topic-a")
+                    page.get_by_role("button", name="Preferences", exact=True).click()
+                    address = page.locator("#notifications-topic-url")
+                    status = page.locator("#notifications-status")
+                    field = page.locator("#notifications-topic")
+                    test = page.locator("#notifications-test")
+                    expect(address).to_have_text("https://ntfy.sh/topic-a")
+                    field.fill("unsaved-draft")
+                    test.click()
+                    self.assertTrue(started.wait(3))
+                    try:
+                        if scenario == "completed":
+                            expect(status).to_have_text(
+                                "ntfy accepted the test message."
+                            )
+                        elif scenario == "newer_action":
+                            page.locator("#notifications-clear").click()
+                            expect(status).to_have_text("Saved topic cleared.")
+                        if scenario not in ("same", "newer_action"):
+                            notifications.configure(
+                                store, scenario != "disabled", "topic-b"
+                            )
+                        page.evaluate(
+                            '() => document.dispatchEvent(new Event("visibilitychange"))'
+                        )
+                        if scenario in ("same", "completed", "in_flight"):
+                            expected = "topic-a" if scenario == "same" else "topic-b"
+                            expect(address).to_have_text(f"https://ntfy.sh/{expected}")
+                        else:
+                            expect(
+                                page.locator("#notifications-active-address")
+                            ).to_be_hidden()
+                        if scenario in ("completed", "in_flight", "disabled"):
+                            expect(status).to_be_empty()
+                            expect(field).to_have_value("unsaved-draft")
+                    finally:
+                        release.set()
+
+                    expect(test).to_have_text("Test")
+                    expect(test).to_have_attribute("aria-disabled", "false")
+                    if scenario == "same":
+                        expect(status).to_have_text("ntfy accepted the test message.")
+                        expect(field).to_have_value("unsaved-draft")
+                    elif scenario == "newer_action":
+                        expect(status).to_have_text("Saved topic cleared.")
+                    else:
+                        expect(status).to_be_empty()
+                    self.assertEqual(worker.call_count, 1)
+                    self.assertEqual(worker.call_args.args[0][2], "topic-a")
+
+    def test_changed_topic_is_reported_after_refresh_while_test_is_pending(self):
+        with (
+            dashboard_fixture() as (page, directory),
+            closing(Store(directory)) as store,
+            patch.object(notifications, "_send_in_worker") as worker,
+        ):
+            notifications.configure(store, True, "topic-a")
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            address = page.locator("#notifications-topic-url")
+            expect(address).to_have_text("https://ntfy.sh/topic-a")
+            field = page.locator("#notifications-topic")
+            field.fill("unsaved-draft")
+            page.evaluate("""() => {
+                const original = window.fetch.bind(window);
+                const gate = new Promise(resolve => window.releaseTest = resolve);
+                window.fetch = async (...args) => {
+                    if (args[0] === "/api/notifications/test") await gate;
+                    return original(...args);
+                };
+            }""")
+            test = page.locator("#notifications-test")
+            status = page.locator("#notifications-status")
+            test.click()
+            expect(test).to_have_text("Testing…")
+            notifications.configure(store, True, "topic-b")
+            page.evaluate('() => document.dispatchEvent(new Event("visibilitychange"))')
+            expect(address).to_have_text("https://ntfy.sh/topic-b")
+            expect(test).to_have_text("Test")
+            expect(test).to_have_attribute("aria-disabled", "true")
+            page.evaluate("() => window.releaseTest()")
+            expect(status).to_have_text("The active topic changed. Test it again.")
+            expect(test).to_have_attribute("aria-disabled", "false")
+            expect(field).to_have_value("unsaved-draft")
+            worker.assert_not_called()
+
     def test_stale_test_and_lost_delivery_responses(self):
         with (
             dashboard_fixture() as (page, directory),
