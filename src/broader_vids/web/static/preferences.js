@@ -1,8 +1,13 @@
 import { get, request } from "./api.js";
 import { createNotifications } from "./notifications.js";
 
-export function createPreferences({ busy, changed, getProfile }) {
-  const notifications = createNotifications();
+export function createPreferences({
+  busy,
+  changed,
+  getProfile,
+  notificationsChanged,
+}) {
+  const notifications = createNotifications(notificationsChanged);
   const find = (id) => document.getElementById(`preferences-${id}`);
   const input = document.getElementById("interests-input"),
     interestStatus = document.getElementById("interests-status"),
@@ -175,7 +180,7 @@ export function createPreferences({ busy, changed, getProfile }) {
       if (current.revision !== revision) {
         showPreview(current);
         status.textContent =
-          "Preferences changed since you chose this file. Check the summary, then select Import preferences again.";
+          "Preferences changed since you chose this file. Check the summary, then select Import again.";
         return;
       }
       status.textContent = "Replacing learned preferences…";

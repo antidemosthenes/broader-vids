@@ -90,7 +90,7 @@ def dashboard_fixture(*, provisional=False):
                             canonical_id=f"bilibili:BV1Z6H56oEcQ:p{index}",
                             platform=platform,
                             creator_id="1234",
-                            url="https://www.bilibili.com/video/BV1Z6H56oEcQ",
+                            url=f"https://www.bilibili.com/video/BV1Z6H56oEcQ?p={index}",
                         )
                     item.update(
                         score=80,
@@ -149,7 +149,8 @@ def dashboard_fixture(*, provisional=False):
                     {
                         "selected": [] if provisional else items[:10],
                         "preview": items[:10] if provisional else [],
-                        "published_at": None if provisional else "fixture",
+                        "published_at": None if provisional else "2026-11-19T12:00:00Z",
+                        "phase": "assess" if provisional else "published",
                         "shortlist": items,
                         "evidence": {
                             item["canonical_id"]: {"quality": 75} for item in items

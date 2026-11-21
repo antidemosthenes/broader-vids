@@ -348,6 +348,29 @@ main {
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
+.list-toolbar,
+.list-actions {
+  flex-wrap: wrap;
+}
+.list-actions {
+  display: flex;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.list-actions:not(:has(button:not([hidden]))) {
+  display: none;
+}
+#send-ntfy-status {
+  margin: 0;
+}
+#send-ntfy-status:not(:empty) {
+  padding: 8px 20px;
+}
+#send-ntfy[aria-disabled="true"],
+#notifications-test[aria-disabled="true"] {
+  opacity: 0.65;
+  cursor: default;
+}
 .video-list {
   list-style: none;
   margin: 0;

@@ -384,11 +384,11 @@ It can retain unfinished work instead of producing twenty complete recommendatio
 
 First-time setup offers optional ntfy delivery. Choose **Yes, enter a topic** to enable it during setup. Enter a public ntfy.sh topic name or URL. Subscribe to the same topic in the ntfy app on each device.
 
-Use **Dashboard → Preferences → Notifications** to view the active address, change the topic, or turn delivery off. You can also enable delivery there after setup.
+Use **Dashboard → Preferences → Notifications** to set or change the active topic. Select **Test** to check the saved topic and your device subscription.
 
 Anyone who knows the public topic address can read its messages. Choose a hard-to-guess topic. Saving or disabling delivery makes no request to ntfy.sh.
 
-Broader Vids sends each nonempty platform list after it publishes the list. This includes final and published partial lists. Provisional previews stay local. Messages contain each video's rank, title, and link. Long lists use multiple messages.
+Broader Vids sends each nonempty platform list after it publishes the list. This includes final and published partial lists. Provisional previews stay local. Messages contain each video's rank, title, and link. Long lists use multiple messages. Select **Send to ntfy** above a published list to send it again.
 
 Chat results and the dashboard remain available if delivery fails. Open **Notifications** to check **Recent deliveries** or retry a failed or unconfirmed send. Retrying an unconfirmed send may produce a duplicate.
 
@@ -437,7 +437,7 @@ An unknown creator ID disables this control.
 Unknown creators remain eligible for recommendation.
 The dashboard order is Recommendations, Exclusions, then Calibration.
 The exclusion panel lists creators and tags separately for each platform.
-Use its Add tag form to exclude an exact metadata tag on that platform.
+Use **Add** in the Tags view to exclude an exact metadata tag on that platform.
 It identifies manual rules, imported Bilibili bans, and built-in rules.
 Remove manual rules there when needed.
 The built-in 视频翻译 tag has a Remove button. Add the tag again to restore that exclusion.

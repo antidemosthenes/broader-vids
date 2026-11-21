@@ -11,6 +11,7 @@ import {
   applyTagRules,
 } from "./state.js";
 import { get, post } from "./api.js";
+import { requestDelivery, sendStatus } from "./notifications.js";
 import { el, platformName } from "./ui.js";
 import { createReview } from "./review.js";
 import { createVideoRow, createExclusions } from "./views.js";
@@ -41,6 +42,9 @@ let rows = [],
 let returnFocus,
   earlier = new Map();
 const earlierItems = new Map();
+const ntfySends = new Map();
+const sendNtfy = $("#send-ntfy");
+const sendNtfyStatus = $("#send-ntfy-status");
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function currentEntries() {
   return state.view === "recommendations" && earlier.get(contextKey())
@@ -311,7 +315,58 @@ function move(delta) {
     index = items.findIndex((item) => item.canonical_id === selectedId());
   if (items[index + delta]) actions.select(items[index + delta].canonical_id);
 }
+function renderNtfy() {
+  const platform = state.platform;
+  const run = state.data.runs[platform];
+  const currentList =
+    state.view === "recommendations" && !earlier.get(contextKey());
+  const action = ntfySends.get(platform);
+  const busy = Boolean(action?.busy);
+  const matchesRun = currentList && action?.runId === run?.id;
+
+  const ownsFocus = document.activeElement === sendNtfy;
+  sendNtfy.hidden =
+    !currentList ||
+    !state.data.notifications_active ||
+    !run?.selected.length ||
+    run.provisional;
+  if (ownsFocus && currentList && sendNtfy.hidden)
+    $("#list-label").focus({ preventScroll: true });
+  sendNtfy.setAttribute("aria-disabled", String(busy));
+  sendNtfy.textContent = busy && matchesRun ? "Sending…" : "Send to ntfy";
+  const message = matchesRun ? action?.message || "" : "";
+  if (sendNtfyStatus.textContent !== message)
+    sendNtfyStatus.textContent = message;
+  if (!busy && action && action.runId !== run?.id) ntfySends.delete(platform);
+}
+
+sendNtfy.onclick = async () => {
+  const platform = state.platform;
+  if (sendNtfy.hidden || ntfySends.get(platform)?.busy) return;
+  const action = {
+    runId: state.data.runs[platform].id,
+    busy: true,
+    message: "",
+  };
+  ntfySends.set(platform, action);
+  renderNtfy();
+  try {
+    const result = await requestDelivery("send", {
+      platform,
+      run_id: action.runId,
+    });
+    action.message = sendStatus(result);
+    if (result.outcome === "stale" || result.outcome === "inactive") refresh();
+  } catch (error) {
+    action.message = error.message;
+  } finally {
+    action.busy = false;
+    renderNtfy();
+  }
+};
+
 function render() {
+  renderNtfy();
   const isRules = state.view === "exclusions",
     isPreferences = state.view === "preferences";
   const title = isPreferences
@@ -518,6 +573,12 @@ if ($("#preferences-page")) {
             state.busy.delete("preferences");
             refresh();
           }
+        },
+        notificationsChanged(active) {
+          state.generation++;
+          state.data.notifications_active = active;
+          renderNtfy();
+          refresh();
         },
         changed(profile) {
           if (profile && state.data) state.data.profile = profile;

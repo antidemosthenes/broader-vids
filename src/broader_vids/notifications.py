@@ -47,6 +47,11 @@ def _normalize_topic(value):
     raise ValueError("Use an ntfy.sh topic name or its exact HTTPS topic URL.")
 
 
+def active_topic(store):
+    config = _configuration(store)
+    return config["topic"] if config and config["enabled"] else ""
+
+
 def topic_url(value):
     return f"{_TOPIC_URL}{_normalize_topic(value)}"
 
@@ -348,11 +353,15 @@ def _post(topic, title, body, *, is_current):
 
 
 def _send(root, run_id, part, attempt):
+    return _send_in_worker([str(root), run_id, part, attempt], _TIMEOUT)
+
+
+def _send_in_worker(payload, timeout):
     try:
         result = run_bounded(
             [sys.executable, "-m", "broader_vids.notifications"],
-            timeout=_TIMEOUT,
-            input=json.dumps([str(root), run_id, part, attempt]),
+            timeout=timeout,
+            input=json.dumps(payload),
         )
     except (OSError, subprocess.TimeoutExpired):
         return "uncertain"
@@ -391,6 +400,103 @@ def _worker(root, run_id, part, attempt):
             message["body"],
             is_current=lambda: active_part() == message,
         )
+
+
+def _manual_worker(root, topic, title, body):
+    database = (Path(root) / "broader-vids.sqlite3").as_uri()
+    with closing(sqlite3.connect(f"{database}?mode=ro", uri=True)) as db:
+
+        def is_current():
+            return (
+                db.execute(
+                    "SELECT 1 FROM ntfy_settings WHERE id=1 AND enabled=1 AND topic=?",
+                    (topic,),
+                ).fetchone()
+                is not None
+            )
+
+        if not is_current():
+            return "canceled"
+        return _post(_normalize_topic(topic), title, body, is_current=is_current)
+
+
+def _publish_manually(store, topic, parts):
+    deadline = time.monotonic() + _DELIVERY_WINDOW
+    result = {"outcome": "sent", "accepted_parts": 0, "total_parts": len(parts)}
+    for title, body in parts:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            result["outcome"] = "failed"
+            break
+        outcome = _send_in_worker(
+            ["manual", str(store.root), topic, title, body], min(remaining, _TIMEOUT)
+        )
+        if outcome != "sent":
+            result["outcome"] = outcome
+            break
+        result["accepted_parts"] += 1
+    return result
+
+
+def send_test(store, *, topic_matches):
+    with _delivery_lock(store, "test") as acquired:
+        if not acquired:
+            return {"outcome": "busy"}
+        topic = active_topic(store)
+        if not topic:
+            return {"outcome": "inactive"}
+        if not topic_matches(topic):
+            return {"outcome": "topic_changed"}
+        return _publish_manually(
+            store,
+            topic,
+            [("Broader Vids - Test", "This is a test notification from Broader Vids.")],
+        )
+
+
+def send_current(store, platform, run_id):
+    from broader_vids.preferences import current_recommendation_id
+
+    if platform not in _PLATFORMS:
+        raise ValueError("Choose YouTube or Bilibili.")
+    store.validate_id(run_id)
+    with _delivery_lock(store, platform) as acquired:
+        if not acquired:
+            return {"outcome": "busy"}
+        topic = active_topic(store)
+        if not topic:
+            return {"outcome": "inactive"}
+        if current_recommendation_id(store, platform) != run_id:
+            return {"outcome": "stale"}
+        picks = store.db.execute(
+            """
+            SELECT r.status, json_extract(r.state,'$.published_at') AS published_at,
+                   CASE WHEN pick.type='object' THEN json_extract(pick.value,'$.canonical_id') END AS canonical_id,
+                   CASE WHEN pick.type='object' THEN json_extract(pick.value,'$.title') END AS title,
+                   CASE WHEN pick.type='object' THEN json_extract(pick.value,'$.url') END AS url
+            FROM runs r, json_each(r.state,'$.selected') pick
+            WHERE r.id=? AND json_extract(r.state,'$.phase')='published'
+              AND json_type(r.state,'$.selected')='array'
+            ORDER BY pick.key
+            """,
+            (run_id,),
+        ).fetchall()
+        if not picks or not picks[0]["published_at"]:
+            return {"outcome": "unavailable"}
+        try:
+            parts = _message_parts(
+                {
+                    "platform": platform,
+                    "status": picks[0]["status"],
+                    "state": {
+                        "published_at": picks[0]["published_at"],
+                        "selected": picks,
+                    },
+                }
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return {"outcome": "unavailable"}
+        return _publish_manually(store, topic, parts)
 
 
 def deliver(store, run_id, *, retry=False):
@@ -450,7 +556,12 @@ def deliver_after_publication(store, run_id):
 
 if __name__ == "__main__":
     try:
-        outcome = _worker(*json.load(sys.stdin))
+        payload = json.load(sys.stdin)
+        outcome = (
+            _manual_worker(*payload[1:])
+            if payload[0] == "manual"
+            else _worker(*payload)
+        )
     except (OSError, sqlite3.Error, TypeError, ValueError):
         outcome = "uncertain"
     print(outcome)

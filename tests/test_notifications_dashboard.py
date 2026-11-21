@@ -50,6 +50,11 @@ class NotificationsApiTests(unittest.TestCase):
                         (endpoint, {}),
                         (endpoint, {"enabled": True, "topic": "fixture-topic"}),
                         (f"{endpoint}/retry", {"run_id": "fixture"}),
+                        (f"{endpoint}/test", {}),
+                        (
+                            f"{endpoint}/send",
+                            {"platform": "youtube", "run_id": "a" * 32},
+                        ),
                     ):
                         self.assertEqual(request(path, body)[0], 403)
                         self.assertEqual(request(path, body, wrong_origin)[0], 403)
@@ -63,8 +68,11 @@ class NotificationsApiTests(unittest.TestCase):
                         )
                         send.assert_not_called()
                     self.assertEqual(status, 200)
+                    saved = json.loads(data)
+                    destination_id = saved.pop("destination_id")
+                    self.assertRegex(destination_id, r"^[a-f0-9]{64}$")
                     self.assertEqual(
-                        json.loads(data),
+                        saved,
                         {
                             "enabled": True,
                             "has_topic": True,
@@ -74,6 +82,17 @@ class NotificationsApiTests(unittest.TestCase):
                     )
                     with closing(Store(directory)) as store:
                         self.assertEqual(notifications.settings(store)["topic"], topic)
+                    self.assertTrue(
+                        json.loads(request("/api/state")[1])["notifications_active"]
+                    )
+                    for action, body in (
+                        ("test", {"topic": topic}),
+                        ("test", {"destination_id": "数" * 64}),
+                        ("send", {"platform": [], "run_id": "a" * 32}),
+                    ):
+                        self.assertEqual(
+                            request(f"{endpoint}/{action}", body, authenticated)[0], 400
+                        )
                     status, data = request(
                         endpoint,
                         {"enabled": False, "topic": None},
@@ -81,7 +100,15 @@ class NotificationsApiTests(unittest.TestCase):
                     )
                     self.assertEqual(status, 200)
                     self.assertNotIn("topic_url", json.loads(data))
+                    self.assertNotIn("destination_id", json.loads(data))
                     self.assertNotIn(topic, data)
+                    status, data = request(
+                        f"{endpoint}/test",
+                        {"destination_id": destination_id},
+                        authenticated,
+                    )
+                    self.assertEqual(status, 200)
+                    self.assertEqual(json.loads(data), {"outcome": "inactive"})
                     for path, body in (
                         ("/api/state", None),
                         ("/api/preferences/export", {}),
@@ -89,6 +116,7 @@ class NotificationsApiTests(unittest.TestCase):
                         status, data = request(path, body, authenticated)
                         self.assertEqual(status, 200)
                         self.assertNotIn(topic, data)
+                        self.assertNotIn(destination_id, data)
             finally:
                 server.shutdown()
                 thread.join(timeout=3)
@@ -96,6 +124,134 @@ class NotificationsApiTests(unittest.TestCase):
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
 class NotificationsDashboardTests(unittest.TestCase):
+    def test_send_uses_selected_published_platform_and_keeps_navigation_usable(self):
+        started = threading.Event()
+        resume = threading.Event()
+
+        def send(payload, timeout):
+            self.assertGreater(timeout, 0)
+            title = payload[3]
+            if "YouTube" in title:
+                started.set()
+                if not resume.wait(8):
+                    raise AssertionError("The test did not release the send.")
+                return "sent"
+            return "uncertain"
+
+        with (
+            patch.object(notifications, "_send_in_worker", side_effect=send) as worker,
+            dashboard_fixture() as (page, directory),
+        ):
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.emulate_media(color_scheme="light", reduced_motion="reduce")
+            button = page.get_by_role("button", name="Send to ntfy", exact=True)
+            expect(button).to_be_hidden()
+            with closing(Store(directory)) as store:
+                notifications.configure(store, True, "fixture-topic")
+            page.evaluate('() => document.dispatchEvent(new Event("visibilitychange"))')
+            expect(button).to_be_visible()
+            try:
+                button.press("Enter")
+                self.assertTrue(started.wait(3))
+                sending = page.get_by_role("button", name="Sending…", exact=True)
+                expect(sending).to_be_disabled()
+                page.get_by_role("tab", name="Bilibili", exact=True).click()
+                expect(button).to_be_enabled()
+                button.click()
+                status = page.locator("#send-ntfy-status")
+                expect(status).to_contain_text("Delivery could not be confirmed.")
+                expect(status).to_contain_text("ntfy confirmed 0 of 1 parts.")
+                expect(status).to_contain_text("Sending again may send a duplicate.")
+                page.get_by_role("tab", name="YouTube", exact=True).click()
+                expect(sending).to_be_disabled()
+            finally:
+                resume.set()
+            expect(status).to_have_text("ntfy accepted the recommendation list.")
+            self.assertEqual(worker.call_count, 2)
+            self.assertIn("youtube.com/watch", worker.call_args_list[0].args[0][4])
+            self.assertIn("bilibili.com/video", worker.call_args_list[1].args[0][4])
+            page.evaluate("document.documentElement.style.fontSize = '200%'")
+            self.assertTrue(
+                page.locator(".list-toolbar").evaluate(
+                    "(toolbar) => toolbar.scrollWidth <= toolbar.clientWidth"
+                )
+            )
+            expect(button).to_be_visible()
+            page.get_by_role("button", name=re.compile(r"^Earlier unwatched")).click()
+            expect(button).to_be_hidden()
+            page.get_by_role("button", name="Calibration", exact=True).click()
+            expect(button).to_be_hidden()
+            with closing(Store(directory)) as store:
+                self.assertEqual(notifications.settings(store)["deliveries"], [])
+
+    def test_stale_test_and_lost_delivery_responses(self):
+        with (
+            dashboard_fixture() as (page, directory),
+            closing(Store(directory)) as store,
+            patch.object(
+                notifications, "_send_in_worker", return_value="sent"
+            ) as worker,
+        ):
+            notifications.configure(store, True, "shown-topic")
+            page.get_by_role("button", name="Preferences", exact=True).click()
+            topic = page.locator("#notifications-topic-url")
+            expect(topic).to_have_text("https://ntfy.sh/shown-topic")
+            field = page.locator("#notifications-topic")
+            field.fill("unsaved-topic")
+            test = page.locator("#notifications-test")
+            status = page.locator("#notifications-status")
+
+            def change_topic_before_test(route):
+                notifications.configure(store, True, "other-topic")
+                route.continue_()
+
+            test_path = "**/api/notifications/test"
+            page.route(test_path, change_topic_before_test, times=1)
+            test.click()
+            expect(status).to_have_text("The active topic changed. Test it again.")
+            expect(topic).to_have_text("https://ntfy.sh/other-topic")
+            expect(field).to_have_value("unsaved-topic")
+            worker.assert_not_called()
+
+            def lose_response(route):
+                response = route.fetch()
+                try:
+                    self.assertEqual(response.json()["outcome"], "sent")
+                finally:
+                    response.dispose()
+                    route.abort()
+
+            uncertain = (
+                "Delivery could not be confirmed. Sending again may send a duplicate."
+            )
+            page.route(test_path, lose_response, times=1)
+            test.click()
+            expect(status).to_have_text(uncertain)
+            expect(field).to_have_value("unsaved-topic")
+            self.assertEqual(worker.call_count, 1)
+            self.assertEqual(worker.call_args.args[0][2], "other-topic")
+
+            page.get_by_role("button", name="Recommendations", exact=True).click()
+            send = page.locator("#send-ntfy")
+            send_status = page.locator("#send-ntfy-status")
+            send_path = "**/api/notifications/send"
+            page.route(send_path, lose_response, times=1)
+            send.click()
+            expect(send_status).to_have_text(uncertain)
+            self.assertEqual(worker.call_count, 2)
+            self.assertEqual(worker.call_args.args[0][2], "other-topic")
+
+            page.route(
+                send_path,
+                lambda route: route.fulfill(
+                    status=400, json={"error": "Fixture server error."}
+                ),
+                times=1,
+            )
+            send.click()
+            expect(send_status).to_have_text("Fixture server error.")
+            self.assertEqual(worker.call_count, 2)
+
     def test_keeps_draft_private_and_retries_only_on_request(self):
         with (
             patch.object(notifications, "_send", notifications._worker),
@@ -117,7 +273,9 @@ class NotificationsDashboardTests(unittest.TestCase):
             field = panel.get_by_label("New ntfy topic or URL", exact=True)
             active_address = panel.locator("#notifications-active-address")
             topic_url = panel.locator("#notifications-topic-url")
-            save = panel.get_by_role("button", name="Save notifications")
+            save = panel.get_by_role("button", name="Save", exact=True)
+            test = panel.get_by_role("button", name="Test", exact=True)
+            expect(test).to_be_hidden()
             expect(toggle).to_be_enabled()
             expect(toggle).not_to_be_checked()
             self.assertTrue(
@@ -190,6 +348,24 @@ class NotificationsDashboardTests(unittest.TestCase):
                 all(call.args[0] == destination for call in send.call_args_list)
             )
 
+            field.fill("unsaved-replacement")
+            with patch.object(
+                notifications, "_send_in_worker", return_value="sent"
+            ) as manual:
+                test.press("Enter")
+                expect(panel.get_by_role("status")).to_have_text(
+                    "ntfy accepted the test message."
+                )
+                expect(test).to_be_focused()
+                expect(field).to_have_value("unsaved-replacement")
+                self.assertEqual(
+                    manual.call_args.args[0][2:],
+                    [
+                        destination,
+                        "Broader Vids - Test",
+                        "This is a test notification from Broader Vids.",
+                    ],
+                )
             toggle.click()
             expect(panel.get_by_role("status")).to_have_text(
                 "Notifications turned off."
@@ -199,7 +375,8 @@ class NotificationsDashboardTests(unittest.TestCase):
             with closing(Store(directory)) as store:
                 self.assertFalse(notifications.settings(store)["enabled"])
                 self.assertEqual(notifications.settings(store)["topic"], destination)
-            panel.get_by_role("button", name="Clear topic").click()
+            expect(test).to_be_hidden()
+            panel.get_by_role("button", name="Clear", exact=True).click()
             expect(panel.get_by_role("status")).to_have_text("Saved topic cleared.")
             expect(field).to_be_hidden()
             expect(toggle).to_be_focused()

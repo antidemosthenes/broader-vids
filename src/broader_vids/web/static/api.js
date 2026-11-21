@@ -6,13 +6,15 @@ async function response(
     method = "GET",
     body,
     allowFailedStatus = false,
+    unconfirmedMessage,
     timeoutMs = method === "GET" ? 30000 : 90000,
   } = {},
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let result, data;
   try {
-    const result = await fetch(path, {
+    result = await fetch(path, {
       method,
       cache: "no-store",
       signal: controller.signal,
@@ -26,25 +28,22 @@ async function response(
           }
         : {}),
     });
-    let data;
-    try {
-      data = await result.json();
-    } catch (error) {
-      if (controller.signal.aborted) throw error;
+    data = await result.json();
+  } catch (error) {
+    if (unconfirmedMessage) throw Error(unconfirmedMessage);
+    if (controller.signal.aborted)
+      throw Error("The local request timed out. Check the server, then retry.");
+    if (result)
       throw Error(
         "The local server did not return a response. Refresh this page.",
       );
-    }
-    if (!result.ok || (!allowFailedStatus && data.status === "failed"))
-      throw Error(data.error || "The request could not complete.");
-    return data;
-  } catch (error) {
-    if (controller.signal.aborted)
-      throw Error("The local request timed out. Check the server, then retry.");
     throw error;
   } finally {
     clearTimeout(timer);
   }
+  if (!result.ok || (!allowFailedStatus && data.status === "failed"))
+    throw Error(data.error || "The request could not complete.");
+  return data;
 }
 
 export const get = (path, options) => response(path, options);

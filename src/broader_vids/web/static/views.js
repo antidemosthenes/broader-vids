@@ -266,7 +266,7 @@ export function createExclusions(actions) {
     input.value = state.tagDrafts.get(platform) || "";
     input.oninput = () => state.tagDrafts.set(platform, input.value);
     label.append(input);
-    add = el("button", "button primary add-tag-button", "Add tag");
+    add = el("button", "button primary add-tag-button", "Add");
     add.type = "submit";
     formStatus = el("span", "field-status");
     formStatus.setAttribute("role", "status");
@@ -379,7 +379,7 @@ export function createExclusions(actions) {
         add.disabled = state.busy.has(`tags:${platform}`);
         const note = state.notes.get(key);
         add.textContent =
-          add.disabled && note?.text === "Saving…" ? "Saving…" : "Add tag";
+          add.disabled && note?.text === "Saving…" ? "Saving…" : "Add";
         formStatus.textContent = note?.text || "";
         formStatus.className = `field-status ${note?.kind || ""}`;
       }

@@ -128,7 +128,7 @@ Saving preserves ratings, learned calibration, exclusions, and video history.
 Finish active recommendation work before saving.
 After a change, start a new round instead of continuing a paused round with an older profile.
 Unsaved interests stay in the current tab when you leave Preferences.
-Select **Reload saved interests** to discard that draft and load the current saved list.
+Select **Reload saved** to discard that draft and load the current saved list.
 If another window changes the interests, reload the saved list before another save.
 Unrelated exclusion edits do not discard or block an interest draft.
 
@@ -154,11 +154,11 @@ It clears watched IDs, creator exclusions, and exploration progress.
 In the dashboard, select **Preferences**.
 Imported interests appear in the same page editor. Edit them and select **Save** when needed.
 Save interest edits before exporting.
-Select **Export preferences** to download a JSON file.
-For import, select **Choose file**.
+Select **Export** to download a JSON file.
+For import, select **Choose**.
 Broader Vids checks the file and shows its summary automatically.
-Select **Import preferences** to apply it.
-If preferences changed after the preview, check the refreshed summary before you select **Import preferences** again.
+Select **Import** to apply it.
+If preferences changed after the preview, check the refreshed summary before you select **Import** again.
 
 The terminal provides the same operations:
 
@@ -568,7 +568,7 @@ Replace TAG with an exact tag name.
 The engine includes the 视频翻译 exclusion by default.
 You can remove this exclusion.
 Remove it under Exclusions → Bilibili → Tags, or use the terminal remove command.
-Use Add tag or the terminal add command to restore it.
+Use **Add** in the Tags view or the terminal add command to restore it.
 A removal persists across restarts, interest changes, and preference imports.
 The tag still supplies originality evidence when its exclusion is off.
 Imported creator rules cannot be overridden locally.
@@ -582,7 +582,7 @@ Automatic attempts share the recommendation run's existing allowance.
 Failures preserve the last complete copy and report its age.
 Creator rules use their own revision and do not retrain the preference model.
 The dashboard checkbox saves independently of ratings and affects the next new round.
-Each platform also has an Add tag form for exact metadata tags.
+Use the Tags view to add exact metadata tags where the platform supports them.
 YouTube rules match creator-supplied keyword tags when the video metadata includes them.
 These tags differ from visible #hashtags.
 Repeated tag entries with different letter case do not create duplicate rules.
@@ -1053,15 +1053,17 @@ It returns `stopping` if process exit remains unverified.
 Private control records and bounded logs reside in the profile's `.dashboard/` directory.
 The foreground `serve` command remains available for terminal use.
 
-### Configure and retry ntfy notifications
+### Configure and send ntfy notifications
 
 Open **Dashboard → Preferences → Notifications**. The form accepts a public topic name or its exact `https://ntfy.sh/<topic>` URL. The panel shows the active topic address when delivery is on. Anyone who knows the topic can read its messages. Protected topics and self-hosted servers are outside scope.
 
-A settings change makes no request to ntfy.sh. Enabling delivery applies to future published lists. Turning delivery off or changing the topic cancels queued parts. A request already in progress can still reach the previous topic. **Clear saved topic** removes it and disables delivery.
+A settings change makes no request to ntfy.sh. Enabling delivery applies to future published lists. Turning delivery off or changing the topic cancels queued parts. A request already in progress can still reach the previous topic. **Clear** removes the saved topic and disables delivery.
 
 The engine sends a plain-text HTTPS POST after it publishes each nonempty final or partial platform list. The message title identifies the platform and the UTC publication date. Partial lists carry a partial label. Long lists use numbered parts of at most 4096 UTF-8 bytes each.
 
-**Recent deliveries** shows the three latest deliveries for each platform. The system discards older queued message parts and keeps small delivery receipts to prevent duplicate sends.
+Select **Test** to send one test message to the active saved topic. Check your subscribed device after ntfy accepts the message. Select **Send to ntfy** above a current published list to send that platform's list again. A manual send uses the active topic and the original list order. It can repeat an automatic delivery. Test and manual sends report their results next to the controls.
+
+**Recent deliveries** shows the three latest automatic deliveries for each platform. The system discards older queued message parts and keeps small delivery receipts to prevent duplicate sends.
 Each delivery attempt stops starting new parts after ten seconds. When delivery is on, select **Retry** for a pending, failed, or unconfirmed delivery. Broader Vids skips confirmed parts. Retrying an unconfirmed part may send a duplicate. The device notification feature works independently of host Stop hooks.
 
 ### Prepare a release

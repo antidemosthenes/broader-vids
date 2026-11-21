@@ -49,9 +49,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             page.get_by_role("button", name="Preferences", exact=True).click()
             dialog = page.get_by_role("region", name="Preferences", exact=True)
             with page.expect_download() as download:
-                dialog.get_by_role(
-                    "button", name="Export preferences", exact=True
-                ).click()
+                dialog.get_by_role("button", name="Export", exact=True).click()
             file_text = Path(download.value.path()).read_text(encoding="utf-8")
             bundle = json.loads(file_text)
             self.assertEqual(bundle["watched_video_ids"], [watched_id])
@@ -68,7 +66,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             with closing(Store(directory)) as store:
                 before = preserved(store)
             with page.expect_file_chooser() as chooser:
-                dialog.get_by_role("button", name="Choose file", exact=True).click()
+                dialog.get_by_role("button", name="Choose", exact=True).click()
             chooser.value.set_files(
                 {
                     "name": "preferences.json",
@@ -93,7 +91,7 @@ class PreferenceDashboardTests(unittest.TestCase):
                 "1 (1 YouTube, 0 Bilibili)",
                 dialog.locator("#preferences-summary").inner_text(),
             )
-            dialog.get_by_role("button", name="Import preferences", exact=True).click()
+            dialog.get_by_role("button", name="Import", exact=True).click()
             dialog.locator("#preferences-status").filter(
                 has_text="Preferences imported."
             ).wait_for()
@@ -130,9 +128,7 @@ class PreferenceDashboardTests(unittest.TestCase):
                 "() => !document.getElementById('preferences-file').disabled"
             )
             with page.expect_download() as download:
-                preferences.get_by_role(
-                    "button", name="Export preferences", exact=True
-                ).click()
+                preferences.get_by_role("button", name="Export", exact=True).click()
             file_text = Path(download.value.path()).read_text(encoding="utf-8")
 
             page.get_by_role("button", name="Back", exact=True).click()
@@ -174,9 +170,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             summary = preferences.locator("#preferences-summary").inner_text()
             self.assertIn("Manual creator exclusions", summary)
             self.assertIn("1 (1 YouTube, 0 Bilibili)", summary)
-            preferences.get_by_role(
-                "button", name="Import preferences", exact=True
-            ).click()
+            preferences.get_by_role("button", name="Import", exact=True).click()
             preferences.locator("#preferences-status").filter(
                 has_text="Manual creator lists replaced with 1 exclusion"
             ).wait_for()
@@ -221,9 +215,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             )
             field.fill("games")
             self.assertTrue(
-                settings.get_by_role(
-                    "button", name="Export preferences", exact=True
-                ).is_disabled()
+                settings.get_by_role("button", name="Export", exact=True).is_disabled()
             )
             with closing(Store(directory)) as store:
                 before = preserved(store)
@@ -253,9 +245,7 @@ class PreferenceDashboardTests(unittest.TestCase):
             page.route("**/api/preferences/import", hold)
             try:
                 with page.expect_request("**/api/preferences/import"):
-                    settings.get_by_role(
-                        "button", name="Import preferences", exact=True
-                    ).click()
+                    settings.get_by_role("button", name="Import", exact=True).click()
                 self.assertTrue(field.is_disabled())
                 self.assertTrue(
                     settings.get_by_role(
@@ -279,9 +269,7 @@ class PreferenceDashboardTests(unittest.TestCase):
                 page.unroute("**/api/preferences/import", hold)
             self.assertEqual(field.input_value(), "music\ntravel")
             self.assertTrue(
-                settings.get_by_role(
-                    "button", name="Export preferences", exact=True
-                ).is_enabled()
+                settings.get_by_role("button", name="Export", exact=True).is_enabled()
             )
             self.assertTrue(settings.locator("#preferences-preview").is_hidden())
             with closing(Store(directory)) as store:
@@ -300,9 +288,7 @@ class PreferenceDashboardTests(unittest.TestCase):
                 )
                 self.assertEqual(preserved(store), before)
             with page.expect_download() as download:
-                settings.get_by_role(
-                    "button", name="Export preferences", exact=True
-                ).click()
+                settings.get_by_role("button", name="Export", exact=True).click()
             exported = json.loads(
                 Path(download.value.path()).read_text(encoding="utf-8")
             )
@@ -362,10 +348,10 @@ class PreferenceDashboardTests(unittest.TestCase):
                     "high",
                     target="topology",
                 )
-            apply = dialog.get_by_role("button", name="Import preferences", exact=True)
+            apply = dialog.get_by_role("button", name="Import", exact=True)
             apply.click()
             dialog.get_by_text(
-                "Preferences changed since you chose this file. Check the summary, then select Import preferences again.",
+                "Preferences changed since you chose this file. Check the summary, then select Import again.",
                 exact=True,
             ).wait_for()
             expect(dialog.locator("#preferences-filename")).to_have_text(

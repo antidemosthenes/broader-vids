@@ -11,7 +11,46 @@ const deliveryLabels = {
   canceled: "Canceled",
 };
 
-export function createNotifications() {
+export function sendStatus(result, test = false) {
+  if (result.outcome === "sent")
+    return test
+      ? "ntfy accepted the test message."
+      : "ntfy accepted the recommendation list.";
+  if (result.outcome === "busy") return "A delivery is already in progress.";
+  if (result.outcome === "inactive")
+    return "Turn on notifications in Preferences.";
+  if (result.outcome === "topic_changed")
+    return "The active topic changed. Test it again.";
+  if (result.outcome === "stale")
+    return "The recommendation list changed. Try again.";
+  if (result.outcome === "unavailable")
+    return "This list is unavailable to send.";
+
+  const accepted = result.accepted_parts || 0;
+  const detail =
+    result.outcome === "uncertain"
+      ? "Delivery could not be confirmed."
+      : result.outcome === "canceled"
+        ? "Delivery stopped because notification settings changed."
+        : "Delivery failed.";
+  const count =
+    result.total_parts && !test
+      ? ` ntfy confirmed ${accepted} of ${result.total_parts} parts.`
+      : "";
+  const retry =
+    accepted || result.outcome === "uncertain"
+      ? " Sending again may send a duplicate."
+      : "";
+  return detail + count + retry;
+}
+
+export function requestDelivery(action, body) {
+  return request(`${endpoint}/${action}`, body, {
+    unconfirmedMessage: sendStatus({ outcome: "uncertain" }),
+  });
+}
+
+export function createNotifications(changed) {
   const find = (id) => document.getElementById(`notifications-${id}`);
   const form = find("form"),
     toggle = find("enabled"),
@@ -19,14 +58,16 @@ export function createNotifications() {
     activeAddress = find("active-address"),
     topicUrl = find("topic-url"),
     save = find("save"),
+    test = find("test"),
     clear = find("clear"),
     reload = find("reload"),
     status = find("status"),
     history = find("history"),
     deliveries = find("deliveries");
   let saved,
-    reading = false,
+    reading,
     saving = false,
+    testing = false,
     retrying = "",
     revision = 0,
     historyKey = "";
@@ -41,8 +82,11 @@ export function createNotifications() {
     save.hidden =
       !saved || (!topic.value.trim() && toggle.checked === saved.enabled);
     clear.hidden = !hasTopic;
+    test.hidden = !hasTopic || !saved.enabled;
+    test.setAttribute("aria-disabled", String(testing || saving));
+    test.textContent = testing ? "Testing…" : "Test";
     save.disabled = clear.disabled = saving;
-    reload.disabled = reading;
+    reload.disabled = Boolean(reading);
   }
 
   function showDeliveries() {
@@ -104,11 +148,11 @@ export function createNotifications() {
   async function refresh() {
     if (reading || saving || retrying) return;
     const current = revision;
-    reading = true;
+    reading = request(endpoint, {});
     if (!saved) status.textContent = "Loading notifications…";
     controls();
     try {
-      const value = await request(endpoint, {});
+      const value = await reading;
       if (current !== revision) return;
       if (!saved) status.textContent = "";
       reload.hidden = true;
@@ -119,7 +163,7 @@ export function createNotifications() {
         reload.hidden = false;
       }
     } finally {
-      reading = false;
+      reading = undefined;
       controls();
     }
   }
@@ -137,6 +181,7 @@ export function createNotifications() {
       toggle.checked = value.enabled;
       if (clearDraft) topic.value = "";
       show(value);
+      changed(value.enabled && value.has_topic);
       savedChange = true;
       status.textContent = message;
     } catch (error) {
@@ -174,6 +219,30 @@ export function createNotifications() {
     }
   }
 
+  test.onclick = async () => {
+    if (testing || saving || !saved?.enabled) return;
+    const current = ++revision;
+    const destinationId = saved.destination_id;
+    testing = true;
+    status.textContent = "Sending test message…";
+    controls();
+    try {
+      const result = await requestDelivery("test", {
+        destination_id: destinationId,
+      });
+      if (current !== revision) return;
+      status.textContent = sendStatus(result, true);
+      if (result.outcome === "topic_changed" || result.outcome === "inactive") {
+        await reading?.catch(() => {});
+        if (current === revision) await refresh();
+      }
+    } catch (error) {
+      if (current === revision) status.textContent = error.message;
+    } finally {
+      testing = false;
+      controls();
+    }
+  };
   reload.onclick = refresh;
   toggle.onchange = () => {
     controls();
