@@ -309,14 +309,6 @@ class NotificationsDashboardTests(unittest.TestCase):
                 notifications.configure(store, True, "other-topic")
                 route.continue_()
 
-            test_path = "**/api/notifications/test"
-            page.route(test_path, change_topic_before_test, times=1)
-            test.click()
-            expect(status).to_have_text("The active topic changed. Test it again.")
-            expect(topic).to_have_text("https://ntfy.sh/other-topic")
-            expect(field).to_have_value("unsaved-topic")
-            worker.assert_not_called()
-
             def lose_response(route):
                 response = route.fetch()
                 try:
@@ -325,10 +317,26 @@ class NotificationsDashboardTests(unittest.TestCase):
                     response.dispose()
                     route.abort()
 
+            def reject_send(route):
+                route.fulfill(status=400, json={"error": "Fixture server error."})
+
+            test_steps = iter((change_topic_before_test, lose_response))
+            send_steps = iter((lose_response, reject_send))
+            page.route(
+                "**/api/notifications/test", lambda route: next(test_steps)(route)
+            )
+            page.route(
+                "**/api/notifications/send", lambda route: next(send_steps)(route)
+            )
+            test.click()
+            expect(status).to_have_text("The active topic changed. Test it again.")
+            expect(topic).to_have_text("https://ntfy.sh/other-topic")
+            expect(field).to_have_value("unsaved-topic")
+            worker.assert_not_called()
+
             uncertain = (
                 "Delivery could not be confirmed. Sending again may send a duplicate."
             )
-            page.route(test_path, lose_response, times=1)
             test.click()
             expect(status).to_have_text(uncertain)
             expect(field).to_have_value("unsaved-topic")
@@ -338,20 +346,11 @@ class NotificationsDashboardTests(unittest.TestCase):
             page.get_by_role("button", name="Recommendations", exact=True).click()
             send = page.locator("#send-ntfy")
             send_status = page.locator("#send-ntfy-status")
-            send_path = "**/api/notifications/send"
-            page.route(send_path, lose_response, times=1)
             send.click()
             expect(send_status).to_have_text(uncertain)
             self.assertEqual(worker.call_count, 2)
             self.assertEqual(worker.call_args.args[0][2], "other-topic")
 
-            page.route(
-                send_path,
-                lambda route: route.fulfill(
-                    status=400, json={"error": "Fixture server error."}
-                ),
-                times=1,
-            )
             send.click()
             expect(send_status).to_have_text("Fixture server error.")
             self.assertEqual(worker.call_count, 2)
