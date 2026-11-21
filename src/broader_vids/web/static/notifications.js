@@ -68,9 +68,18 @@ export function createNotifications(changed) {
     reading,
     saving = false,
     testing = false,
+    testingDestination,
     retrying = "",
     revision = 0,
-    historyKey = "";
+    historyKey = "",
+    testStatusDestination,
+    statusRevision = 0;
+
+  function setStatus(message, destination) {
+    statusRevision++;
+    testStatusDestination = destination;
+    status.textContent = message;
+  }
 
   function controls() {
     const hasTopic = Boolean(saved?.has_topic);
@@ -84,7 +93,10 @@ export function createNotifications(changed) {
     clear.hidden = !hasTopic;
     test.hidden = !hasTopic || !saved.enabled;
     test.setAttribute("aria-disabled", String(testing || saving));
-    test.textContent = testing ? "Testing…" : "Test";
+    test.textContent =
+      testing && testingDestination === saved?.destination_id
+        ? "Testing…"
+        : "Test";
     save.disabled = clear.disabled = saving;
     reload.disabled = Boolean(reading);
   }
@@ -135,6 +147,13 @@ export function createNotifications(changed) {
   }
 
   function show(value) {
+    if (
+      testStatusDestination &&
+      testStatusDestination !== value.destination_id
+    ) {
+      testStatusDestination = undefined;
+      status.textContent = "";
+    }
     if (!saved || toggle.checked === saved.enabled)
       toggle.checked = value.enabled;
     saved = value;
@@ -149,17 +168,17 @@ export function createNotifications(changed) {
     if (reading || saving || retrying) return;
     const current = revision;
     reading = request(endpoint, {});
-    if (!saved) status.textContent = "Loading notifications…";
+    if (!saved) setStatus("Loading notifications…");
     controls();
     try {
       const value = await reading;
       if (current !== revision) return;
-      if (!saved) status.textContent = "";
+      if (!saved) setStatus("");
       reload.hidden = true;
       show(value);
     } catch (error) {
       if (!saved) {
-        status.textContent = error.message;
+        setStatus(error.message);
         reload.hidden = false;
       }
     } finally {
@@ -174,7 +193,7 @@ export function createNotifications(changed) {
     let savedChange = false;
     revision++;
     saving = true;
-    status.textContent = "Saving notifications…";
+    setStatus("Saving notifications…");
     controls();
     try {
       const value = await request(endpoint, { enabled, topic: destination });
@@ -183,10 +202,10 @@ export function createNotifications(changed) {
       show(value);
       changed(value.enabled && value.has_topic);
       savedChange = true;
-      status.textContent = message;
+      setStatus(message);
     } catch (error) {
       if (!enabled && destination === null) toggle.checked = saved.enabled;
-      status.textContent = error.message;
+      setStatus(error.message);
     } finally {
       saving = false;
       controls();
@@ -200,18 +219,17 @@ export function createNotifications(changed) {
     if (retrying || saving || !saved.enabled) return;
     const current = ++revision;
     retrying = runId;
-    status.textContent = "Retrying delivery…";
+    setStatus("Retrying delivery…");
     showDeliveries();
     try {
       const value = await request(`${endpoint}/retry`, { run_id: runId });
       if (current === revision) {
         show(value);
         const row = value.deliveries.find((row) => row.run_id === runId);
-        status.textContent =
-          deliveryLabels[row?.status] || "Delivery status updated.";
+        setStatus(deliveryLabels[row?.status] || "Delivery status updated.");
       }
     } catch (error) {
-      if (current === revision) status.textContent = error.message;
+      if (current === revision) setStatus(error.message);
     } finally {
       retrying = "";
       showDeliveries();
@@ -224,22 +242,41 @@ export function createNotifications(changed) {
     const current = ++revision;
     const destinationId = saved.destination_id;
     testing = true;
-    status.textContent = "Sending test message…";
+    testingDestination = destinationId;
+    setStatus("Sending test message…", destinationId);
+    const currentStatus = statusRevision;
     controls();
     try {
       const result = await requestDelivery("test", {
         destination_id: destinationId,
       });
-      if (current !== revision) return;
-      status.textContent = sendStatus(result, true);
+      if (current !== revision || currentStatus !== statusRevision) return;
+      if (
+        result.outcome !== "topic_changed" &&
+        result.outcome !== "inactive" &&
+        saved?.destination_id !== destinationId
+      )
+        return;
+      setStatus(
+        sendStatus(result, true),
+        result.outcome === "topic_changed" || result.outcome === "inactive"
+          ? undefined
+          : destinationId,
+      );
       if (result.outcome === "topic_changed" || result.outcome === "inactive") {
         await reading?.catch(() => {});
         if (current === revision) await refresh();
       }
     } catch (error) {
-      if (current === revision) status.textContent = error.message;
+      if (
+        current === revision &&
+        saved?.destination_id === destinationId &&
+        currentStatus === statusRevision
+      )
+        setStatus(error.message, destinationId);
     } finally {
       testing = false;
+      testingDestination = undefined;
       controls();
     }
   };
@@ -249,14 +286,12 @@ export function createNotifications(changed) {
     if (!toggle.checked && saved.enabled) {
       configure(false, null, "Notifications turned off.", false);
     } else {
-      status.textContent = toggle.checked
-        ? "Save to turn on notifications."
-        : "";
+      setStatus(toggle.checked ? "Save to turn on notifications." : "");
       if (toggle.checked && !saved.has_topic) topic.focus();
     }
   };
   topic.oninput = () => {
-    status.textContent = "";
+    setStatus("");
     controls();
   };
   clear.onclick = () => configure(false, "", "Saved topic cleared.", true);
@@ -265,7 +300,7 @@ export function createNotifications(changed) {
     if (save.hidden) return;
     const value = topic.value.trim();
     if (!value && !saved.has_topic && toggle.checked) {
-      status.textContent = "Enter an ntfy topic to turn on notifications.";
+      setStatus("Enter an ntfy topic to turn on notifications.");
       topic.focus();
       return;
     }
