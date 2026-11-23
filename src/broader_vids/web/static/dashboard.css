@@ -672,6 +672,9 @@ main {
 .error {
   color: var(--error);
 }
+.creator-rule .compact:empty {
+  display: none;
+}
 .creator-rule {
   border-top: 1px solid var(--line);
   padding-top: 18px;
@@ -1302,6 +1305,9 @@ dialog::backdrop {
   .dialog-body {
     padding: 20px;
   }
+  .review-dialog .dialog-body {
+    padding: 0;
+  }
   .technical table {
     font-size: var(--text-micro);
   }
@@ -1712,4 +1718,23 @@ main:has(> .preferences-page:not([hidden])) > .app-header {
   margin: 0;
   padding: 0.65rem 1rem;
   border-bottom: 1px solid var(--line);
+}
+
+.button.primary.unrated {
+  background: #e5c8a7;
+  border-color: #8a613d;
+  color: #302014;
+}
+.button.primary.unrated:active:not(:disabled) {
+  background: #d6b28b;
+}
+@media (prefers-color-scheme: dark) {
+  .button.primary.unrated {
+    background: #76543a;
+    border-color: #e2bc92;
+    color: #fff8ef;
+  }
+  .button.primary.unrated:active:not(:disabled) {
+    background: #916c4d;
+  }
 }

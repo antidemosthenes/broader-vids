@@ -261,6 +261,14 @@ class LocalServer(ThreadingHTTPServer):
 
 
 def make_server(root, port=8765, *, control=None):
+    from broader_vids.learning.feedback import reconcile_current_reviews
+
+    store = Store(root)
+    try:
+        reconcile_current_reviews(store)
+    finally:
+        store.close()
+
     from broader_vids.evidence.account_switch import AccountSwitch
 
     token = secrets.token_urlsafe(32)

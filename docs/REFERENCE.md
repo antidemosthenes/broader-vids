@@ -339,8 +339,8 @@ The report separates videos without ratings from partially rated videos.
 Each platform's `videos` array provides the title, URL, and missing dimension IDs for every incomplete video.
 The `dimension_labels` map provides the visible rating-group names.
 The assistant lists these missing groups beside each video in the reminder.
-In the dashboard, **Reviewed** means all four groups have saved feedback.
-A partial count such as **2/4 rated** shows incomplete feedback. The review panel names the missing groups.
+In the dashboard, **Reviewed** means all four groups have saved feedback. A fully rated recommendation is marked watched unless you chose Mark unwatched. Your unwatched choice remains until you mark it watched.
+A partial count such as **2/4 rated** shows incomplete feedback. In the review panel, a brown Save button identifies each group that still needs a rating.
 Unsaved edits do not change the saved count.
 Choose **Open dashboard and stop** to review feedback.
 Request recommendations again after review.

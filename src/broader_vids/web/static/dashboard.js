@@ -384,7 +384,7 @@ function render() {
       ? "Choose the sources you want to see."
       : state.view === "calibration"
         ? "Optional examples to refine your preferences."
-        : "A little familiar. A little unexpected.";
+        : "Rate each video to improve recommendations.";
   document.querySelectorAll("[data-view]").forEach((node) => {
     if (node.dataset.view === state.view)
       node.setAttribute("aria-current", "page");
