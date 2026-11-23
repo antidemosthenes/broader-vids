@@ -144,7 +144,10 @@ class NotificationsDashboardTests(unittest.TestCase):
         ):
             page.set_viewport_size({"width": 390, "height": 844})
             page.emulate_media(
-                color_scheme="light", forced_colors="none", reduced_motion="reduce"
+                color_scheme="light",
+                contrast="no-preference",
+                forced_colors="none",
+                reduced_motion="reduce",
             )
             button = page.get_by_role("button", name="Send to ntfy", exact=True)
             expect(button).to_be_hidden()
@@ -152,14 +155,25 @@ class NotificationsDashboardTests(unittest.TestCase):
                 notifications.configure(store, True, "fixture-topic")
             page.evaluate('() => document.dispatchEvent(new Event("visibilitychange"))')
             expect(button).to_be_visible()
-            expect(button).to_have_css("border-top-color", "rgb(114, 129, 118)")
+            expect(button).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            expect(button).to_have_css("border-top-left-radius", "999px")
+            fill = button.evaluate(
+                "(button) => getComputedStyle(button).backgroundColor"
+            )
+            watched = page.get_by_role("button", name="Mark watched", exact=True).first
+            self.assertNotEqual(
+                fill,
+                watched.evaluate(
+                    "(button) => getComputedStyle(button).backgroundColor"
+                ),
+            )
             try:
                 button.press("Enter")
                 self.assertTrue(started.wait(3))
                 sending = page.get_by_role("button", name="Sending…", exact=True)
                 expect(sending).to_be_disabled()
                 sending.hover()
-                expect(sending).to_have_css("box-shadow", "none")
+                expect(sending).to_have_css("background-color", fill)
                 page.get_by_role("tab", name="Bilibili", exact=True).click()
                 expect(button).to_be_enabled()
                 button.click()

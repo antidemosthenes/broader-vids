@@ -17,8 +17,7 @@
   --line: #dce2dc;
   --accent: #176e62;
   --accent-text: #fff;
-  --action-border: #728176;
-  --action-pressed: #d7e6df;
+  --utility-blue: light-dark(#215d90, #a1cdf9);
   --unrated-fill: #e5c8a7;
   --unrated-pressed: #d6b28b;
   --unrated-text: #302014;
@@ -44,8 +43,6 @@
     --line: #3a4740;
     --accent: #87d6bd;
     --accent-text: #12372d;
-    --action-border: #8b9e90;
-    --action-pressed: #315144;
     --unrated-fill: #76543a;
     --unrated-pressed: #876345;
     --unrated-text: #fff8ef;
@@ -235,7 +232,7 @@ h3 {
   background: color-mix(in srgb, currentColor 18%, var(--raised));
 }
 #help-open {
-  color: light-dark(#215d90, #a1cdf9);
+  color: var(--utility-blue);
 }
 #stop-open,
 .stop-actions button[type="submit"] {
@@ -450,6 +447,7 @@ main {
 }
 .row-actions {
   display: flex;
+  min-inline-size: 0;
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
@@ -478,7 +476,7 @@ main {
     box-shadow 120ms ease;
   touch-action: manipulation;
 }
-.button:hover:not(:disabled) {
+.button:hover:not(:disabled, .list-action) {
   box-shadow: 0 1px 4px #0001;
 }
 .button:active:not(:disabled) {
@@ -519,27 +517,43 @@ main {
   padding: 6px 9px;
 }
 .button.list-action {
-  border-color: var(--action-border);
+  --action-fill: color-mix(in srgb, var(--text) 8%, var(--surface));
+  background-color: var(--action-fill);
+  border-color: transparent;
+  color: var(--muted);
+}
+.button.list-action[aria-pressed] {
+  inline-size: 8em;
+  max-inline-size: 100%;
 }
 .button.list-action[aria-pressed="true"] {
-  background: var(--selected);
+  color: var(--accent);
 }
 @media (hover: hover) {
   .button.list-action:hover:not(:disabled, [aria-disabled="true"]) {
-    border-color: var(--accent);
+    background-color: color-mix(in srgb, var(--text) 6%, var(--action-fill));
+    color: var(--text);
   }
 }
 .button.list-action:active:not(:disabled, [aria-disabled="true"]) {
-  background: var(--action-pressed);
+  background-color: color-mix(in srgb, var(--text) 12%, var(--action-fill));
+  color: var(--text);
 }
 .button.list-action[aria-disabled="true"] {
-  background: var(--raised);
-  box-shadow: none;
+  background-color: var(--action-fill);
   transform: none;
 }
+#send-ntfy {
+  --action-fill: color-mix(in srgb, var(--utility-blue) 11%, var(--surface));
+  border-radius: 999px;
+  padding-inline: 0.85em;
+  color: var(--utility-blue);
+}
 .rate-button {
-  border-color: var(--line);
+  background-color: color-mix(in srgb, var(--accent) 16%, var(--raised));
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
   color: var(--accent);
+  font-weight: 650;
 }
 @media (pointer: coarse) {
   .row-actions .button,
@@ -1402,6 +1416,7 @@ dialog::backdrop {
   .rating-option span {
     border-width: 2px;
   }
+  .button.list-action,
   .rating-footer .button.primary {
     border-color: var(--line);
   }
