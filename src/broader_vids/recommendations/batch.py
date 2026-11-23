@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import time
 import json
 
+from broader_vids.learning.feedback import reconcile_current_reviews
 from broader_vids.evidence.service import atomic_json
 from broader_vids.recommendations.parallel import Runtime
 from broader_vids.recommendations.service import (
@@ -53,6 +54,7 @@ def create_batch(
     validate_optional_limit(max_seconds)
     if type(workers) is not int or not 1 <= workers <= 4:
         raise ValueError("Use one to four shared model workers.")
+    reconcile_current_reviews(store)
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
         identifier = store.create(
@@ -97,6 +99,7 @@ def create_batch(
 
 def execute_batch(store, identifier, runner=execute_recommendation, *, progress=None):
     _validate_current_batch(store, store.get(identifier))
+    reconcile_current_reviews(store)
     with ExitStack() as recovered, store.lease(identifier):
         run = store.get(identifier)
         _validate_current_batch(store, run)

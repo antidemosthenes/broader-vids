@@ -62,6 +62,61 @@ class FeedbackWorkflowTests(unittest.TestCase):
         run["status"] = "completed"
         self.store.save(run)
 
+    def test_review_completion_respects_manual_unwatched(self):
+        from broader_vids.preferences import user_action
+
+        for dimension, value, target in (
+            ("topic_interest", "high", "analysis"),
+            ("domain_interest", "high", "mathematics"),
+            ("depth", "suitable", "analysis"),
+            ("quality_level", "high", ""),
+        ):
+            save_detail(self.store, self.key, dimension, value, target=target)
+
+        def watched():
+            return self.store.db.execute(
+                "SELECT watched FROM video_state WHERE canonical_id=?", (self.key,)
+            ).fetchone()[0]
+
+        self.assertEqual(watched(), 1)
+        user_action(self.store, self.key, "unwatched")
+        save_detail(self.store, self.key, "quality_level", "clear")
+        save_detail(self.store, self.key, "quality_level", "high")
+        self.assertEqual(watched(), 0)
+        user_action(self.store, self.key, "watched")
+        self.assertEqual(watched(), 1)
+
+    def test_reconcile_only_current_reviews_once(self):
+        from broader_vids.learning.feedback import reconcile_current_reviews
+        from broader_vids.preferences import user_action
+
+        for dimension, value, target in (
+            ("topic_interest", "high", "analysis"),
+            ("domain_interest", "high", "mathematics"),
+            ("depth", "suitable", "analysis"),
+            ("quality_level", "high", ""),
+        ):
+            save_detail(self.store, self.key, dimension, value, target=target)
+        with self.store.db:
+            self.store.db.execute(
+                "UPDATE video_state SET watched=0 WHERE canonical_id=?", (self.key,)
+            )
+        identifier = self.store.create(
+            "youtube", {"kind": "recommendation"}, {"selected": [self.item]}
+        )
+        reconcile_current_reviews(self.store)
+        row = self.store.db.execute(
+            "SELECT watched FROM video_state WHERE canonical_id=?", (self.key,)
+        ).fetchone()
+        self.assertEqual(row[0], 1)
+        user_action(self.store, self.key, "unwatched")
+        reconcile_current_reviews(self.store)
+        row = self.store.db.execute(
+            "SELECT watched FROM video_state WHERE canonical_id=?", (self.key,)
+        ).fetchone()
+        self.assertEqual(row[0], 0)
+        self.assertIsNotNone(identifier)
+
     def test_query_keywords_never_prefill_a_rating_topic(self):
         features = capture(self.item)
         self.assertEqual(context_from_features(features)["topics"], [])

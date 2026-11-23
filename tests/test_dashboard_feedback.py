@@ -1,3 +1,4 @@
+import re
 from contextlib import closing, contextmanager
 import atexit
 import json
@@ -277,11 +278,9 @@ class DashboardFeedbackTests(unittest.TestCase):
             expect(badge).to_have_text("0/4 rated")
             saved(page, depth)
             expect(badge).to_have_text("1/4 rated")
-            expect(inspector.locator(".rating-progress")).to_contain_text(
-                "Specific topic"
-            )
-            expect(inspector.locator(".rating-progress")).not_to_contain_text(
-                "Depth for this video"
+            expect(inspector.locator(".rating-progress")).to_have_count(0)
+            expect(topic.get_by_role("button", name="Save", exact=True)).to_have_class(
+                re.compile("unrated")
             )
             page.wait_for_function(
                 "() => document.querySelector('#inspector-body select').value === 'advanced'"
@@ -355,13 +354,22 @@ class DashboardFeedbackTests(unittest.TestCase):
             topic.get_by_role("radio", name="Low", exact=True).check()
             saved(page, topic)
             expect(badge).to_have_text("Reviewed")
-            expect(inspector.locator(".rating-progress")).to_be_hidden()
+            row = page.locator(".video-row").first
+            row.get_by_role("button", name="Watched ✓", exact=True).wait_for()
+            row.get_by_role("button", name="Watched ✓", exact=True).click()
+            row.get_by_role("button", name="Mark watched", exact=True).wait_for()
+            page.reload(wait_until="domcontentloaded")
+            row = page.locator(".video-row").first
+            expect(row.locator(".row-review-state")).to_have_text("Reviewed")
+            row.get_by_role("button", name="Mark watched", exact=True).wait_for()
+            inspector = open_first(page)
+            expect(inspector.locator(".rating-progress")).to_have_count(0)
             quality = inspector.get_by_role("group", name="Video quality", exact=True)
             quality.get_by_role("button", name="Clear", exact=True).click()
             expect(badge).to_have_text("3/4 rated")
-            expect(inspector.locator(".rating-progress")).to_contain_text(
-                "Video quality"
-            )
+            expect(
+                quality.get_by_role("button", name="Save", exact=True)
+            ).to_have_class(re.compile("unrated"))
             self.assertFalse(errors, errors)
 
     def test_mobile_dialog_details_keyboard_and_layout(self):

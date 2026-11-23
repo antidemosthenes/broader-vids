@@ -1,7 +1,12 @@
 import json
 
 from broader_vids.exploration.domains import normalized
-from broader_vids.preferences import canonical_identity, video_states, video_payload
+from broader_vids.preferences import (
+    canonical_identity,
+    current_recommendation_id,
+    video_states,
+    video_payload,
+)
 from broader_vids.storage import utc_now
 from broader_vids.learning.topic_labels import readable_labels
 
@@ -52,6 +57,55 @@ def context_from_features(features):
         "topic_source": features.get("topic_source", "unlabeled"),
         "topic_labels_are_suggestions": True,
     }
+
+
+def mark_reviewed_watched(store, identifier, *, displayed=False):
+    store.db.execute(
+        """UPDATE video_state SET watched=1, updated_at=?
+        WHERE canonical_id=? AND (recommended=1 OR ?) AND watched=0
+        AND (SELECT COUNT(*) FROM feedback_details WHERE canonical_id=?)=4
+        AND COALESCE((SELECT action FROM user_actions WHERE canonical_id=?
+            AND action IN ('watched','unwatched') ORDER BY id DESC LIMIT 1),'') != 'unwatched'""",
+        (utc_now(), identifier, int(displayed), identifier, identifier),
+    )
+
+
+def reconcile_current_reviews(store):
+    name = "reviewed_watched_v1"
+    table_exists = store.db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dashboard_migrations'"
+    ).fetchone()
+    if (
+        table_exists
+        and store.db.execute(
+            "SELECT 1 FROM dashboard_migrations WHERE name=?", (name,)
+        ).fetchone()
+    ):
+        return
+    with store.db:
+        store.db.execute("BEGIN IMMEDIATE")
+        store.db.execute(
+            "CREATE TABLE IF NOT EXISTS dashboard_migrations (name TEXT PRIMARY KEY)"
+        )
+        if store.db.execute(
+            "SELECT 1 FROM dashboard_migrations WHERE name=?", (name,)
+        ).fetchone():
+            return
+        for platform in ("youtube", "bilibili"):
+            run_id = current_recommendation_id(store, platform)
+            if not run_id:
+                continue
+            rows = store.db.execute(
+                """SELECT json_extract(item.value,'$.canonical_id')
+                FROM runs r, json_each(r.state, CASE
+                    WHEN COALESCE(json_array_length(r.state,'$.selected'),0)>0
+                    THEN '$.selected' ELSE '$.preview' END) item WHERE r.id=?""",
+                (run_id,),
+            ).fetchall()
+            for row in rows:
+                if row[0]:
+                    mark_reviewed_watched(store, row[0], displayed=True)
+        store.db.execute("INSERT INTO dashboard_migrations VALUES(?)", (name,))
 
 
 def save_detail(
@@ -152,6 +206,28 @@ def save_detail(
                 "INSERT INTO feedback_details VALUES(?,?,?,?) ON CONFLICT(canonical_id,dimension) DO UPDATE SET action_id=excluded.action_id,payload=excluded.payload",
                 (key, dimension, cursor.lastrowid, json.dumps(payload)),
             )
+        if value != "clear" and store.db.execute(
+            "SELECT COUNT(*) FROM feedback_details WHERE canonical_id=?", (key,)
+        ).fetchone()[0] == len(CHOICES):
+            mark_reviewed_watched(store, key)
+            state = store.db.execute(
+                "SELECT watched, recommended FROM video_state WHERE canonical_id=?",
+                (key,),
+            ).fetchone()
+            if not state["watched"] and not state["recommended"]:
+                current_id = current_recommendation_id(store, identity["platform"])
+                displayed = bool(
+                    current_id
+                    and store.db.execute(
+                        """SELECT 1 FROM runs r, json_each(r.state, CASE
+                            WHEN COALESCE(json_array_length(r.state,'$.selected'),0)>0
+                            THEN '$.selected' ELSE '$.preview' END) item
+                        WHERE r.id=? AND json_extract(item.value,'$.canonical_id')=? LIMIT 1""",
+                        (current_id, key),
+                    ).fetchone()
+                )
+                if displayed:
+                    mark_reviewed_watched(store, key, displayed=True)
     refresh_after_feedback(store)
     saved = details(store, [key])
     return {

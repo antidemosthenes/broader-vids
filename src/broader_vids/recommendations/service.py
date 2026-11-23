@@ -54,6 +54,10 @@ from broader_vids.recommendations.quality import (
     unscored_quality,
     compatible_quality,
 )
+from broader_vids.learning.feedback import (
+    mark_reviewed_watched,
+    reconcile_current_reviews,
+)
 from broader_vids.learning.alignment import ALIGNMENT_VERSION, mapping_policy
 from broader_vids.recommendations.learning_snapshot import (
     freeze_learning,
@@ -164,6 +168,7 @@ def create_recommendation(
         "quality_threshold": 60,
         "weights": Policy().weights,
     }
+    reconcile_current_reviews(store)
     return store.create(
         platform,
         settings,
@@ -352,6 +357,7 @@ def _publish_locked(store, run, learning=None, *, prepare_only=False):
                     utc_now(),
                 ),
             )
+            mark_reviewed_watched(store, item["canonical_id"])
             store.db.execute(
                 "INSERT INTO recommendation_exposures VALUES(?,?,?,?)",
                 (run["id"], item["canonical_id"], position, state["published_at"]),
@@ -386,6 +392,7 @@ def publish_recommendation(
     if run["settings"].get("kind") != "recommendation":
         raise ValueError("Not a recommendation run.")
     _validate_current_round(run)
+    reconcile_current_reviews(store)
     with _publication_scope(store, identifier, run["platform"]) as run:
         if run["state"]["phase"] == "published":
             return run
@@ -453,6 +460,7 @@ def execute_recommendation(
         raise ValueError(
             f"Continue batch {initial['settings']['batch_id']} to preserve its shared budget."
         )
+    reconcile_current_reviews(store)
     with _publication_scope(store, identifier, initial["platform"]) as run:
         state, settings = run["state"], run["settings"]
         _validate_current_round(run)

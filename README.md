@@ -62,7 +62,7 @@ Start a new conversation and invoke the setup skill. Choose YouTube, Bilibili, o
 
 Optional ntfy delivery sends published lists to your devices. Enable it during setup or under **Dashboard → Preferences → Notifications**. See [device notifications](docs/WORKFLOW.md#send-recommendations-to-your-devices).
 
-Invoke the recommendation skill to request a round. Review recommendations in chat. Open the dashboard to mark videos as watched and rate topic, subject, depth, and quality. Ratings update local preference and quality models. Their learned weights affect later rounds. Creator and tag exclusions apply to the next new round.
+Invoke the recommendation skill to request a round. Review recommendations in chat. Open the dashboard to rate topic, subject, depth, and quality. A fully rated recommendation is marked watched. You can mark it unwatched. Ratings update local preference and quality models. Their learned weights affect later rounds. Creator and tag exclusions apply to the next new round.
 
 | Action | Skill command | Purpose |
 | --- | --- | --- |

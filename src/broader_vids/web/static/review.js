@@ -1,10 +1,4 @@
-import {
-  state,
-  record,
-  draftKey,
-  ratingGroups,
-  missingRatings,
-} from "./state.js";
+import { state, record, draftKey, ratingGroups } from "./state.js";
 import { el, button, link, platformName } from "./ui.js";
 
 export function createReview(item, actions) {
@@ -20,8 +14,7 @@ export function createReview(item, actions) {
         ? "Selected for your recommendation list."
         : "An extra example for your feedback."),
   );
-  const progress = el("p", "note rating-progress");
-  root.append(title, creatorName, reason, progress);
+  root.append(title, creatorName, reason);
   const forms = [];
   for (const [dimension, label] of ratingGroups) {
     const form = el("form", "rating-form");
@@ -132,25 +125,25 @@ export function createReview(item, actions) {
       }
       actions.rate(id, dimension, payload, key, payload);
     };
-    function updateFooter() {
+    function updateFooter(data = record(id)) {
       const note = state.notes.get(key);
+      const unrated = !data.details?.[dimension];
+      const dirty = state.drafts.has(key);
+      const busy = state.busy.has(key);
+      const savedStatus = unrated ? "" : "Saved";
       message.textContent =
-        (state.drafts.has(key) && !state.busy.has(key) && note?.kind !== "error"
+        dirty && !busy && note?.kind !== "error"
           ? "Unsaved"
-          : note?.text) ||
-        (state.drafts.has(key)
-          ? "Unsaved"
-          : record(id).details?.[dimension]
-            ? "Saved"
-            : "Not rated");
+          : note?.text || (dirty ? "Unsaved" : savedStatus);
       message.className = `field-status ${note?.kind || ""}`;
-      save.disabled = state.busy.has(key);
-      clear.disabled =
-        state.busy.has(key) ||
-        (!state.drafts.has(key) && !record(id).details?.[dimension]);
+      save.classList.toggle("unrated", unrated);
+      if (unrated)
+        save.setAttribute("aria-description", `No saved rating for ${label}.`);
+      else save.removeAttribute("aria-description");
+      save.disabled = busy;
+      clear.disabled = busy || (!dirty && unrated);
     }
-    function update() {
-      const data = record(id);
+    function update(data) {
       const context = data.feedback_context || {};
       const saved = data.details?.[dimension] || {};
       const prior = state.drafts.get(key) || saved;
@@ -177,10 +170,10 @@ export function createReview(item, actions) {
           ...choices.map((value) => new Option(value, value)),
         );
       }
-      updateFooter();
+      updateFooter(data);
     }
     root.append(form);
-    forms.push({ update });
+    forms.push(update);
   }
   const creator = el("div", "creator-rule");
   const creatorLabel = el("label", "toggle-label");
@@ -206,12 +199,7 @@ export function createReview(item, actions) {
         data.creator?.name ||
         data.creator?.creator_id ||
         platformName(item.platform);
-      const missing = missingRatings(data.details);
-      progress.hidden = missing.length === 0;
-      progress.textContent = missing.length
-        ? `Missing ratings for ${missing.join(", ")}.`
-        : "";
-      forms.forEach((form) => form.update());
+      forms.forEach((update) => update(data));
       const busy = state.busy.has(
         `creator:${data.creator?.platform}:${data.creator?.creator_id}`,
       );
@@ -220,16 +208,12 @@ export function createReview(item, actions) {
       toggle.disabled =
         busy || !data.creator?.creator_id || !!data.creator?.imported;
       explanation.textContent =
-        (note?.kind === "error"
-          ? note.text
-          : note?.text
-            ? `${note.text}. Applies to the next new round.`
-            : "") ||
+        note?.text ||
         (data.creator?.imported
           ? "Managed on Bilibili."
           : !data.creator?.creator_id
             ? "Creator ID is unavailable."
-            : "Applies to the next new round.");
+            : "");
     },
   };
 }

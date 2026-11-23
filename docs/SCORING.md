@@ -299,7 +299,7 @@ Blank means no observation.
 Medium interest means indifference.
 Medium quality means acceptable quality.
 An empty field is not a Medium response.
-The dashboard shows Not rated yet as a placeholder.
+The review panel uses a brown Save button for a group without a saved rating.
 Use Clear to remove a saved dimension.
 
 New assessments provide cited content topics and audience levels.
