@@ -1,6 +1,6 @@
 {
   "name": "broader-vids",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Curated YouTube and Bilibili recommendations for Claude Code",
   "author": {
     "name": "Broader Vids contributors"
