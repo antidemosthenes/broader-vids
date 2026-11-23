@@ -236,6 +236,12 @@ class DashboardFeedbackTests(unittest.TestCase):
         self,
     ):
         with dashboard_fixture(provisional=True) as (page, directory):
+            page.emulate_media(
+                color_scheme="light",
+                contrast="no-preference",
+                forced_colors="none",
+                reduced_motion="reduce",
+            )
             self.assertTrue(page.locator("#round-notice").is_visible())
             self.assertEqual(page.locator(".video-row").count(), 10)
             errors = []
@@ -254,6 +260,10 @@ class DashboardFeedbackTests(unittest.TestCase):
                 "group", name="Depth for this video", exact=True
             )
             topic = inspector.get_by_role("group", name="Specific topic", exact=True)
+            topic_save = topic.get_by_role("button", name="Save", exact=True)
+            expect(topic_save).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            expect(topic_save).to_have_css("border-top-left-radius", "8px")
+            expect(topic_save).to_have_css("background-color", "rgb(229, 200, 167)")
             topic.get_by_label("Topic", exact=True).fill("my corrected topic")
             topic.get_by_role("radio", name="Low", exact=True).check()
             depth.get_by_role("combobox", name="Video level", exact=True).select_option(
@@ -290,6 +300,7 @@ class DashboardFeedbackTests(unittest.TestCase):
             )
             saved(page, topic)
             expect(badge).to_have_text("2/4 rated")
+            expect(topic_save).to_have_css("background-color", "rgb(23, 110, 98)")
             page.get_by_role("navigation").get_by_role(
                 "button", name="Calibration", exact=True
             ).click()
@@ -367,9 +378,9 @@ class DashboardFeedbackTests(unittest.TestCase):
             quality = inspector.get_by_role("group", name="Video quality", exact=True)
             quality.get_by_role("button", name="Clear", exact=True).click()
             expect(badge).to_have_text("3/4 rated")
-            expect(
-                quality.get_by_role("button", name="Save", exact=True)
-            ).to_have_class(re.compile("unrated"))
+            expect(quality.get_by_role("button", name="Save", exact=True)).to_have_css(
+                "background-color", "rgb(229, 200, 167)"
+            )
             self.assertFalse(errors, errors)
 
     def test_mobile_dialog_details_keyboard_and_layout(self):
@@ -532,13 +543,19 @@ class DashboardFeedbackTests(unittest.TestCase):
     def test_watched_dismiss_restore_and_platform_scroll(self):
         with dashboard_fixture() as (page, directory):
             row = page.locator(".video-row").first
-            row.get_by_role("button", name="Mark watched", exact=True).click()
-            row.get_by_role("button", name="Watched ✓", exact=True).wait_for()
+            watched = row.locator("button[aria-pressed]")
+            expect(watched).to_have_class(re.compile(r"\blist-action\b"))
+            watched.click()
+            expect(watched).to_have_attribute("aria-pressed", "true")
+            expect(watched).to_have_text("Watched ✓")
             page.wait_for_function(
                 "() => !document.querySelector('.row-actions button:disabled')"
             )
-            row.get_by_role("button", name="Dismiss", exact=True).click()
-            row.get_by_role("button", name="Restore", exact=True).wait_for()
+            dismiss = row.get_by_role("button", name="Dismiss", exact=True)
+            restore = row.get_by_role("button", name="Restore", exact=True)
+            expect(dismiss).to_have_class(re.compile(r"\blist-action\b"))
+            dismiss.click()
+            expect(restore).to_have_class(re.compile(r"\blist-action\b"))
             self.assertEqual(page.locator(".video-row").count(), 10)
             page.wait_for_function(
                 "() => !document.querySelector('.row-actions button:disabled')"

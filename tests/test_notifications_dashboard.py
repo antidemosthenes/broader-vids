@@ -143,18 +143,23 @@ class NotificationsDashboardTests(unittest.TestCase):
             dashboard_fixture() as (page, directory),
         ):
             page.set_viewport_size({"width": 390, "height": 844})
-            page.emulate_media(color_scheme="light", reduced_motion="reduce")
+            page.emulate_media(
+                color_scheme="light", forced_colors="none", reduced_motion="reduce"
+            )
             button = page.get_by_role("button", name="Send to ntfy", exact=True)
             expect(button).to_be_hidden()
             with closing(Store(directory)) as store:
                 notifications.configure(store, True, "fixture-topic")
             page.evaluate('() => document.dispatchEvent(new Event("visibilitychange"))')
             expect(button).to_be_visible()
+            expect(button).to_have_css("border-top-color", "rgb(114, 129, 118)")
             try:
                 button.press("Enter")
                 self.assertTrue(started.wait(3))
                 sending = page.get_by_role("button", name="Sending…", exact=True)
                 expect(sending).to_be_disabled()
+                sending.hover()
+                expect(sending).to_have_css("box-shadow", "none")
                 page.get_by_role("tab", name="Bilibili", exact=True).click()
                 expect(button).to_be_enabled()
                 button.click()
