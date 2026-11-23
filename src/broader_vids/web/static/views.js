@@ -31,12 +31,12 @@ export function createVideoRow(item, index, actions) {
   const watched = button(
     "Mark watched",
     () => actions.video(id, record(id).watched ? "unwatched" : "watched"),
-    "button quiet small",
+    "button list-action small",
   );
   const dismiss = button(
     "Dismiss",
     () => actions.video(id, record(id).dismissed ? "restore" : "dismiss"),
-    "button quiet small",
+    "button list-action small",
   );
   const rate = button(
     "Rate",
