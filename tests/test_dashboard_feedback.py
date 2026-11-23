@@ -476,6 +476,19 @@ class DashboardFeedbackTests(unittest.TestCase):
                 page.evaluate("document.activeElement.textContent"), "Rate"
             )
             self.assertLessEqual(page.evaluate("document.body.scrollWidth"), 390)
+            self.assertTrue(
+                page.locator(".row-actions").first.evaluate(
+                    "(actions) => [...actions.children].every("
+                    "(button) => button.offsetTop === actions.firstElementChild.offsetTop)"
+                )
+            )
+            page.set_viewport_size({"width": 320, "height": 844})
+            page.evaluate("document.documentElement.style.fontSize = '200%'")
+            self.assertTrue(
+                page.locator("#list-pane").evaluate(
+                    "(pane) => pane.scrollWidth <= pane.clientWidth"
+                )
+            )
 
     def test_polling_and_inflight_saves_preserve_newer_edits(self):
         with dashboard_fixture() as (page, _):
