@@ -40,6 +40,21 @@ class CliTests(unittest.TestCase):
                     if platform == "youtube"
                     else "broader_vids.recommendations.batch.execute_batch"
                 )
+                expected_status, expected_exit = (
+                    ("completed", 0) if platform == "youtube" else ("paused", 2)
+                )
+
+                def finish(store, run_id, **kwargs):
+                    run = store.get(run_id)
+                    if run["status"] == "completed":
+                        return run
+                    run["status"] = expected_status
+                    if run["platform"] == "youtube":
+                        run["state"]["phase"] = "published"
+                    store.save(run)
+                    return run
+
+                server = {"status": "running", "url": "http://127.0.0.1:9087"}
                 output = io.StringIO()
                 from broader_vids.onboarding import configure, complete
 
@@ -66,7 +81,10 @@ class CliTests(unittest.TestCase):
                             "warnings": {},
                         },
                     ),
-                    patch(target) as execute,
+                    patch(target, side_effect=finish) as execute,
+                    patch(
+                        "broader_vids.web.runtime.dashboard", return_value=server
+                    ) as restart,
                     redirect_stdout(output),
                     redirect_stderr(io.StringIO()),
                 ):
@@ -84,10 +102,66 @@ class CliTests(unittest.TestCase):
                             "0",
                         ]
                     )
-                self.assertEqual(result, 2)
-                self.assertEqual(execute.call_count, 1)
-                report = json.loads(output.getvalue())
-                self.assertEqual(report["status"], "pending")
+                    self.assertEqual(result, expected_exit)
+                    execute.assert_called_once()
+                    report = json.loads(output.getvalue())
+                    self.assertEqual(report["status"], expected_status)
+                    self.assertEqual(report["dashboard"], server)
+                    restart.assert_called_once_with(
+                        Path(directory).resolve(), "restart", open_browser=False
+                    )
+
+                    run_args = ["--data-dir", directory]
+                    with redirect_stdout(io.StringIO()) as inspection:
+                        self.assertEqual(
+                            main([*run_args, "report", report["run_id"]]), 0
+                        )
+                    self.assertNotIn("dashboard", json.loads(inspection.getvalue()))
+                    self.assertEqual(restart.call_count, 1)
+
+                    if platform == "both":
+                        restart.side_effect = PermissionError(
+                            "Dashboard startup was denied."
+                        )
+                        with redirect_stdout(io.StringIO()) as resumed:
+                            self.assertEqual(
+                                main([*run_args, "continue", report["run_id"]]), 2
+                            )
+                        result = json.loads(resumed.getvalue())
+                        self.assertEqual(result["status"], "paused")
+                        self.assertEqual(
+                            result["dashboard"],
+                            {
+                                "status": "unavailable",
+                                "reason": "Dashboard startup was denied.",
+                            },
+                        )
+                        self.assertTrue(Path(result["digest_path"]).is_file())
+                        with closing(Store(directory)) as store:
+                            run = store.get(report["run_id"])
+                            run["status"] = "completed"
+                            store.save(run)
+
+                    if platform == "both":
+                        with redirect_stderr(io.StringIO()) as error:
+                            self.assertEqual(
+                                main([*run_args, "publish", report["run_id"]]), 2
+                            )
+                        self.assertIn("Not a recommendation run.", error.getvalue())
+
+                    restart.reset_mock()
+                    commands = (
+                        ("continue", "publish")
+                        if platform == "youtube"
+                        else ("continue",)
+                    )
+                    for command in commands:
+                        with redirect_stdout(io.StringIO()) as repeated:
+                            self.assertEqual(
+                                main([*run_args, command, report["run_id"]]), 0
+                            )
+                        self.assertNotIn("dashboard", json.loads(repeated.getvalue()))
+                    restart.assert_not_called()
                 with closing(Store(directory)) as store:
                     self.assertEqual(
                         store.db.execute(

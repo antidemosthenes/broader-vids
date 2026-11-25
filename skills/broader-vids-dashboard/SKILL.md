@@ -20,7 +20,9 @@ If the runtime is missing, use the packaged [setup skill](../broader-vids-setup/
 
 For an open request, run `dashboard open` with an explicit absolute `--data-dir`.
 The command starts or reuses that profile's server and requests the system browser.
-After open finishes, run `dashboard status` in a separate tool call.
+For a restart request, use `dashboard restart` with the same data directory.
+Restart waits for the verified server to stop before it starts a replacement.
+After startup, run `dashboard status` in a separate tool call.
 Use the same data directory.
 Present the verified URL as a clickable link only when status reports running.
 If the server stopped or Windows denied process creation, request host permission for a persistent local dashboard.

@@ -276,10 +276,13 @@ def parser():
     )
     serve.add_argument("--port", type=int, default=8765)
     dashboard = commands.add_parser(
-        "dashboard", help="Open, inspect, or stop this profile's local dashboard"
+        "dashboard", help="Open, restart, inspect, or stop this profile's dashboard"
     )
     dashboard.add_argument(
-        "operation", choices=("open", "status", "stop"), default="open", nargs="?"
+        "operation",
+        choices=("open", "restart", "status", "stop"),
+        default="open",
+        nargs="?",
     )
     dashboard.add_argument(
         "--port",

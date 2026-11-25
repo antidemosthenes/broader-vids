@@ -88,14 +88,48 @@ class DashboardRuntimeTests(unittest.TestCase):
                             other, port=session["port"], open_browser=False
                         )
                         self.assertNotEqual(second["url"], results[0]["url"])
-                        self.assertEqual(dashboard(other, "stop")["status"], "stopped")
+                        other_session = read_session(other)
+                        with (
+                            patch(
+                                "broader_vids.web.runtime._stop_server",
+                                return_value=False,
+                            ),
+                            self.assertRaisesRegex(ValueError, "still stopping"),
+                        ):
+                            dashboard(root, "restart", port=0, open_browser=False)
                         self.assertTrue(active(session))
+                        with (
+                            patch(
+                                "broader_vids.web.runtime.active", return_value=False
+                            ),
+                            patch("broader_vids.web.runtime.subprocess.Popen") as spawn,
+                            self.assertRaisesRegex(ValueError, "still running"),
+                        ):
+                            dashboard(root, "restart", port=0, open_browser=False)
+                        spawn.assert_not_called()
+                        self.assertEqual(read_session(root), session)
+                        with patch(
+                            "broader_vids.web.runtime.webbrowser.open"
+                        ) as launch:
+                            restarted = dashboard(
+                                root, "restart", port=0, open_browser=False
+                            )
+                        launch.assert_not_called()
+                        current = read_session(root)
+                        self.assertNotEqual(
+                            current["instance_id"], session["instance_id"]
+                        )
+                        self.assertFalse(active(session))
+                        self.assertTrue(active(other_session))
+                        self.assertEqual(restarted, dashboard(root, "status"))
+                        self.assertEqual(dashboard(other, "stop")["status"], "stopped")
+                        self.assertTrue(active(current))
                     finally:
                         dashboard(other, "stop")
                 self.assertEqual(dashboard(root, "stop")["status"], "stopped")
                 self.assertEqual(dashboard(root, "status")["status"], "stopped")
             finally:
-                if original_session:
+                if original_session and active(original_session):
                     atomic_json(session_path(root), original_session)
                 dashboard(root, "stop")
 
@@ -194,6 +228,16 @@ class DashboardRuntimeTests(unittest.TestCase):
                 self.assertEqual(
                     dashboard(root, port=0, open_browser=False)["status"], "running"
                 )
+                original = read_session(root)
+                self.assertGreater(original["process_start"], 0)
+                self.assertEqual(dashboard(root, "stop")["status"], "stopped")
+                atomic_json(
+                    session_path(root),
+                    {**original, "pid": os.getpid(), "process_start": 0},
+                )
+                replacement = dashboard(root, "restart", port=0, open_browser=False)
+                self.assertEqual(replacement["status"], "running")
+                self.assertNotEqual(replacement["pid"], os.getpid())
             finally:
                 dashboard(root, "stop")
             with self.assertRaises(ValueError):

@@ -1023,16 +1023,23 @@ An explicit `--data-dir` overrides `BROADER_VIDS_DATA_DIR`, the saved selection,
 Source commands and installed commands honor the same selection.
 Use an explicit temporary directory for installation tests.
 
-### Open or stop the dashboard
+### Open, restart, or stop the dashboard
 
 ```powershell
 node bin/broader-vids.cjs dashboard open
 node bin/broader-vids.cjs dashboard open --no-browser
+node bin/broader-vids.cjs dashboard restart --no-browser
 node bin/broader-vids.cjs dashboard status
 node bin/broader-vids.cjs dashboard stop
 ```
 
-Open starts or reuses the verified server for the selected profile.
+After a recommendation round returns a result, the command restarts the dashboard for the same profile.
+This applies to complete, partial, paused, and failed rounds with a saved result.
+Reading a report or repeating a completed round leaves the dashboard running as it was.
+The result gives the verified URL for opening the dashboard from chat.
+If startup fails, the result gives the error and preserves the saved recommendations.
+Use Restart to replace the verified server for the selected profile.
+Open starts or reuses that server.
 It requests the system browser and returns the exact URL.
 `browser_status: launch_requested` means the operating system accepted the request. It does not check that the page rendered.
 If the system cannot start the browser, the command returns `manual_open_required` and keeps the server available.

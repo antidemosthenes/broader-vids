@@ -50,6 +50,27 @@ def emit(value):
     print(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False))
 
 
+def emit_recommendation(root, result, *, restart_dashboard):
+    if restart_dashboard and result["status"] in {
+        "completed",
+        "partial",
+        "paused",
+        "failed",
+    }:
+        from broader_vids.web.runtime import dashboard
+
+        try:
+            result["dashboard"] = dashboard(root, "restart", open_browser=False)
+        except (
+            OSError,
+            ValueError,
+            sqlite3.Error,
+            subprocess.SubprocessError,
+        ) as error:
+            result["dashboard"] = {"status": "unavailable", "reason": str(error)}
+    emit(result)
+
+
 def show_progress(value):
     print(
         json.dumps({"progress": value}, ensure_ascii=False), file=sys.stderr, flush=True
@@ -458,10 +479,15 @@ def main(argv=None):
                     from broader_vids.preflight import charge_elapsed
 
                     charge_elapsed(store, run_id, args.preflight_seconds)
+                restart_dashboard = args.command == "recommend" or (
+                    args.command == "continue"
+                    and store.get(run_id)["status"] != "completed"
+                )
                 if args.command != "report":
                     execute_batch(store, run_id, progress=show_progress)
                 report, path = batch_report(store, run_id)
-                emit(
+                emit_recommendation(
+                    store.root,
                     {
                         "run_id": run_id,
                         "status": report["status"],
@@ -482,7 +508,8 @@ def main(argv=None):
                             }
                             for p, r in report["platforms"].items()
                         },
-                    }
+                    },
+                    restart_dashboard=restart_dashboard,
                 )
                 return (
                     0
@@ -573,13 +600,18 @@ def main(argv=None):
                     from broader_vids.preflight import charge_elapsed
 
                     charge_elapsed(store, run_id, args.preflight_seconds)
+                restart_dashboard = args.command == "recommend" or (
+                    args.command in {"publish", "continue"}
+                    and store.get(run_id)["state"].get("phase") != "published"
+                )
                 if args.command == "publish":
                     publish_recommendation(store, run_id, args.allow_incomplete)
                 elif args.command != "report":
                     execute_recommendation(store, run_id, progress=show_progress)
                 path = write_recommendation_report(store, run_id)
                 report = recommendation_report(store, run_id)
-                emit(
+                emit_recommendation(
+                    store.root,
                     {
                         "run_id": run_id,
                         "platform": report["platform"],
@@ -600,7 +632,8 @@ def main(argv=None):
                             "download_bytes_is_upper_bound", False
                         ),
                         "report_path": str(path),
-                    }
+                    },
+                    restart_dashboard=restart_dashboard,
                 )
                 return (
                     0

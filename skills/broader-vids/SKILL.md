@@ -220,8 +220,12 @@ Include incomplete assessments, source limits, and pending entries.
 When you report `pending_now`, state that it includes published recommendations that remain unwatched and undismissed.
 It includes videos in the current list.
 Do not call it a reserve unless the data shows additional recommendations beyond published entries.
-Use the packaged [dashboard skill](../broader-vids-dashboard/SKILL.md) when the user wants browser review controls.
-`dashboard open --no-browser` returns the verified local URL without blocking the command.
+When a recommendation result includes `dashboard`, read its status.
+After a successful restart, run `dashboard status` with the same data directory.
+If the server stops before this check or the restart needs host permission, follow the packaged [dashboard skill](../broader-vids-dashboard/SKILL.md).
+Use `dashboard restart --no-browser` for the approved retry. Then check status again.
+Share the URL after a successful restart and a `running` status check.
+If the restart still fails or the new server stops again, report the problem with the saved recommendations.
 Dashboard ratings and exclusions stay local. When enabled, ntfy delivery sends the rank, title, and link for each published recommendation.
 
 Accept separate topic, subject, depth, and quality judgments through `rate`.
