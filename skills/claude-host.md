@@ -39,14 +39,17 @@ The reminder covers only the current dashboard list for each requested platform.
 A new current list replaces the earlier list as the reminder target.
 Do not bypass incomplete feedback without the user's explicit choice. Do not reduce requested platform coverage. Report incomplete results as partial and keep candidate failure details accurate. If either platform pauses, report the original batch cause and end the request. Continue a paused run only when the user asks.
 
+Verify the dashboard URL before sharing it with the results.
+Follow [Present results and feedback](broader-vids/SKILL.md#present-results-and-feedback) with `--host claude` on dashboard commands.
+
 ## Dashboard
 
 Open the dashboard with the engine's `dashboard` command and `--host claude`.
 After open finishes, verify `dashboard status` in a separate tool call before presenting the returned local URL.
 If Windows denies persistent startup, request host permission through its supported approval mechanism.
 Verify status after one retry. Report the failure if startup remains blocked.
-Do not start another server when one is already active.
-Stop only the verified Broader Vids dashboard for the selected profile.
+Use Open to reuse a running server.
+Use Restart to stop the verified dashboard for the selected profile and start a replacement.
 
 The dashboard manages ratings, exclusions, interests, imports, notifications, and token reports. Do not create ratings or change preferences without the user's instruction. Dashboard access does not require a recommendation round.
 

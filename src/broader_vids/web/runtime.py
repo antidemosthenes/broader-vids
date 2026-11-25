@@ -92,7 +92,7 @@ def read_session(root):
             len(value["instance_id"]) != 32
             or len(value["stop_token"]) != 64
             or type(value.get("pid")) is not int
-            or value["pid"] <= 0
+            or not 0 < value["pid"] <= 0x7FFFFFFF
             or not isinstance(value.get("version"), str)
         ):
             return None
@@ -140,6 +140,79 @@ def public_state(root, session):
     }
 
 
+def _process_start(pid):
+    if os.name == "nt":
+        from broader_vids.windows_job import process_start_ns
+
+        return process_start_ns(pid)
+    if sys.platform == "linux":
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            return int(fields[19])
+        except (OSError, ValueError, IndexError):
+            pass
+    return None
+
+
+def _registered_process_alive(root, session):
+    child = _children.get(session["instance_id"])
+    if child:
+        return child.poll() is None
+    pid = session["pid"]
+    if os.name == "nt":
+        from broader_vids.windows_job import wait_process_exit
+
+        if wait_process_exit(pid, 0):
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+    started = _process_start(pid)
+    if started is None:
+        return True
+    if session.get("process_start") is not None:
+        return started == session["process_start"]
+    try:
+        if sys.platform == "linux":
+            with Path("/proc/stat").open() as stats:
+                boot = next(
+                    int(line.split()[1]) for line in stats if line.startswith("btime ")
+                )
+            started = boot * 10**9 + started * 10**9 // os.sysconf("SC_CLK_TCK")
+        return started <= session_path(root).stat().st_mtime_ns
+    except (OSError, ValueError, StopIteration):
+        return True
+
+
+def _stop_server(root, session):
+    if request(session, "/api/shutdown", stop=True) != {"stopping": True}:
+        raise ValueError("The dashboard did not accept its stop request.")
+    child = _children.get(session["instance_id"])
+    if child:
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return False
+        _children.pop(session["instance_id"], None)
+    elif os.name == "nt":
+        from broader_vids.windows_job import wait_process_exit
+
+        if not wait_process_exit(session["pid"], 5):
+            return False
+    else:
+        path = session_path(root)
+        deadline = time.monotonic() + 5
+        while path.exists():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+    return not active(session)
+
+
 def dashboard(root, operation="open", *, port=8765, open_browser=True):
     for key, child in list(_children.items()):
         if child.poll() is not None:
@@ -147,11 +220,11 @@ def dashboard(root, operation="open", *, port=8765, open_browser=True):
             _children.pop(key, None)
     root = Path(root).resolve()
     if (
-        operation not in {"open", "status", "stop"}
+        operation not in {"open", "restart", "status", "stop"}
         or type(port) is not int
         or not 0 <= port <= 65535
     ):
-        raise ValueError("Use open, status, or stop with a valid local port.")
+        raise ValueError("Use open, restart, status, or stop with a valid local port.")
     with lifecycle_lock(root):
         with closing(Store(root)):
             pass
@@ -163,32 +236,23 @@ def dashboard(root, operation="open", *, port=8765, open_browser=True):
                 if running
                 else {"status": "stopped", "data_directory": str(root)}
             )
-        if operation == "stop":
-            if not running:
-                return {"status": "stopped", "data_directory": str(root)}
-            if request(session, "/api/shutdown", stop=True) != {"stopping": True}:
-                raise ValueError("The dashboard did not accept its stop request.")
-            deadline = time.monotonic() + 5
-            if os.name == "nt":
-                from broader_vids.windows_job import wait_process_exit
-
-                exited = wait_process_exit(session["pid"], 5)
-            else:
-                while active(session) and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                exited = not active(session)
-            child = _children.get(session["instance_id"])
-            if child:
-                try:
-                    child.wait(timeout=max(0, deadline - time.monotonic()))
-                    _children.pop(session["instance_id"], None)
-                    exited = True
-                except subprocess.TimeoutExpired:
-                    exited = False
-            return {
-                "status": "stopped" if exited and not active(session) else "stopping",
-                "data_directory": str(root),
-            }
+        if operation == "stop" or (operation == "restart" and running):
+            stopped = not running or _stop_server(root, session)
+            if operation == "stop":
+                return {
+                    "status": "stopped" if stopped else "stopping",
+                    "data_directory": str(root),
+                }
+            if not stopped:
+                raise ValueError(
+                    "The dashboard is still stopping. Retry after it exits."
+                )
+            running = False
+        elif not running and session and _registered_process_alive(root, session):
+            raise ValueError(
+                "The registered dashboard process is still running but did not respond. "
+                "Retry after it responds or exits."
+            )
         if not running:
             folder = session_path(root).parent
             folder.mkdir(parents=True, exist_ok=True)
@@ -231,7 +295,7 @@ def dashboard(root, operation="open", *, port=8765, open_browser=True):
                     raise PermissionError(
                         "Windows denied dashboard process creation. "
                         "Approve running a persistent local dashboard in this host, "
-                        "then retry dashboard open with the same data directory."
+                        "then retry with the same data directory."
                     ) from error
             deadline = time.monotonic() + 10
             try:
@@ -308,6 +372,7 @@ def worker(root, port, instance):
             **control,
             "port": server.server_port,
             "pid": os.getpid(),
+            "process_start": _process_start(os.getpid()),
             "version": __version__,
         },
     )

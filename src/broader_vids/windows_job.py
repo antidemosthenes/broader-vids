@@ -7,6 +7,7 @@ KILL_ON_JOB_CLOSE = 0x2000
 EXTENDED_LIMIT_INFORMATION = 9
 BASIC_ACCOUNTING_INFORMATION = 1
 SYNCHRONIZE = 0x100000
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 class Limits(ctypes.Structure):
@@ -78,6 +79,10 @@ def kernel():
         "TerminateJobObject": ([wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
         "SetEvent": ([wintypes.HANDLE], wintypes.BOOL),
         "WaitForSingleObject": ([wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
+        "GetProcessTimes": (
+            [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)],
+            wintypes.BOOL,
+        ),
         "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
     }
     for name, (arguments, result) in signatures.items():
@@ -157,6 +162,21 @@ def await_start(name):
             raise TimeoutError("The parent did not release its owned worker.")
     finally:
         api.CloseHandle(event)
+
+
+def process_start_ns(pid):
+    api = kernel()
+    process = api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not process:
+        return None
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not api.GetProcessTimes(process, *(ctypes.byref(value) for value in times)):
+            return None
+        created = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
+        return (created - 116444736000000000) * 100
+    finally:
+        api.CloseHandle(process)
 
 
 def wait_process_exit(pid, timeout):
