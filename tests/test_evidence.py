@@ -590,16 +590,16 @@ class EvidencePipelineTests(unittest.TestCase):
             assessment_model="fixture-model",
             reasoning_effort="low",
         )
-        start = time.monotonic()
-        run = prepare_evidence(
-            self.store,
-            identifier,
-            fetcher_type=Fetcher,
-            max_seconds=5,
-            max_new_bytes=1024,
-        )
-        self.assertEqual(calls[0][0], 1024)
-        self.assertLessEqual(calls[0][1] - start, 4.6)
+        with patch("broader_vids.evidence.service.time", wraps=time) as clock:
+            clock.monotonic.return_value = 100.0
+            run = prepare_evidence(
+                self.store,
+                identifier,
+                fetcher_type=Fetcher,
+                max_seconds=5,
+                max_new_bytes=1024,
+            )
+        self.assertEqual(calls, [(1024, 104.5)])
         self.assertTrue(run["state"]["retryable_failure"])
         self.assertEqual(run["settings"]["max_seconds"], 600)
         self.assertEqual(run["settings"]["max_bytes"], 100 * 1024 * 1024)
