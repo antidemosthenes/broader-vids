@@ -222,12 +222,12 @@ def open_first(page):
     return page.locator("#inspector-body")
 
 
-def saved(page, group):
-    group.get_by_role("button", name="Save", exact=True).click()
-    group.locator(".field-status").filter(has_text="Saved").wait_for()
-    page.wait_for_function(
-        "() => !document.querySelector('.rating-footer button:disabled:not(.quiet)')"
-    )
+def saved(group):
+    button = group.get_by_role("button", name="Save", exact=True)
+    button.click()
+    expect(button).to_have_accessible_description(re.compile("^Saved rating for "))
+    expect(button).to_be_enabled()
+    expect(group.locator(".field-status")).to_be_empty()
 
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
@@ -286,7 +286,7 @@ class DashboardFeedbackTests(unittest.TestCase):
                 "advanced",
             )
             expect(badge).to_have_text("0/4 rated")
-            saved(page, depth)
+            saved(depth)
             expect(badge).to_have_text("1/4 rated")
             expect(inspector.locator(".rating-progress")).to_have_count(0)
             expect(topic.get_by_role("button", name="Save", exact=True)).to_have_class(
@@ -298,9 +298,10 @@ class DashboardFeedbackTests(unittest.TestCase):
             self.assertTrue(
                 topic.get_by_role("radio", name="Low", exact=True).is_checked()
             )
-            saved(page, topic)
+            saved(topic)
             expect(badge).to_have_text("2/4 rated")
             expect(topic_save).to_have_css("background-color", "rgb(23, 110, 98)")
+            expect(topic.get_by_role("radio", name="Low", exact=True)).to_be_checked()
             page.get_by_role("navigation").get_by_role(
                 "button", name="Calibration", exact=True
             ).click()
@@ -318,7 +319,7 @@ class DashboardFeedbackTests(unittest.TestCase):
             depth.get_by_role("combobox", name="Video level", exact=True).select_option(
                 "unknown"
             )
-            saved(page, depth)
+            saved(depth)
             page.reload(wait_until="domcontentloaded")
             open_first(page)
             self.assertEqual(
@@ -360,10 +361,10 @@ class DashboardFeedbackTests(unittest.TestCase):
             for label in ("Video quality", "Broader subject"):
                 group = inspector.get_by_role("group", name=label, exact=True)
                 group.get_by_role("radio", name="High", exact=True).check()
-                saved(page, group)
+                saved(group)
             expect(badge).to_have_text("3/4 rated")
             topic.get_by_role("radio", name="Low", exact=True).check()
-            saved(page, topic)
+            saved(topic)
             expect(badge).to_have_text("Reviewed")
             row = page.locator(".video-row").first
             row.get_by_role("button", name="Watched ✓", exact=True).wait_for()
@@ -375,6 +376,10 @@ class DashboardFeedbackTests(unittest.TestCase):
             row.get_by_role("button", name="Mark watched", exact=True).wait_for()
             inspector = open_first(page)
             expect(inspector.locator(".rating-progress")).to_have_count(0)
+            expect(topic.locator(".field-status")).to_be_empty()
+            expect(topic_save).to_have_accessible_description(
+                "Saved rating for Specific topic."
+            )
             quality = inspector.get_by_role("group", name="Video quality", exact=True)
             quality.get_by_role("button", name="Clear", exact=True).click()
             expect(badge).to_have_text("3/4 rated")
@@ -385,6 +390,7 @@ class DashboardFeedbackTests(unittest.TestCase):
 
     def test_mobile_dialog_details_keyboard_and_layout(self):
         with dashboard_fixture() as (page, _):
+            page.emulate_media(reduced_motion="no-preference")
             initial = page.locator(".video-row").first.bounding_box()["height"]
             page.locator("#list-pane").evaluate("node => node.scrollTop = 120")
             scroll = page.locator("#list-pane").evaluate("node => node.scrollTop")
@@ -395,9 +401,12 @@ class DashboardFeedbackTests(unittest.TestCase):
                 page.locator(".video-row").first.bounding_box()["height"], initial
             )
             page.get_by_role("button", name="Score details", exact=True).click()
-            self.assertTrue(page.locator("#details-dialog").is_visible())
+            details = page.locator("#details-dialog")
+            expect(details).to_have_css("animation-name", "panel-enter")
+            page.emulate_media(reduced_motion="reduce")
+            expect(details).to_have_css("animation-name", "none")
             expect(
-                page.locator("#details-dialog").get_by_role(
+                details.get_by_role(
                     "row", name="Short-video deduction −5.00 points", exact=True
                 )
             ).to_be_visible()
@@ -511,7 +520,7 @@ class DashboardFeedbackTests(unittest.TestCase):
             page.wait_for_timeout(30)
             self.assertEqual(len(delayed), 1)
             quality.get_by_role("radio", name="High", exact=True).check()
-            saved(page, quality)
+            saved(quality)
             delayed[0].fulfill(json=stale)
             page.wait_for_timeout(30)
             self.assertTrue(
@@ -555,12 +564,21 @@ class DashboardFeedbackTests(unittest.TestCase):
 
     def test_watched_dismiss_restore_and_platform_scroll(self):
         with dashboard_fixture() as (page, directory):
+            page.emulate_media(reduced_motion="reduce", forced_colors="none")
+            open_first(page)
             row = page.locator(".video-row").first
             watched = row.locator("button[aria-pressed]")
             expect(watched).to_have_class(re.compile(r"\blist-action\b"))
+            resting_style = """(button) => {
+                const {color, backgroundColor} = getComputedStyle(button);
+                return [color, backgroundColor, button.offsetWidth];
+            }"""
+            before = watched.evaluate(resting_style)
             watched.click()
             expect(watched).to_have_attribute("aria-pressed", "true")
             expect(watched).to_have_text("Watched ✓")
+            page.mouse.move(0, 0)
+            self.assertEqual(watched.evaluate(resting_style), before)
             page.wait_for_function(
                 "() => !document.querySelector('.row-actions button:disabled')"
             )
@@ -623,7 +641,7 @@ class DashboardFeedbackTests(unittest.TestCase):
             inspector = open_first(page)
             quality = inspector.get_by_role("group", name="Video quality", exact=True)
             quality.get_by_role("radio", name="High", exact=True).check()
-            saved(page, quality)
+            saved(quality)
             self.assertEqual(len(reads), 1)
             pending[0].fulfill(json=stale)
             page.wait_for_timeout(50)
@@ -631,7 +649,10 @@ class DashboardFeedbackTests(unittest.TestCase):
             self.assertTrue(
                 quality.get_by_role("radio", name="High", exact=True).is_checked()
             )
-            self.assertEqual(quality.locator(".field-status").inner_text(), "Saved")
+            expect(quality.locator(".field-status")).to_be_empty()
+            expect(
+                quality.get_by_role("button", name="Save", exact=True)
+            ).to_have_accessible_description("Saved rating for Video quality.")
 
     def test_refresh_releases_unused_records_but_keeps_unsaved_draft_context(self):
         with dashboard_fixture() as (page, _):

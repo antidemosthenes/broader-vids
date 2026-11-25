@@ -130,16 +130,16 @@ export function createReview(item, actions) {
       const unrated = !data.details?.[dimension];
       const dirty = state.drafts.has(key);
       const busy = state.busy.has(key);
-      const savedStatus = unrated ? "" : "Saved";
       message.textContent =
-        dirty && !busy && note?.kind !== "error"
-          ? "Unsaved"
-          : note?.text || (dirty ? "Unsaved" : savedStatus);
+        dirty && !busy && note?.kind !== "error" ? "Unsaved" : note?.text || "";
       message.className = `field-status ${note?.kind || ""}`;
       save.classList.toggle("unrated", unrated);
-      if (unrated)
-        save.setAttribute("aria-description", `No saved rating for ${label}.`);
-      else save.removeAttribute("aria-description");
+      save.setAttribute(
+        "aria-description",
+        unrated
+          ? `No saved rating for ${label}.`
+          : `Saved rating for ${label}.`,
+      );
       save.disabled = busy;
       clear.disabled = busy || (!dirty && unrated);
     }
