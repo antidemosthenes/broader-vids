@@ -1,6 +1,35 @@
 import { get } from "./api.js";
 import { el, dateLabel, platformName } from "./ui.js";
 
+const LOCAL_STAGES = new Set(["screening", "preparation", "selection"]);
+const format = (number) => number.toLocaleString();
+
+function platformUsage(item) {
+  const platform = el("li", "usage-platform");
+  const heading = el("div", "usage-stage-heading");
+  const status =
+    item.status === "partial"
+      ? "Partially completed"
+      : item.status.replace(/^./, (letter) => letter.toUpperCase());
+  heading.append(
+    el("h4", "", platformName(item.platform)),
+    el("span", "muted", status),
+  );
+  const tokens = el("p", "usage-platform-tokens");
+  tokens.append(
+    el("strong", "", format(item.tokens)),
+    el("span", "muted", "reported tokens"),
+  );
+  platform.append(heading, tokens);
+  if (item.unreported_calls) {
+    const attempts = item.unreported_calls === 1 ? "attempt" : "attempts";
+    platform.append(
+      el("p", "muted", `${item.unreported_calls} ${attempts} missing usage`),
+    );
+  }
+  return platform;
+}
+
 export function createTokenUsage() {
   const dialog = document.getElementById("token-usage-dialog"),
     select = document.getElementById("token-usage-run"),
@@ -10,7 +39,6 @@ export function createTokenUsage() {
     loading = false,
     version = 0,
     timer;
-  const format = (number) => number.toLocaleString();
   const label = (run) =>
     `${dateLabel(run.created_at)} · ${run.platform === "both" ? "YouTube + Bilibili" : platformName(run.platform)} · ${run.status}`;
   function schedule() {
@@ -69,9 +97,15 @@ export function createTokenUsage() {
           "Cached input is reported for only some attempts.",
         ),
       );
-    const title = el("h3", "usage-heading", "Share of reported tokens");
-    content.append(title);
+    if (report.platforms.length) {
+      const platforms = el("ul", "usage-platforms");
+      platforms.append(...report.platforms.map(platformUsage));
+      content.append(el("h3", "usage-heading", "By platform"), platforms);
+    }
+    content.append(el("h3", "usage-heading", "Share of reported tokens"));
     for (const stage of report.stages) {
+      if (LOCAL_STAGES.has(stage.key) && !stage.calls && !stage.total_tokens)
+        continue;
       const row = el("section", "usage-stage");
       const header = el("div", "usage-stage-heading");
       const share =
@@ -102,17 +136,7 @@ export function createTokenUsage() {
       row.append(header, bar, el("p", "muted compact", detail));
       content.append(row);
     }
-    const platforms = el(
-      "p",
-      "muted usage-platforms",
-      report.platforms
-        .map(
-          (item) =>
-            `${platformName(item.platform)}: ${format(item.tokens)} reported tokens · ${item.status}${item.unreported_calls ? " · partial" : ""}`,
-        )
-        .join(" / "),
-    );
-    content.append(platforms, el("p", "muted usage-scope", report.scope));
+    content.append(el("p", "muted usage-scope", report.scope));
     if (report.legacy)
       content.append(
         el(

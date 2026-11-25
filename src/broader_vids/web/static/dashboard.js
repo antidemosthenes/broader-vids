@@ -167,9 +167,13 @@ async function mutate(key, body, apply, noteKey = key) {
   try {
     const result = await post(body);
     apply?.(result);
-    state.notes.set(noteKey, {
-      text: body.value === "clear" ? "Cleared" : "Saved",
-    });
+    if (body.action === "rate" && body.value !== "clear") {
+      state.notes.delete(noteKey);
+    } else {
+      state.notes.set(noteKey, {
+        text: body.value === "clear" ? "Cleared" : "Saved",
+      });
+    }
   } catch (error) {
     state.notes.set(noteKey, { kind: "error", text: error.message });
   } finally {

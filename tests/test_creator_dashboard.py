@@ -185,7 +185,7 @@ class CreatorDashboardTests(unittest.TestCase):
             self.assertEqual(
                 topic.get_by_label("Topic", exact=True).input_value(), "corrected topic"
             )
-            saved(page, topic)
+            saved(topic)
             with closing(Store(directory)) as store:
                 self.assertEqual(
                     store.db.execute(
