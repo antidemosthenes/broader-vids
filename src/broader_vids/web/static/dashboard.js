@@ -199,7 +199,8 @@ async function mutate(key, body, apply, noteKey = key) {
   state.busy.add(key);
   state.generation++;
   state.notes.set(noteKey, { text: "Saving…" });
-  render();
+  if (body.action === "rate") review?.update();
+  else render();
   try {
     const result = await post(body);
     apply?.(result);
@@ -314,34 +315,22 @@ const actions = {
     );
     const diagnostics = el("details", "diagnostics");
     diagnostics.append(el("summary", "", "Run and model diagnostics"));
-    const pre = el(
-      "pre",
-      "",
-      JSON.stringify(
-        {
-          run: { ...state.data.runs[item.platform], selected: undefined },
-          learning: "Loading…",
-        },
-        null,
-        2,
-      ),
-    );
+    const pre = el("pre", "", "Loading…");
+    const run = { ...state.data.runs[item.platform], selected: undefined };
     diagnostics.append(pre);
     content.append(diagnostics);
-    get("/api/learning")
-      .then((learning) => {
-        pre.textContent = JSON.stringify(
-          {
-            run: { ...state.data.runs[item.platform], selected: undefined },
-            learning,
-          },
-          null,
-          2,
-        );
-      })
-      .catch((error) => {
-        pre.textContent = error.message;
-      });
+    function loadDiagnostics() {
+      if (!diagnostics.open) return;
+      diagnostics.removeEventListener("toggle", loadDiagnostics);
+      get("/api/learning")
+        .then((learning) => {
+          pre.textContent = JSON.stringify({ run, learning }, null, 2);
+        })
+        .catch((error) => {
+          pre.textContent = error.message;
+        });
+    }
+    diagnostics.addEventListener("toggle", loadDiagnostics);
     if (isNarrow()) {
       state.inspectorScrolls.set(reviewId, mobileBody.scrollTop);
       secondary = true;
@@ -510,23 +499,30 @@ function render() {
   $("#pending-toggle").textContent = earlier.get(contextKey())
     ? "Current picks"
     : `Earlier unwatched (${pending})`;
-  $("#empty-list").hidden = !!items.length;
-  $("#empty-list").replaceChildren(
-    el(
-      "h2",
-      "",
-      state.view === "calibration" ? "Room to learn" : "Your next discoveries",
-    ),
-    el(
-      "p",
-      "",
-      state.view === "calibration"
-        ? "Calibration is optional. Ask your assistant to add examples when you want more practice."
-        : state.ready
-          ? "Start a recommendation round with your assistant. Your videos will appear here."
-          : "Loading saved videos…",
-    ),
-  );
+  const emptyList = $("#empty-list");
+  emptyList.hidden = !!items.length;
+  if (emptyList.hidden) {
+    if (emptyList.firstChild) emptyList.replaceChildren();
+  } else {
+    emptyList.replaceChildren(
+      el(
+        "h2",
+        "",
+        state.view === "calibration"
+          ? "Room to learn"
+          : "Your next discoveries",
+      ),
+      el(
+        "p",
+        "",
+        state.view === "calibration"
+          ? "Calibration is optional. Ask your assistant to add examples when you want more practice."
+          : state.ready
+            ? "Start a recommendation round with your assistant. Your videos will appear here."
+            : "Loading saved videos…",
+      ),
+    );
+  }
   const item = items.find((item) => item.canonical_id === selectedId());
   if (!item) {
     reviewId = undefined;

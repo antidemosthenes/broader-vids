@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 import json
 import math
 import random
@@ -16,6 +17,7 @@ from broader_vids.learning.features import (
 from broader_vids.learning.inference import fit_logistic, fit_sparse, predict, sigmoid
 from broader_vids.learning.service import (
     ensure_model,
+    refresh_after_feedback,
     source_data,
     train,
     component_prediction,
@@ -397,13 +399,19 @@ class LearningStorageTests(unittest.TestCase):
 
     def test_unfinished_holdout_reservations_expire_without_discarding_feedback(self):
         self.cohort()
+        with patch(
+            "broader_vids.creators.status",
+            side_effect=AssertionError(
+                "Readiness does not load dashboard creator rules"
+            ),
+        ):
+            self.assertFalse(finalize_ready_cohort(self.store))
         with patch("broader_vids.learning.service.refresh_after_feedback"):
             for i in range(32, 92):
                 user_action(
                     self.store, example(i)["canonical_id"], "up", kind="interest"
                 )
-        ensure_model(self.store)
-        self.assertTrue(finalize_ready_cohort(self.store))
+        refresh_after_feedback(self.store, fit_model=False)
         report = evaluate(self.store)
         self.assertEqual(report["release_reason"], "finite_holdout_reservation_expired")
         self.assertFalse(report["phase_four_complete"])
@@ -473,6 +481,38 @@ class LearningStorageTests(unittest.TestCase):
         user_action(self.store, peer["canonical_id"], "up", kind="interest")
         self.assertEqual(
             ensure_model(self.store)["models"]["interest"]["observations"], 20
+        )
+
+    def test_holdout_release_rejects_a_rating_clear_after_readiness_check(self):
+        self.cohort()
+        with patch("broader_vids.learning.service.refresh_after_feedback"):
+            for index in range(1, 31):
+                identifier = example(index)["canonical_id"]
+                user_action(self.store, identifier, "up", kind="interest")
+                if index <= 26:
+                    user_action(self.store, identifier, "up", kind="quality")
+
+        def clear_before_evaluation(store, **options):
+            with (
+                closing(Store(store.root)) as other,
+                patch("broader_vids.learning.service.refresh_after_feedback"),
+            ):
+                user_action(other, example(26)["canonical_id"], "clear", kind="quality")
+            return evaluate(store, **options)
+
+        with patch(
+            "broader_vids.learning.calibration.evaluate",
+            side_effect=clear_before_evaluation,
+        ):
+            self.assertFalse(finalize_ready_cohort(self.store))
+        self.assertIsNone(
+            self.store.db.execute("SELECT 1 FROM learning_evaluations").fetchone()
+        )
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT COUNT(*) FROM calibration_items WHERE released=0"
+            ).fetchone()[0],
+            30,
         )
 
     def test_evaluation_is_frozen_before_release_and_revisions_invalidate_it(self):

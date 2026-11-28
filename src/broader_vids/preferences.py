@@ -201,6 +201,21 @@ def video_payload(store, identifier):
     return json.loads(row[0]) if row else saved
 
 
+def video_ratings(store, identifiers=None):
+    if identifiers is not None and not identifiers:
+        return {}
+    query = "SELECT canonical_id,dimension,payload FROM feedback_ratings"
+    if identifiers is not None:
+        query += " WHERE canonical_id IN (" + ",".join("?" for _ in identifiers) + ")"
+    ratings = {}
+    for row in store.db.execute(query, identifiers or []):
+        payload = json.loads(row["payload"])
+        ratings.setdefault(row["canonical_id"], {})[row["dimension"]] = {
+            key: value for key, value in payload.items() if key != "features"
+        }
+    return ratings
+
+
 def video_states(store, platform=None, *, identifiers=None):
     if identifiers is not None and not identifiers:
         return {}
@@ -223,17 +238,7 @@ def video_states(store, platform=None, *, identifiers=None):
         args,
     )
     result = {}
-    ratings = {}
-    rating_query = "SELECT canonical_id,dimension,payload FROM feedback_ratings"
-    if identifiers is not None:
-        rating_query += (
-            " WHERE canonical_id IN (" + ",".join("?" for _ in identifiers) + ")"
-        )
-    for row in store.db.execute(rating_query, identifiers or []):
-        payload = json.loads(row["payload"])
-        ratings.setdefault(row["canonical_id"], {})[row["dimension"]] = {
-            k: v for k, v in payload.items() if k != "features"
-        }
+    ratings = video_ratings(store, identifiers)
     for row in rows:
         item = {**dict(row), "payload": json.loads(row["payload"])}
         vote = item.pop("feedback_payload")

@@ -76,7 +76,6 @@ def dashboard_state(store):
     from broader_vids.learning.features import capture
     from broader_vids.learning.annotations import latest_annotations, apply_annotation
 
-    annotations = latest_annotations(store)
     exclusions = exclusion_status(store)
 
     runs = {}
@@ -99,13 +98,15 @@ def dashboard_state(store):
                     run["state"].get("selected") or run["state"].get("preview", [])
                 )
             )
+    identifiers = list(visible)
+    annotations = latest_annotations(store, identifiers)
     snapshots = {
         r["canonical_id"]: json.loads(r["payload"])
         for r in store.db.execute(
             "SELECT canonical_id,payload FROM engagement_snapshots WHERE canonical_id IN ("
-            + ",".join("?" for _ in visible)
+            + ",".join("?" for _ in identifiers)
             + ")",
-            list(visible),
+            identifiers,
         )
     }
     for run in current:
@@ -146,11 +147,11 @@ def dashboard_state(store):
                 "issues": len(state["issues"]),
             }
             runs[run["platform"]] = entry
-    states = video_states(store, identifiers=list(visible))
-    structured = details(store, list(visible))
+    states = video_states(store, identifiers=identifiers)
+    structured = details(store, identifiers)
     creator_values = video_creators(
         store,
-        list(visible),
+        identifiers,
         state_items={key: value["payload"] for key, value in states.items()},
         snapshots=snapshots,
     )
@@ -178,7 +179,7 @@ def dashboard_state(store):
         for p in ("youtube", "bilibili")
     }
     return {
-        "profile": get_profile(store),
+        "profile": profile,
         "runs": runs,
         "pending_items": pending,
         "notifications_active": bool(active_topic(store)),
@@ -762,6 +763,7 @@ def make_server(root, port=8765, *, control=None):
                         if value.get("kind") == "depth"
                         and value.get("level_source") == "ai"
                         else value.get("level"),
+                        fit_model=False,
                     )
                 else:
                     if value["action"] not in {

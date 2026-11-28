@@ -83,20 +83,22 @@ def change_epoch(
     }
 
 
-def capture_rating(store, identifier):
+def capture_rating(store, identifier, *, item=None):
     from broader_vids.learning.evidence import latest_revisions, effective_features
     from broader_vids.learning.annotations import latest_annotations, apply_annotation
 
     revision = latest_revisions(store, [identifier]).get(identifier)
+    annotation = latest_annotations(store, [identifier]).get(identifier)
     row = store.db.execute(
         "SELECT payload FROM calibration_items WHERE canonical_id=?", (identifier,)
     ).fetchone()
     if row:
         return apply_annotation(
             effective_features(json.loads(row[0])["features"], revision),
-            latest_annotations(store).get(identifier),
+            annotation,
         )
-    item = video_payload(store, identifier)
+    if item is None:
+        item = video_payload(store, identifier)
     observation = item.get("quality_evidence", {})
     if observation.get("evidence_run"):
         from broader_vids.recommendations.quality import cached_quality
@@ -107,7 +109,7 @@ def capture_rating(store, identifier):
             observation = {}
     return apply_annotation(
         effective_features(capture(item, observation), revision),
-        latest_annotations(store).get(identifier),
+        annotation,
     )
 
 
@@ -549,12 +551,13 @@ def ensure_model(store):
     )
 
 
-def refresh_after_feedback(store):
+def refresh_after_feedback(store, *, fit_model=True):
     try:
-        ensure_model(store)
+        if fit_model:
+            ensure_model(store)
         from broader_vids.learning.calibration import finalize_ready_cohort
 
-        if finalize_ready_cohort(store):
+        if finalize_ready_cohort(store) and fit_model:
             ensure_model(store)
     except (ValueError, OSError):
         pass
@@ -605,18 +608,20 @@ def final_score(features, snapshot, components, weights, *, channel_cache=None):
 
 def learning_status(store):
     data = source_data(store)
+    identifier = digest(data)
     row = store.db.execute(
-        "SELECT payload FROM learning_models WHERE id=?", (digest(data),)
+        "SELECT payload FROM learning_models WHERE id=?", (identifier,)
     ).fetchone()
     model = json.loads(row[0]) if row else None
     from broader_vids.learning.calibration import evaluate
+    from broader_vids.learning.scoped import pending_depth_count
 
     try:
         validation = evaluate(
             store,
             fit=False,
             data=data,
-            snapshot={"id": digest(data), **model} if model else None,
+            snapshot={"id": identifier, **model} if model else None,
         )
     except (ValueError, OSError) as error:
         validation = {"phase_four_complete": False, "reasons": [str(error)]}
@@ -625,12 +630,12 @@ def learning_status(store):
         "excluded_tags": data["profile"].get("excluded_tags", {}),
         "available": True,
         "current": bool(row),
-        "snapshot_id": digest(data),
+        "snapshot_id": identifier,
         "ratings": dict(Counter(r["dimension"] for r in data["ratings"])),
         "structured_ratings": dict(Counter(r["dimension"] for r in data["details"])),
-        "pending_depth_level": model.get("structured", {}).get("pending_depth_level", 0)
-        if model
-        else 0,
+        "pending_depth_level": pending_depth_count(
+            data["details"], data.get("baseline", {}).get("structured", {})
+        ),
         "quality_review_pending": len(
             {
                 r["id"]

@@ -128,6 +128,8 @@ Manual and account-specific imported rules remain separate from learning paramet
 Policy 5 saves one learning-model reference when the round first executes.
 Screening, resumed work, previews, and final selection use that reference.
 Feedback saved during a round changes the model used by a later round.
+A dashboard rating saves before the next model fit.
+A new round or a preference export fits the model from the saved feedback when necessary.
 Unsupported round policies cannot resume. Current rounds retain their saved settings.
 
 ## 3. Initial quality and interest

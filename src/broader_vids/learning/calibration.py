@@ -4,9 +4,9 @@ import json
 import random
 
 from broader_vids.learning.features import capture, interest_prior
-from broader_vids.learning.service import source_data
+from broader_vids.learning.service import digest, source_data
 from broader_vids.learning.evaluation import evaluate, reviewed_channels
-from broader_vids.preferences import get_profile, video_states
+from broader_vids.preferences import get_profile, video_ratings, video_states
 from broader_vids.recommendations.originality import (
     provenance,
     assessment_context,
@@ -35,12 +35,15 @@ def calibration_list(store, *, latest=False, active=False):
         }
         for row in store.db.execute(query + " ORDER BY canonical_id")
     ]
-    states = video_states(store, identifiers=[r["canonical_id"] for r in rows])
-    structured = details(store, [r["canonical_id"] for r in rows])
-    revisions = latest_revisions(store)
+    if not rows:
+        return rows
+    identifiers = [row["canonical_id"] for row in rows]
+    states = video_states(store, identifiers=identifiers)
+    structured = details(store, identifiers)
+    revisions = latest_revisions(store, identifiers)
     from broader_vids.learning.annotations import latest_annotations, apply_annotation
 
-    annotations = latest_annotations(store)
+    annotations = latest_annotations(store, identifiers)
     from broader_vids.creators import (
         status,
         video_creators,
@@ -51,7 +54,7 @@ def calibration_list(store, *, latest=False, active=False):
     exclusions = status(store)
     creator_values = video_creators(
         store,
-        [row["canonical_id"] for row in rows],
+        identifiers,
         state_items={key: value["payload"] for key, value in states.items()},
     )
     creator_rules_index = checkbox_index(exclusions)
@@ -268,41 +271,52 @@ def start_calibration(store, size=30, seed=42, new=False):
 
 
 def finalize_ready_cohort(store):
-    current = list(
-        store.db.execute(
-            "SELECT canonical_id,cohort,payload FROM calibration_items WHERE released=0"
-        )
-    )
-    if not current:
-        return False
-    paired = calibration_list(store)
-    entries = [
-        entry
-        for entry in paired
-        if entry["canonical_id"] in {r["canonical_id"] for r in current}
-    ]
-    reviewed = [reviewed_channels(entry) for entry in entries]
-    ready = (
-        len(entries) >= 30
-        and all(any(row.values()) for row in reviewed)
-        and all(
-            sum(row[channel] for row in reviewed) >= 26
-            for channel in ("interest", "quality")
-        )
-    )
-    after_action = min(json.loads(r["payload"])["after_action_id"] for r in current)
-    distinct_new = store.db.execute(
-        "SELECT COUNT(DISTINCT canonical_id) FROM user_actions WHERE action='feedback' AND id>?",
-        (after_action,),
-    ).fetchone()[0]
-    if not ready and distinct_new < 60:
-        return False
-    report = evaluate(store, use_frozen=False)
-    from broader_vids.learning.service import digest
+    from broader_vids.learning.feedback import details
 
     with store.db:
+        store.db.execute("BEGIN")
+        current = list(
+            store.db.execute(
+                "SELECT canonical_id,cohort,payload FROM calibration_items WHERE released=0"
+            )
+        )
+        if not current:
+            return False
+        identifiers = [row["canonical_id"] for row in current]
+        ratings = video_ratings(store, identifiers)
+        structured = details(store, identifiers)
+        reviewed = [
+            reviewed_channels(
+                {"ratings": ratings.get(key, {}), "details": structured.get(key, {})}
+            )
+            for key in identifiers
+        ]
+        ready = (
+            len(reviewed) >= 30
+            and all(any(row.values()) for row in reviewed)
+            and all(
+                sum(row[channel] for row in reviewed) >= 26
+                for channel in ("interest", "quality")
+            )
+        )
+        if not ready:
+            after_action = min(
+                json.loads(r["payload"])["after_action_id"] for r in current
+            )
+            distinct_new = store.db.execute(
+                "SELECT COUNT(DISTINCT canonical_id) FROM user_actions WHERE action='feedback' AND id>?",
+                (after_action,),
+            ).fetchone()[0]
+            if distinct_new < 60:
+                return False
+        data = source_data(store)
+    identifier = digest(data)
+    report = evaluate(store, use_frozen=False, data=data)
+    if report["snapshot_id"] != identifier:
+        return False
+    with store.db:
         store.db.execute("BEGIN IMMEDIATE")
-        if digest(source_data(store)) != report["snapshot_id"]:
+        if digest(source_data(store)) != identifier:
             return False
         report["release_reason"] = (
             "independent_channel_review_complete"
