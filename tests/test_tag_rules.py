@@ -23,7 +23,7 @@ from broader_vids.recommendations.service import (
 from broader_vids.policy import Policy
 from broader_vids.storage import Store
 from test_recommendations import candidate, quality
-from test_dashboard_feedback import dashboard_fixture, sync_playwright
+from test_dashboard_feedback import dashboard_fixture, expect, sync_playwright
 
 
 def translated_item():
@@ -205,9 +205,19 @@ class TagRuleDashboardTests(unittest.TestCase):
                     has=page.get_by_text("视频翻译", exact=True)
                 )
 
+            page.emulate_media(
+                color_scheme="dark", contrast="no-preference", forced_colors="none"
+            )
             row = tags()
-            self.assertTrue(row.get_by_text("Built-in", exact=True).is_visible())
-            row.get_by_role("button", name="Remove", exact=True).click()
+            badge = row.get_by_text("Built-in", exact=True)
+            remove = row.get_by_role("button", name="Remove", exact=True)
+            expect(badge).to_have_css("border-top-width", "0px")
+            expect(remove).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            badge_fill = badge.evaluate(
+                "(item) => getComputedStyle(item).backgroundColor"
+            )
+            expect(remove).not_to_have_css("background-color", badge_fill)
+            remove.click()
             page.wait_for_function(
                 "() => !document.querySelector('#management').textContent.includes('视频翻译')"
             )

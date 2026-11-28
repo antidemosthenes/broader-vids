@@ -46,6 +46,30 @@ const ntfySends = new Map();
 const sendNtfy = $("#send-ntfy");
 const sendNtfyStatus = $("#send-ntfy-status");
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const motionPreference = matchMedia("(prefers-reduced-motion: no-preference)");
+let contentMotion;
+function stopContentMotion() {
+  contentMotion?.cancel();
+  contentMotion = undefined;
+}
+motionPreference.addEventListener("change", (event) => {
+  if (!event.matches) stopContentMotion();
+});
+function reveal(element) {
+  stopContentMotion();
+  if (!motionPreference.matches) return;
+  const motion = element.animate(
+    [
+      { opacity: 0.74, translate: "0 4px" },
+      { opacity: 1, translate: "0" },
+    ],
+    { duration: 185, easing: "cubic-bezier(0.2, 0.75, 0.25, 1)" },
+  );
+  contentMotion = motion;
+  motion.onfinish = () => {
+    if (contentMotion === motion) contentMotion = undefined;
+  };
+}
 function currentEntries() {
   return state.view === "recommendations" && earlier.get(contextKey())
     ? earlierItems.get(state.platform) ||
@@ -76,15 +100,27 @@ function rememberPosition() {
   }
 }
 function navigate(change) {
-  if (change.view === "preferences" && state.view !== "preferences")
+  const viewChanged = change.view && change.view !== state.view;
+  const changed = Object.entries(change).some(
+    ([key, value]) => state[key] !== value,
+  );
+  if (change.view === "preferences" && viewChanged)
     preferencesReturnView = state.view;
   rememberPosition();
-  if (change.view && change.view !== state.view) route = "";
-  if (mobile.open) mobile.close();
+  if (viewChanged) {
+    route = "";
+    $("main").scrollTop = 0;
+  }
+  if (mobile.open) closeReview();
   secondary = false;
   Object.assign(state, change);
   state.reviewOpen = !isNarrow() && !!selectedId();
   render();
+  if (!changed) return;
+  if (state.view === "preferences") reveal($("#preferences-page"));
+  else if (state.view === "exclusions")
+    reveal(viewChanged ? $("#management") : management.panel);
+  else reveal(listPane);
 }
 let refreshing = false,
   refreshQueued = false;
@@ -185,13 +221,18 @@ async function mutate(key, body, apply, noteKey = key) {
 }
 const actions = {
   select(id) {
+    const narrow = isNarrow();
+    const replacing = id !== selectedId() || secondary;
     rememberPosition();
-    if (!mobile.open) returnFocus = document.activeElement;
+    if (narrow && !mobile.open) returnFocus = document.activeElement;
     state.selected.set(contextKey(), id);
     state.reviewOpen = true;
     secondary = false;
     render();
-    if (isNarrow() && !mobile.open) mobile.showModal();
+    if (narrow) {
+      if (!mobile.open) mobile.showModal();
+      else if (replacing) reveal(mobileBody);
+    }
   },
   rate(id, kind, payload, key, original) {
     mutate(key, { action: "rate", id, kind, ...payload }, () => {
@@ -308,6 +349,7 @@ const actions = {
       mobileBody.scrollTop = 0;
       $("#mobile-review-title").textContent = "Score details";
       $("#review-back").focus();
+      reveal(mobileBody);
     } else {
       $("#details-body").replaceChildren(content);
       details.showModal();
@@ -382,13 +424,11 @@ function render() {
         : "Calibration";
   $("#page-title").textContent = title;
   const subtitle = $("#page-subtitle");
-  subtitle.hidden = isPreferences;
-  if (!isPreferences)
+  subtitle.hidden = isPreferences || state.view === "calibration";
+  if (!subtitle.hidden)
     subtitle.textContent = isRules
-      ? "Choose the sources you want to see."
-      : state.view === "calibration"
-        ? "Optional examples to refine your preferences."
-        : "Rate each video to improve recommendations.";
+      ? "Manage excluded creators and Bilibili tags."
+      : "Rate each video to improve recommendations.";
   document.querySelectorAll("[data-view]").forEach((node) => {
     if (node.dataset.view === state.view)
       node.setAttribute("aria-current", "page");
@@ -524,19 +564,24 @@ function back() {
     mobileBody.scrollTop = state.inspectorScrolls.get(reviewId) || 0;
     $("#mobile-review-title").textContent = "Video review";
     review.element.querySelector(".details-button").focus();
+    reveal(mobileBody);
   } else {
     rememberPosition();
-    mobile.close();
+    closeReview();
+    render();
   }
+}
+function closeReview() {
+  if (contentMotion?.effect?.target === mobileBody) stopContentMotion();
+  mobile.close();
+  state.reviewOpen = false;
+  secondary = false;
+  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+  returnFocus = undefined;
 }
 mobile.addEventListener("cancel", (event) => {
   event.preventDefault();
   back();
-});
-mobile.addEventListener("close", () => {
-  state.reviewOpen = false;
-  secondary = false;
-  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
 });
 $("#review-back").onclick = back;
 for (const prefix of ["review", "mobile"]) {
@@ -612,6 +657,7 @@ $("#pending-toggle").onclick = () => {
     );
   earlier.set(contextKey(), !earlier.get(contextKey()));
   render();
+  reveal(listPane);
 };
 document
   .querySelectorAll("[data-view]")
@@ -636,15 +682,17 @@ function updateLayout() {
     mobileNavigation =
       innerWidth <= 700 ||
       innerWidth / parseFloat(getComputedStyle(root).fontSize) < 700 / 15;
-  const changed =
-    root.hasAttribute("data-compact") !== compact ||
+  const compactChanged = root.hasAttribute("data-compact") !== compact;
+  const navigationChanged =
     root.hasAttribute("data-mobile") !== mobileNavigation;
+  if (!compactChanged && !navigationChanged) return;
   root.toggleAttribute("data-compact", compact);
   root.toggleAttribute("data-mobile", mobileNavigation);
-  if (!changed) return;
-  state.reviewOpen = !compact && !!selectedId();
-  if (!compact && mobile.open) mobile.close();
-  secondary = false;
+  if (compactChanged) {
+    if (!compact && mobile.open) closeReview();
+    state.reviewOpen = !compact && !!selectedId();
+    secondary = false;
+  }
   render();
 }
 const measure = el("span", "text-measure");

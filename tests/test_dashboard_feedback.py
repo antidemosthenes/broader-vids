@@ -232,6 +232,71 @@ def saved(group):
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
 class DashboardFeedbackTests(unittest.TestCase):
+    def test_appearance_follows_system_until_overridden_and_remembers_choice(self):
+        with dashboard_fixture() as (page, _):
+            page.emulate_media(color_scheme="dark", reduced_motion="reduce")
+            root = page.locator("html")
+            toggle = page.locator("#appearance-toggle")
+            expect(toggle).to_have_accessible_name("Use light theme")
+            dark = root.evaluate("(node) => getComputedStyle(node).backgroundColor")
+            topic = open_first(page).get_by_label("Topic", exact=True)
+            page.mouse.move(0, 0)
+            selected = page.locator(".video-row.selected")
+            rate = selected.get_by_role("button", name="Rate", exact=True)
+            expect(rate).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            row_fill = selected.evaluate(
+                "(item) => getComputedStyle(item).backgroundColor"
+            )
+            expect(rate).not_to_have_css("background-color", row_fill)
+            topic.fill("Draft during a theme switch")
+            toggle.press("Space")
+            expect(root).to_have_attribute("data-theme", "light")
+            expect(root).not_to_have_css("background-color", dark)
+            expect(topic).to_have_value("Draft during a theme switch")
+            expect(toggle).to_have_accessible_name("Use dark theme")
+
+            peer = page.context.new_page()
+            try:
+                pending = []
+                peer.route(
+                    "**/static/dashboard.js", lambda route: pending.append(route)
+                )
+                peer.goto(page.url, wait_until="commit")
+                expect(peer.locator("html")).to_have_attribute("data-theme", "light")
+                peer.evaluate(
+                    """window.addEventListener("storage", event => {
+                        window.themeStorageEvent = event.newValue;
+                    }, {once: true})"""
+                )
+                page.emulate_media(color_scheme="light")
+                toggle.click()
+                expect(root).to_have_css("background-color", dark)
+                peer.wait_for_function("window.themeStorageEvent === 'dark'")
+                self.assertEqual(len(pending), 1)
+                pending.pop().continue_()
+                expect(peer.locator("#appearance-toggle")).to_have_accessible_name(
+                    "Use light theme"
+                )
+                expect(peer.locator("html")).to_have_attribute("data-theme", "dark")
+                toggle.click()
+                expect(peer.locator("html")).to_have_attribute("data-theme", "light")
+                toggle.click()
+                page.reload(wait_until="domcontentloaded")
+                expect(root).to_have_css("background-color", dark)
+                expect(toggle).to_have_accessible_name("Use light theme")
+            finally:
+                peer.close()
+
+            page.add_init_script(
+                """Object.defineProperty(window, "localStorage", {
+                    get() { throw new DOMException("Storage is unavailable", "SecurityError"); }
+                });"""
+            )
+            page.reload(wait_until="domcontentloaded")
+            expect(toggle).to_have_accessible_name("Use dark theme")
+            toggle.click()
+            expect(root).to_have_css("background-color", dark)
+
     def test_manual_level_and_independent_drafts_survive_navigation_save_and_clear(
         self,
     ):
@@ -261,9 +326,12 @@ class DashboardFeedbackTests(unittest.TestCase):
             )
             topic = inspector.get_by_role("group", name="Specific topic", exact=True)
             topic_save = topic.get_by_role("button", name="Save", exact=True)
-            expect(topic_save).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
-            expect(topic_save).to_have_css("border-top-left-radius", "8px")
-            expect(topic_save).to_have_css("background-color", "rgb(229, 200, 167)")
+            expect(topic_save).to_have_accessible_description(
+                "No saved rating for Specific topic."
+            )
+            unrated_fill = topic_save.evaluate(
+                "(button) => getComputedStyle(button).backgroundColor"
+            )
             topic.get_by_label("Topic", exact=True).fill("my corrected topic")
             topic.get_by_role("radio", name="Low", exact=True).check()
             depth.get_by_role("combobox", name="Video level", exact=True).select_option(
@@ -300,7 +368,8 @@ class DashboardFeedbackTests(unittest.TestCase):
             )
             saved(topic)
             expect(badge).to_have_text("2/4 rated")
-            expect(topic_save).to_have_css("background-color", "rgb(23, 110, 98)")
+            page.mouse.move(0, 0)
+            expect(topic_save).not_to_have_css("background-color", unrated_fill)
             expect(topic.get_by_role("radio", name="Low", exact=True)).to_be_checked()
             page.get_by_role("navigation").get_by_role(
                 "button", name="Calibration", exact=True
@@ -384,9 +453,45 @@ class DashboardFeedbackTests(unittest.TestCase):
             quality.get_by_role("button", name="Clear", exact=True).click()
             expect(badge).to_have_text("3/4 rated")
             expect(quality.get_by_role("button", name="Save", exact=True)).to_have_css(
-                "background-color", "rgb(229, 200, 167)"
+                "background-color", unrated_fill
             )
             self.assertFalse(errors, errors)
+
+    def test_navigation_motion_replaces_old_animation_and_respects_reduced_motion(
+        self,
+    ):
+        with dashboard_fixture() as (page, _):
+            page.emulate_media(reduced_motion="no-preference")
+            result = page.evaluate(
+                """() => {
+                    document.querySelector('[data-view="calibration"]').click();
+                    const list = document.querySelector("#list-pane").getAnimations()[0];
+                    const subtitleHidden = document.querySelector("#page-subtitle").hidden;
+                    document.querySelector('[data-view="exclusions"]').click();
+                    const pageMotion = document.querySelector("#management").getAnimations()[0];
+                    document.querySelector("#exclusions-tags-tab").click();
+                    const panel = document.querySelector("#exclusion-rules");
+                    return [
+                        subtitleHidden,
+                        list?.playState,
+                        pageMotion?.playState,
+                        panel.getAnimations()[0]?.playState
+                    ];
+                }"""
+            )
+            self.assertEqual(result, [True, "idle", "idle", "running"])
+            expect(page.get_by_role("tabpanel", name="Tags")).to_be_visible()
+            page.emulate_media(reduced_motion="reduce")
+            self.assertEqual(
+                page.evaluate(
+                    """() => {
+                        document.querySelector("#exclusions-creators-tab").click();
+                        return document.querySelector("#exclusion-rules").getAnimations().length;
+                    }"""
+                ),
+                0,
+            )
+            expect(page.get_by_role("tabpanel", name="Creators")).to_be_visible()
 
     def test_mobile_dialog_details_keyboard_and_layout(self):
         with dashboard_fixture() as (page, _):
@@ -474,6 +579,14 @@ class DashboardFeedbackTests(unittest.TestCase):
                     "row", name="Short-video deduction −5.00 points", exact=True
                 )
             ).to_be_visible()
+            page.set_viewport_size({"width": 844, "height": 390})
+            expect(page.locator("html")).not_to_have_attribute("data-mobile", "")
+            expect(page.locator("#mobile-review-title")).to_have_text("Score details")
+            expect(page.locator(".video-row.selected .rate-button")).to_have_attribute(
+                "aria-expanded", "true"
+            )
+            page.set_viewport_size({"width": 390, "height": 844})
+            expect(page.locator("html")).to_have_attribute("data-mobile", "")
             page.keyboard.press("Escape")
             self.assertEqual(
                 page.locator("#mobile-review-title").inner_text(), "Video review"
@@ -484,6 +597,19 @@ class DashboardFeedbackTests(unittest.TestCase):
             self.assertEqual(
                 page.evaluate("document.activeElement.textContent"), "Rate"
             )
+            expect(page.locator(".video-row.selected .rate-button")).to_have_attribute(
+                "aria-expanded", "false"
+            )
+            page.emulate_media(forced_colors="active", reduced_motion="reduce")
+            expect(page.locator(".video-row.selected .video-title")).to_have_css(
+                "forced-color-adjust", "auto"
+            )
+            active_tab = page.get_by_role("tab", selected=True)
+            active_tab.press("Tab")
+            page.keyboard.press("Shift+Tab")
+            expect(active_tab).to_be_focused()
+            expect(active_tab).to_have_css("outline-style", "solid")
+            expect(active_tab).to_have_css("outline-offset", "2px")
             self.assertLessEqual(page.evaluate("document.body.scrollWidth"), 390)
             self.assertTrue(
                 page.locator(".row-actions").first.evaluate(
@@ -498,6 +624,18 @@ class DashboardFeedbackTests(unittest.TestCase):
                     "(pane) => pane.scrollWidth <= pane.clientWidth"
                 )
             )
+            page.locator(".video-row").first.get_by_role(
+                "button", name="Rate", exact=True
+            ).click()
+            expect(page.locator("#review-dialog")).to_be_visible()
+
+            page.keyboard.press("Escape")
+            page.evaluate("document.documentElement.style.fontSize = ''")
+            page.set_viewport_size({"width": 1440, "height": 200})
+            inspector = open_first(page)
+            topic_input = inspector.get_by_label("Topic", exact=True)
+            topic_input.fill("A draft in a short desktop window")
+            expect(topic_input).to_have_value("A draft in a short desktop window")
 
     def test_polling_and_inflight_saves_preserve_newer_edits(self):
         with dashboard_fixture() as (page, _):

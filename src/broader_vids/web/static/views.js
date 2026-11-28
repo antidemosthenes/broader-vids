@@ -68,6 +68,10 @@ export function createVideoRow(item, index, actions) {
         : "Duration unavailable";
       const missing = missingRatings(data.details),
         rated = ratingGroups.length - missing.length;
+      status.classList.toggle(
+        "needs-rating",
+        !data.dismissed && missing.length > 0,
+      );
       status.textContent = data.dismissed
         ? "Dismissed"
         : missing.length
@@ -213,12 +217,18 @@ export function createExclusions(actions) {
   const tabs = el("div", "subtabs");
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Exclusion type");
+  const panel = el("section", "exclusion-rules");
+  panel.id = "exclusion-rules";
+  panel.setAttribute("role", "tabpanel");
+  panel.setAttribute("aria-labelledby", `exclusions-${kind}-tab`);
   for (const [value, label] of [
     ["creators", "Creators"],
     ["tags", "Tags"],
   ]) {
     const tab = button(label, () => actions.exclusionTab(value), "subtab");
+    tab.id = `exclusions-${value}-tab`;
     tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", panel.id);
     tab.setAttribute("aria-selected", String(kind === value));
     tab.tabIndex = kind === value ? 0 : -1;
     tab.onkeydown = (event) => {
@@ -229,7 +239,7 @@ export function createExclusions(actions) {
     };
     tabs.append(tab);
   }
-  root.append(tabs);
+  root.append(tabs, panel);
   const toolbar = el("div", "management-toolbar");
   const search = el("input", "text-input search-input");
   search.type = "search";
@@ -246,7 +256,7 @@ export function createExclusions(actions) {
   let input, add, formStatus;
   if (kind === "tags") {
     if (platform === "youtube")
-      root.append(
+      panel.append(
         el(
           "p",
           "muted tag-help",
@@ -275,12 +285,12 @@ export function createExclusions(actions) {
       event.preventDefault();
       actions.addTag(platform, input.value);
     };
-    root.append(form);
+    panel.append(form);
   }
   const list = el("div", "management-list");
   let signature = "";
   let rowUpdates = [];
-  root.append(toolbar, list);
+  panel.append(toolbar, list);
   function updateList() {
     const entries = state.exclusions[kind]?.[platform] || [];
     const query = (state.search.get(searchKey) || "")
@@ -370,6 +380,7 @@ export function createExclusions(actions) {
   }
   return {
     element: root,
+    panel,
     update() {
       connection?.update();
       if (input) {

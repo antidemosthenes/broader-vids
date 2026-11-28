@@ -407,6 +407,7 @@ def make_server(root, port=8765, *, control=None):
                     store.close()
             assets = {
                 "/static/dashboard.js": ("dashboard.js", "text/javascript"),
+                "/static/appearance.js": ("appearance.js", "text/javascript"),
                 "/static/dashboard.css": ("dashboard.css", "text/css"),
                 "/static/api.js": ("api.js", "text/javascript"),
                 "/static/state.js": ("state.js", "text/javascript"),
