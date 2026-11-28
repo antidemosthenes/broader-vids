@@ -610,20 +610,32 @@ class DashboardFeedbackTests(unittest.TestCase):
             expect(active_tab).to_be_focused()
             expect(active_tab).to_have_css("outline-style", "solid")
             expect(active_tab).to_have_css("outline-offset", "2px")
-            self.assertLessEqual(page.evaluate("document.body.scrollWidth"), 390)
-            self.assertTrue(
-                page.locator(".row-actions").first.evaluate(
-                    "(actions) => [...actions.children].every("
-                    "(button) => button.offsetTop === actions.firstElementChild.offsetTop)"
+            page.evaluate("document.documentElement.style.fontFamily = 'monospace'")
+            actions = page.locator(".row-actions").first
+            for width in (390, 320):
+                if width == 320:
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.evaluate("document.documentElement.style.fontSize = '200%'")
+                self.assertLessEqual(page.evaluate("document.body.scrollWidth"), width)
+                self.assertTrue(
+                    page.locator("#list-pane").evaluate(
+                        "(pane) => pane.scrollWidth <= pane.clientWidth"
+                    )
                 )
-            )
-            page.set_viewport_size({"width": 320, "height": 844})
-            page.evaluate("document.documentElement.style.fontSize = '200%'")
-            self.assertTrue(
-                page.locator("#list-pane").evaluate(
-                    "(pane) => pane.scrollWidth <= pane.clientWidth"
+                for name in ("Mark watched", "Dismiss", "Rate"):
+                    expect(
+                        actions.get_by_role("button", name=name, exact=True)
+                    ).to_be_visible()
+                self.assertTrue(
+                    actions.evaluate(
+                        """(actions) => actions.scrollWidth <= actions.clientWidth
+                        && [...actions.children].every(button =>
+                            button.scrollWidth <= button.clientWidth
+                            && button.scrollHeight <= button.clientHeight)"""
+                    ),
+                    f"Recommendation actions overflow at {width}px",
                 )
-            )
+            page.evaluate("document.documentElement.style.fontFamily = ''")
             page.locator(".video-row").first.get_by_role(
                 "button", name="Rate", exact=True
             ).click()
