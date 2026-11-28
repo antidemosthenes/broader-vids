@@ -116,6 +116,7 @@ def save_detail(
     *,
     target="",
     level=None,
+    fit_model=True,
 ):
     infer_level = level is None
     if infer_level:
@@ -144,7 +145,8 @@ def save_detail(
     from broader_vids.learning.service import capture_rating, refresh_after_feedback
 
     key = identity["canonical_id"]
-    features = capture_rating(store, key) if value != "clear" else None
+    item = video_payload(store, key)
+    features = capture_rating(store, key, item=item) if value != "clear" else None
     if dimension == "depth" and infer_level and features:
         inferred = features.get("audience_level")
         level = inferred if inferred in LEVELS else "unknown"
@@ -167,7 +169,7 @@ def save_detail(
         )
     if features:
         payload["features"] = features
-    item_payload = json.dumps(video_payload(store, key))
+    item_payload = json.dumps(item)
     with store.db:
         store.db.execute("BEGIN IMMEDIATE")
         store.db.execute(
@@ -228,7 +230,7 @@ def save_detail(
                 )
                 if displayed:
                     mark_reviewed_watched(store, key, displayed=True)
-    refresh_after_feedback(store)
+    refresh_after_feedback(store, fit_model=fit_model)
     saved = details(store, [key])
     return {
         "ratings": video_states(store, identifiers=[key])[key]["ratings"],

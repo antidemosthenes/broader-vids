@@ -39,10 +39,23 @@ def category_posterior(
     }
 
 
+def pending_depth_count(rows, baseline):
+    return sum(
+        row["split"] == "train"
+        and row["dimension"] == "depth"
+        and (row.get("level") or "unknown") == "unknown"
+        for row in rows
+    ) + sum(
+        cell["observations"]
+        for key, cell in baseline.get("groups", {}).get("depth", {}).items()
+        if key.endswith("|unknown")
+    )
+
+
 def fit_scoped(rows, profile, scopes=None, *, baseline=None, overrides=()):
     baseline = baseline or {}
     groups = {name: {} for name in ("topic_interest", "domain_interest", "depth")}
-    actions, pending = [], 0
+    actions = []
     video_topics, video_domains, video_levels = {}, {}, {}
     for row in rows:
         if row["split"] != "train" or row["dimension"] not in groups:
@@ -53,7 +66,6 @@ def fit_scoped(rows, profile, scopes=None, *, baseline=None, overrides=()):
         categories = DEPTH if dimension == "depth" else VALUES
         counts = groups[dimension].setdefault(key, [0, 0, 0])
         counts[categories.index(row["value"])] += 1
-        pending += dimension == "depth" and level == "unknown"
         actions.append(row["action_id"])
     for row in [*overrides, *rows]:
         if row["split"] != "train" or row["dimension"] not in groups:
@@ -66,11 +78,6 @@ def fit_scoped(rows, profile, scopes=None, *, baseline=None, overrides=()):
     for name, cells in baseline.get("groups", {}).items():
         for key in cells:
             groups[name].setdefault(key, [0, 0, 0])
-    pending += sum(
-        cell["observations"]
-        for key, cell in baseline.get("groups", {}).get("depth", {}).items()
-        if key.endswith("|unknown")
-    )
     interests = {normalized(d) for d in profile["interests"]}
     anchors = dict(scopes or {})
     for row in sorted(rows, key=lambda row: row["action_id"]):
@@ -115,7 +122,7 @@ def fit_scoped(rows, profile, scopes=None, *, baseline=None, overrides=()):
             for name, cells in groups.items()
         },
         "training_actions": actions,
-        "pending_depth_level": pending,
+        "pending_depth_level": pending_depth_count(rows, baseline),
         "video_topics": video_topics,
         "video_domains": video_domains,
         "video_levels": video_levels,

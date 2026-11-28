@@ -1,9 +1,10 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from broader_vids.learning.annotations import apply_annotation
+from broader_vids.learning.annotations import apply_annotation, latest_annotations
 from broader_vids.learning.depth import integrate, PRIOR
 from broader_vids.learning.feedback import context_from_features, save_detail
 from broader_vids.learning.features import capture
@@ -116,6 +117,35 @@ class FeedbackWorkflowTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(row[0], 0)
         self.assertIsNotNone(identifier)
+
+    def test_annotation_lookup_scopes_history_and_uses_latest_complete_entry(self):
+        keys = [f"youtube:{index:010d}A" for index in range(1, 502)]
+        for key, label, status in (
+            (keys[0], "older", "completed"),
+            (keys[-1], "other batch", "completed"),
+            (keys[0], "latest", "completed"),
+            (keys[0], "unfinished", "pending"),
+            ("youtube:0000000600A", "outside", "completed"),
+        ):
+            identifier = self.store.create(
+                "youtube",
+                {"kind": "content_annotation", "identity": {"canonical_id": key}},
+                {"source_hash": label},
+            )
+            run = self.store.get(identifier)
+            run["status"] = status
+            self.store.save(run)
+        self.store.db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 500)
+        expected = {
+            keys[0]: {"source_hash": "latest"},
+            keys[-1]: {"source_hash": "other batch"},
+        }
+        self.assertEqual(latest_annotations(self.store, keys), expected)
+        self.assertEqual(latest_annotations(self.store, []), {})
+        self.assertEqual(
+            latest_annotations(self.store)["youtube:0000000600A"]["source_hash"],
+            "outside",
+        )
 
     def test_query_keywords_never_prefill_a_rating_topic(self):
         features = capture(self.item)

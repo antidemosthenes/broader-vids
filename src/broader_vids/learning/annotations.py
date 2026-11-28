@@ -1,4 +1,5 @@
 import hashlib
+from itertools import batched
 import json
 from pathlib import Path
 import time
@@ -11,13 +12,22 @@ from broader_vids.exploration.domains import normalized
 from broader_vids.learning.topic_labels import label_problem, readable_topics
 
 
-def latest_annotations(store):
+def latest_annotations(store, identifiers=None):
+    identity = "json_extract(settings,'$.identity.canonical_id')"
+    query = (
+        f"SELECT {identity} AS canonical_id,state FROM runs "
+        "WHERE json_extract(settings,'$.kind')='content_annotation' AND status='completed'"
+    )
+    batches = ((),) if identifiers is None else batched(dict.fromkeys(identifiers), 500)
     result = {}
-    for row in store.db.execute(
-        "SELECT settings,state FROM runs WHERE json_extract(settings,'$.kind')='content_annotation' AND status='completed' ORDER BY rowid"
-    ):
-        settings, state = json.loads(row[0]), json.loads(row[1])
-        result[settings["identity"]["canonical_id"]] = state
+    for batch in batches:
+        scope = (
+            f" AND {identity} IN (" + ",".join("?" for _ in batch) + ")"
+            if batch
+            else ""
+        )
+        for row in store.db.execute(query + scope + " ORDER BY rowid", batch):
+            result[row["canonical_id"]] = json.loads(row["state"])
     return result
 
 

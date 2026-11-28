@@ -112,8 +112,8 @@ class ReviewedWatchedTests(unittest.TestCase):
                 save_detail(self.store, key, dimension, value, target=target)
             from broader_vids.learning.service import capture_rating
 
-            def unwatch_before_save(store, identifier):
-                features = capture_rating(store, identifier)
+            def unwatch_before_save(store, identifier, *, item=None):
+                features = capture_rating(store, identifier, item=item)
                 other = Store(self.directory.name)
                 try:
                     user_action(other, key, "unwatched")

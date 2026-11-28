@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 try:
     from playwright.sync_api import expect, sync_playwright
@@ -15,6 +16,7 @@ except ImportError:
     sync_playwright = None
 
 from broader_vids.learning.features import capture
+from broader_vids.learning.service import ensure_model
 from broader_vids.policy import Policy
 from broader_vids.preferences import set_profile
 from broader_vids.storage import Store
@@ -232,6 +234,19 @@ def saved(group):
 
 @unittest.skipUnless(sync_playwright, "Playwright is not installed")
 class DashboardFeedbackTests(unittest.TestCase):
+    def test_rating_save_defers_fitting_but_next_model_includes_it(self):
+        with dashboard_fixture() as (page, directory):
+            group = open_first(page).get_by_role(
+                "group", name="Video quality", exact=True
+            )
+            group.get_by_role("radio", name="High", exact=True).check()
+            with patch("broader_vids.learning.service.ensure_model") as fit:
+                saved(group)
+            fit.assert_not_called()
+            with closing(Store(directory)) as store:
+                snapshot = ensure_model(store)
+            self.assertEqual(snapshot["structured"]["quality"]["observations"], 1)
+
     def test_appearance_follows_system_until_overridden_and_remembers_choice(self):
         with dashboard_fixture() as (page, _):
             page.emulate_media(color_scheme="dark", reduced_motion="reduce")
@@ -505,11 +520,23 @@ class DashboardFeedbackTests(unittest.TestCase):
             self.assertEqual(
                 page.locator(".video-row").first.bounding_box()["height"], initial
             )
+            diagnostics_requests = []
+
+            def track_diagnostics(request):
+                if request.url.endswith("/api/learning"):
+                    diagnostics_requests.append(request)
+
+            page.on("request", track_diagnostics)
             page.get_by_role("button", name="Score details", exact=True).click()
             details = page.locator("#details-dialog")
             expect(details).to_have_css("animation-name", "panel-enter")
             page.emulate_media(reduced_motion="reduce")
             expect(details).to_have_css("animation-name", "none")
+            self.assertEqual(diagnostics_requests, [])
+            diagnostics = details.locator(".diagnostics")
+            diagnostics.get_by_text("Run and model diagnostics", exact=True).click()
+            expect(diagnostics.locator("pre")).to_contain_text("snapshot_id")
+            self.assertEqual(len(diagnostics_requests), 1)
             expect(
                 details.get_by_role(
                     "row", name="Short-video deduction −5.00 points", exact=True

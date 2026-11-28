@@ -12,6 +12,7 @@ from broader_vids.learning.scoped import (
 )
 from broader_vids.learning.service import (
     ensure_model,
+    learning_status,
     source_data,
     train,
     score_components,
@@ -102,9 +103,15 @@ class ScopedFeedbackTests(unittest.TestCase):
         self.assertTrue(advanced_prediction["depth"]["directional_transfer"])
 
     def test_unknown_depth_is_saved_without_inventing_an_audience_level(self):
-        self.save("depth", "deeper", target="topology")
+        save_detail(
+            self.store, self.key, "depth", "deeper", target="topology", fit_model=False
+        )
+        before = learning_status(self.store)
+        self.assertFalse(before["current"])
+        self.assertEqual(before["pending_depth_level"], 1)
         scoped = ensure_model(self.store)["structured"]
-        self.assertEqual(scoped["pending_depth_level"], 1)
+        self.assertEqual(scoped["pending_depth_level"], before["pending_depth_level"])
+        self.assertEqual(learning_status(self.store)["pending_depth_level"], 1)
         self.assertEqual(
             interest_prediction(self.features, 0.75, scoped)["probability"], 0.75
         )
