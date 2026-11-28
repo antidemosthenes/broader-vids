@@ -155,25 +155,22 @@ class NotificationsDashboardTests(unittest.TestCase):
                 notifications.configure(store, True, "fixture-topic")
             page.evaluate('() => document.dispatchEvent(new Event("visibilitychange"))')
             expect(button).to_be_visible()
-            expect(button).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
-            expect(button).to_have_css("border-top-left-radius", "999px")
-            fill = button.evaluate(
-                "(button) => getComputedStyle(button).backgroundColor"
-            )
+            styles = """(button) => {
+                const { backgroundColor, borderColor, borderRadius } = getComputedStyle(button);
+                return [backgroundColor, borderColor, borderRadius];
+            }"""
+            send_style = button.evaluate(styles)
             watched = page.get_by_role("button", name="Mark watched", exact=True).first
-            self.assertNotEqual(
-                fill,
-                watched.evaluate(
-                    "(button) => getComputedStyle(button).backgroundColor"
-                ),
-            )
+            neutral_style = watched.evaluate(styles)
+            self.assertNotEqual(send_style[1], neutral_style[1])
+            self.assertNotEqual(send_style[2], neutral_style[2])
             try:
                 button.press("Enter")
                 self.assertTrue(started.wait(3))
                 sending = page.get_by_role("button", name="Sending…", exact=True)
                 expect(sending).to_be_disabled()
                 sending.hover()
-                expect(sending).to_have_css("background-color", fill)
+                expect(sending).to_have_css("background-color", send_style[0])
                 page.get_by_role("tab", name="Bilibili", exact=True).click()
                 expect(button).to_be_enabled()
                 button.click()
